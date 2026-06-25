@@ -23,10 +23,16 @@ function keyString(key: MintingKey): string {
 
 // In-memory GiftCodeMappingTable. insertPending performs a SYNCHRONOUS check-then-set so that two
 // interleaved getOrCreate calls race exactly as the unique DB constraint would: one wins, the
-// other gets UniqueKeyViolationError.
+// other gets UniqueKeyViolationError. createdAt is stamped from an injectable clock so tests can
+// make a reservation look fresh (default) or abandoned (see seedAbandonedPending).
 export class FakeMappingTable implements GiftCodeMappingTable {
   private readonly byKey = new Map<string, GiftCodeMapping>();
   private seq = 0;
+  private readonly now: () => Date;
+
+  constructor(options: { now?: () => Date } = {}) {
+    this.now = options.now ?? (() => new Date());
+  }
 
   findByKey(key: MintingKey): Promise<GiftCodeMapping | null> {
     return Promise.resolve(this.byKey.get(keyString(key)) ?? null);
@@ -44,10 +50,26 @@ export class FakeMappingTable implements GiftCodeMappingTable {
       code: null,
       discountId: null,
       active: true,
-      createdAt: EPOCH,
+      createdAt: this.now(),
     };
     this.byKey.set(k, row);
     return Promise.resolve(row);
+  }
+
+  // Inject a dangling reservation whose holder never resolved it (e.g. a zombie from a killed
+  // serverless invocation), stamped with an OLD createdAt so the store treats it as abandoned.
+  seedAbandonedPending(key: MintingKey, createdAt: Date = EPOCH): GiftCodeMapping {
+    this.seq += 1;
+    const row: GiftCodeMapping = {
+      id: `m${this.seq}`,
+      ...key,
+      code: null,
+      discountId: null,
+      active: true,
+      createdAt,
+    };
+    this.byKey.set(keyString(key), row);
+    return row;
   }
 
   finalize(id: string, fields: { code: string; discountId: string }): Promise<GiftCodeMapping> {
@@ -92,15 +114,22 @@ export class FakeDiscountGateway implements ShopifyDiscountGateway {
   createCount = 0;
   readonly deactivated: string[] = [];
   private duplicatesRemaining: number;
+  private readonly failWith: Error | null;
 
-  constructor(options: { duplicateFirst?: number } = {}) {
+  // failWith: every mint rejects with this error (models a hard mint failure such as an empty
+  // qualifying scope). duplicateFirst: the first N mints reject as duplicate-code collisions.
+  constructor(options: { duplicateFirst?: number; failWith?: Error } = {}) {
     this.duplicatesRemaining = options.duplicateFirst ?? 0;
+    this.failWith = options.failWith ?? null;
   }
 
   createScopedGiftDiscount(
     input: ScopedGiftDiscountInput,
   ): Promise<{ code: string; discountId: string }> {
     this.createCount += 1;
+    if (this.failWith !== null) {
+      return Promise.reject(this.failWith);
+    }
     if (this.duplicatesRemaining > 0) {
       this.duplicatesRemaining -= 1;
       return Promise.reject(new DuplicateDiscountCodeError(input.code));

@@ -67,6 +67,30 @@ deactivate the old campaign so `/validate` won't re-mint against stale state.
 - Set the seeded campaign inactive (or re-run the idempotent seed, which replaces the shop's
   campaigns) so a single clean active campaign remains.
 
+### Dangling gift-code reservations (the "Timed out waiting…" symptom)
+
+`/validate` mints under a reserve-then-mint model: it reserves a `GiftCodeMapping` row (code NULL),
+then mints. Before the lifecycle fix, a mint that **aborted** (now `EmptyQualifyingScopeError`,
+because the qualifying collection is missing/empty) could leave a **reservation that never resolved**;
+the next caller then waited on it and failed with `Timed out waiting for a concurrent gift-code
+creation to resolve` — masking the real cause.
+
+Fixed in `store/giftCodeMapping.ts`: any mint failure **releases the reservation** before the error
+propagates, and a waiter that sees the holder fail/abandon **takes over and re-mints**, so the caller
+now surfaces the REAL error (empty qualifying scope → "reinstall + re-seed to create the qualifying
+collection") and fails fast instead of timing out. A reservation older than `staleReservationMs`
+(60s) is reclaimed automatically, so a pre-existing zombie self-heals on the next call.
+
+To clear zombies explicitly:
+
+- **Re-seeding already does it:** `seed:smoke` runs `campaign.deleteMany`, which **cascades** to
+  `gift_code_mappings` (`onDelete: Cascade`) — every reservation under the old campaign is removed.
+  Re-seed is therefore idempotent w.r.t. stale reservations.
+- **Without re-seeding** (unwedge the current campaign): `pnpm --filter @free-gift-engine/admin run
+clear:reservations` (env `SHOPIFY_SHOP_DOMAIN`, `DATABASE_URL`/`DIRECT_URL`). It deletes only
+  unresolved rows (code IS NULL) older than `STALE_MINUTES` (default 2); finalized/active codes are
+  untouched.
+
 ## Step 2 — provision (this now HARD-FAILS on a broken scope)
 
 Provisioning is the ordered, fail-loud sequence in `provisionGifts`:

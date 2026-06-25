@@ -23,6 +23,7 @@
     "lint": "eslint .",
     "test": "vitest run --passWithNoTests",
     "seed:smoke": "node scripts/seed-smoke.mjs",
+    "clear:reservations": "node scripts/clear-pending-reservations.mjs",
     "sign-proxy": "node scripts/sign-proxy-request.mjs"
   }
 }
