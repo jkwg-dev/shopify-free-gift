@@ -53,3 +53,22 @@ export class GiftVariantValidationError extends Error {
     this.name = 'GiftVariantValidationError';
   }
 }
+
+// The BXGY customerBuys scope (qualifying collection) is missing or empty, so the threshold would be
+// void and the gift would always be free ($0 leak). Thrown BEFORE minting — never create a code
+// against an empty/missing scope.
+export class EmptyQualifyingScopeError extends Error {
+  constructor(
+    readonly collectionId: string,
+    readonly reason: 'missing' | 'empty',
+  ) {
+    super(
+      reason === 'missing'
+        ? `Qualifying collection ${collectionId} does not exist — cannot mint a BXGY gift code ` +
+            `(check write_products provisioning / collection creation)`
+        : `Qualifying collection ${collectionId} is empty — cannot mint a BXGY gift code ` +
+            `(no qualifying products; threshold would be void and the gift always free)`,
+    );
+    this.name = 'EmptyQualifyingScopeError';
+  }
+}

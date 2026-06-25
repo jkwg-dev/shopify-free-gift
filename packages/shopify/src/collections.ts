@@ -1,16 +1,19 @@
 import type { AdminGraphqlClient } from './client.js';
 import { ShopifyUserError, type UserErrorDetail } from './errors.js';
 
-// Product tag that marks a GIFT product, EXCLUDED from the qualifying (BXGY customerBuys) scope.
-// Granularity is per-PRODUCT (Shopify tags are per product), so tagging a product removes ALL its
-// variants from the qualifying collection — gift products MUST be distinct from qualifying products
-// (a campaign-design constraint). This is a product tag, distinct from core's GIFT_LINE_PROPERTY
-// cart-line marker (same string, different mechanism).
-export const GIFT_PRODUCT_TAG = '_fge_gift';
+// SINGLE SOURCE for the gift product tag — used BOTH to tag gift products AND as the
+// smart-collection rule condition. If these ever diverge the collection stops excluding gifts and
+// the self-qualify leak returns, so they MUST reference this one constant. Uses the Shopify
+// `app:` reserved-tag convention (hidden from the merchant UI). Verified live: tagsAdd applies it
+// and `TAG NOT_EQUALS "app:fge_gift"` excludes the tagged product.
+// Granularity is per-PRODUCT (tagging removes ALL of a product's variants from the qualifying
+// scope) — gift products MUST be distinct from qualifying products. NOTE: this is the product TAG,
+// SEPARATE from core's GIFT_LINE_PROPERTY (the cart-line property the widget reconciler uses).
+export const GIFT_TAG = 'app:fge_gift';
 
 export type QualifyingCollection = { readonly id: string; readonly handle: string };
 
-// Smart-collection rule "tag NOT_EQUALS _fge_gift" auto-includes every non-gift product (verified
+// Smart-collection rule "tag NOT_EQUALS app:fge_gift" auto-includes every non-gift product (verified
 // supported: CollectionRuleColumn.TAG + CollectionRuleRelation.NOT_EQUALS). The rule is
 // campaign-independent, so ONE SHARED collection serves every campaign/tier (looked up by this
 // deterministic handle for idempotency).
@@ -36,7 +39,7 @@ type CreateResponse = {
 };
 
 // Create-or-reuse the single shared qualifying smart collection (idempotent by handle). The
-// collection auto-includes all products NOT tagged GIFT_PRODUCT_TAG.
+// collection auto-includes all products NOT tagged GIFT_TAG.
 export async function ensureQualifyingCollection(
   client: AdminGraphqlClient,
 ): Promise<QualifyingCollection> {
@@ -52,7 +55,7 @@ export async function ensureQualifyingCollection(
       handle,
       ruleSet: {
         appliedDisjunctively: false,
-        rules: [{ column: 'TAG', relation: 'NOT_EQUALS', condition: GIFT_PRODUCT_TAG }],
+        rules: [{ column: 'TAG', relation: 'NOT_EQUALS', condition: GIFT_TAG }],
       },
     },
   });
@@ -116,4 +119,24 @@ export async function waitForGiftProductsExcluded(
     }
   }
   return false;
+}
+
+const COLLECTION_PRODUCT_COUNT = `query QualifyingCollectionProductCount($id: ID!) {
+  collection(id: $id) { id productsCount { count } }
+}`;
+
+type ProductCountResponse = {
+  readonly collection: { readonly productsCount: { readonly count: number } } | null;
+};
+
+// Number of products in the collection, or null if the collection doesn't exist. Used as the mint
+// precondition (refuse to mint a BXGY code against a missing or EMPTY qualifying scope).
+export async function collectionProductCount(
+  client: AdminGraphqlClient,
+  collectionId: string,
+): Promise<number | null> {
+  const data = await client.request<ProductCountResponse>(COLLECTION_PRODUCT_COUNT, {
+    id: collectionId,
+  });
+  return data.collection === null ? null : data.collection.productsCount.count;
 }

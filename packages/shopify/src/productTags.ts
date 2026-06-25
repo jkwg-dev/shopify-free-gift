@@ -1,8 +1,8 @@
 import type { AdminGraphqlClient } from './client.js';
-import { GIFT_PRODUCT_TAG } from './collections.js';
+import { GIFT_TAG } from './collections.js';
 import { ShopifyUserError, type UserErrorDetail } from './errors.js';
 
-// Tag/untag PRODUCTS with GIFT_PRODUCT_TAG so they drop out of the qualifying smart collection.
+// Tag/untag PRODUCTS with GIFT_TAG so they drop out of the qualifying smart collection.
 // Two levels: by product id (what the admin tag-lifecycle guard uses — it reconciles at product
 // granularity across active campaigns) and a variant convenience that resolves variants -> products
 // first. Idempotent: tagsAdd no-ops an existing tag; tagsRemove no-ops an absent one. Tags are
@@ -64,7 +64,7 @@ export async function tagProductsAsGift(
   productIds: readonly string[],
 ): Promise<void> {
   for (const id of productIds) {
-    const data = await client.request<TagsResponse>(TAGS_ADD, { id, tags: [GIFT_PRODUCT_TAG] });
+    const data = await client.request<TagsResponse>(TAGS_ADD, { id, tags: [GIFT_TAG] });
     const errors = data.tagsAdd?.userErrors ?? [];
     if (errors.length > 0) {
       throw new ShopifyUserError(errors);
@@ -77,12 +77,48 @@ export async function untagProductsAsGift(
   productIds: readonly string[],
 ): Promise<void> {
   for (const id of productIds) {
-    const data = await client.request<UntagResponse>(TAGS_REMOVE, { id, tags: [GIFT_PRODUCT_TAG] });
+    const data = await client.request<UntagResponse>(TAGS_REMOVE, { id, tags: [GIFT_TAG] });
     const errors = data.tagsRemove?.userErrors ?? [];
     if (errors.length > 0) {
       throw new ShopifyUserError(errors);
     }
   }
+}
+
+const PRODUCT_TAGS = `query GiftProductTags($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    __typename
+    ... on Product { id tags }
+  }
+}`;
+
+type ProductTagsNode =
+  | { readonly __typename: 'Product'; readonly id: string; readonly tags: readonly string[] }
+  | { readonly __typename: string };
+type ProductTagsResponse = { readonly nodes: readonly (ProductTagsNode | null)[] };
+
+// Re-read each product's tags and return the ids that are NOT actually carrying GIFT_TAG. Used as a
+// post-tag verification: a silent failure (e.g. write_products not truly granted) can leave tagsAdd
+// reporting no userErrors while the tag never persists, which would let a gift self-qualify. The
+// caller treats a non-empty result as fatal (do not mint).
+export async function giftProductsMissingTag(
+  client: AdminGraphqlClient,
+  productIds: readonly string[],
+): Promise<string[]> {
+  if (productIds.length === 0) {
+    return [];
+  }
+  const data = await client.request<ProductTagsResponse>(PRODUCT_TAGS, { ids: productIds });
+  const tagged = new Set<string>();
+  for (const node of data.nodes) {
+    if (node !== null && node.__typename === 'Product') {
+      const product = node as { id: string; tags: readonly string[] };
+      if (product.tags.includes(GIFT_TAG)) {
+        tagged.add(product.id);
+      }
+    }
+  }
+  return productIds.filter((id) => !tagged.has(id));
 }
 
 // Variant convenience: resolve to owning products, then tag/untag them. Returns the product ids.

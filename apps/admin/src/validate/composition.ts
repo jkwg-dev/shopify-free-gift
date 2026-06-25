@@ -11,10 +11,12 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import {
   AdminGraphqlClient,
+  collectionProductCount,
   ensureQualifyingCollection,
   exchangeAccessToken,
   fetchVariantPricing,
   giftProductIdsForVariants,
+  giftProductsMissingTag,
   tagProductsAsGift,
   untagProductsAsGift,
   waitForGiftProductsExcluded,
@@ -39,7 +41,7 @@ import type { ActiveCampaignContext } from './service.js';
 
 // Minimal access scopes the engine actually uses (audited against packages/shopify):
 //   read_products   — gift-variant validation (fetchGiftVariants) + contextualPricing reads
-//   write_products  — tag gift products (GIFT_PRODUCT_TAG) so they drop out of the qualifying
+//   write_products  — tag gift products (GIFT_TAG) so they drop out of the qualifying
 //                     smart collection, and create that collection (BXGY customerBuys scope)
 //   write_discounts — create/deactivate the BXGY gift codes
 //   read_discounts  — the Admin discounts API requires it (we read the created code node back)
@@ -205,6 +207,8 @@ export async function getGiftTagGateway(): Promise<GiftTagGateway> {
     resolveGiftProductIds: (variantIds) => giftProductIdsForVariants(client, variantIds),
     tagProductsAsGift: (productIds) => tagProductsAsGift(client, productIds),
     untagProductsAsGift: (productIds) => untagProductsAsGift(client, productIds),
+    verifyGiftProductsTagged: (productIds) => giftProductsMissingTag(client, productIds),
+    collectionProductCount: (collectionId) => collectionProductCount(client, collectionId),
     waitForGiftProductsExcluded: (collectionId, productIds) =>
       waitForGiftProductsExcluded(client, collectionId, productIds),
   };

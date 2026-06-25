@@ -12,6 +12,7 @@ export {
 export { AdminGraphqlClient } from './client.js';
 
 export {
+  EmptyQualifyingScopeError,
   GiftVariantValidationError,
   ShopifyGraphqlError,
   ShopifyHttpError,
@@ -48,10 +49,11 @@ export {
 
 // BXGY primitive (Phase 5b): the shared qualifying smart collection + gift product tag.
 export {
-  GIFT_PRODUCT_TAG,
+  GIFT_TAG,
   QUALIFYING_COLLECTION_HANDLE,
   ensureQualifyingCollection,
   waitForGiftProductsExcluded,
+  collectionProductCount,
   type QualifyingCollection,
   type WaitOptions,
 } from './collections.js';
@@ -59,6 +61,7 @@ export {
   giftProductIdsForVariants,
   tagProductsAsGift,
   untagProductsAsGift,
+  giftProductsMissingTag,
   tagGiftProducts,
   untagGiftProducts,
 } from './productTags.js';

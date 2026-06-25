@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AdminGraphqlClient } from './client.js';
 import { ShopifyUserError } from './errors.js';
-import { tagGiftProducts, untagGiftProducts } from './productTags.js';
+import { giftProductsMissingTag, tagGiftProducts, untagGiftProducts } from './productTags.js';
 import { mockFetch, parseBody, testConfig } from './test-helpers.js';
 
 const V1 = 'gid://shopify/ProductVariant/1';
@@ -25,7 +25,7 @@ describe('tagGiftProducts', () => {
 
     expect(tagged).toEqual([PRODUCT]);
     expect(calls).toHaveLength(2); // 1 resolve + 1 tagsAdd
-    expect(parseBody(calls[1]!).variables).toEqual({ id: PRODUCT, tags: ['_fge_gift'] });
+    expect(parseBody(calls[1]!).variables).toEqual({ id: PRODUCT, tags: ['app:fge_gift'] });
   });
 
   it('tags each distinct product owning the gift variants', async () => {
@@ -71,6 +71,44 @@ describe('untagGiftProducts', () => {
     const untagged = await untagGiftProducts(client, [V1]);
 
     expect(untagged).toEqual([PRODUCT]);
-    expect(parseBody(calls[1]!).variables).toEqual({ id: PRODUCT, tags: ['_fge_gift'] });
+    expect(parseBody(calls[1]!).variables).toEqual({ id: PRODUCT, tags: ['app:fge_gift'] });
+  });
+});
+
+describe('giftProductsMissingTag (post-tag verification)', () => {
+  const P2 = 'gid://shopify/Product/200';
+  function productNode(id: string, tags: string[]) {
+    return { __typename: 'Product', id, tags };
+  }
+
+  it('returns [] when every product actually carries the gift tag', async () => {
+    const { fetch } = mockFetch([
+      {
+        body: {
+          data: {
+            nodes: [productNode(PRODUCT, ['app:fge_gift']), productNode(P2, ['x', 'app:fge_gift'])],
+          },
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    expect(await giftProductsMissingTag(client, [PRODUCT, P2])).toEqual([]);
+  });
+
+  it('flags products whose tag did NOT persist (silent provisioning failure)', async () => {
+    const { fetch } = mockFetch([
+      {
+        body: { data: { nodes: [productNode(PRODUCT, ['app:fge_gift']), productNode(P2, ['x'])] } },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    expect(await giftProductsMissingTag(client, [PRODUCT, P2])).toEqual([P2]);
+  });
+
+  it('no-ops on empty product list (no Shopify call)', async () => {
+    const { fetch, calls } = mockFetch([]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    expect(await giftProductsMissingTag(client, [])).toEqual([]);
+    expect(calls).toHaveLength(0);
   });
 });

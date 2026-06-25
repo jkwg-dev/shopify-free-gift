@@ -1,6 +1,7 @@
 import type { Money } from '@free-gift-engine/core';
 import type { AdminGraphqlClient } from './client.js';
-import { ShopifyUserError, type UserErrorDetail } from './errors.js';
+import { collectionProductCount } from './collections.js';
+import { EmptyQualifyingScopeError, ShopifyUserError, type UserErrorDetail } from './errors.js';
 import { moneyToDecimalString } from './money.js';
 
 // Which other discount classes this code is allowed to stack with. Required and explicit —
@@ -23,7 +24,7 @@ export type ScopedGiftDiscountInput = {
   // Qualifying-spend threshold in the shop's BASE currency (Shopify converts per market at
   // checkout). Used as the BXGY customerBuys minimum purchase amount.
   readonly minimumSubtotal: Money;
-  // GID of the shared qualifying smart collection (everything NOT tagged _fge_gift). Used as the
+  // GID of the shared qualifying smart collection (everything NOT tagged app:fge_gift). Used as the
   // BXGY customerBuys scope so the THRESHOLD is measured against qualifying items, never the gift.
   readonly qualifyingCollectionId: string;
   // ISO 8601 activation instant. Supplied by the caller — this package keeps no clock.
@@ -77,7 +78,7 @@ function throwOnUserErrors(userErrors: readonly UserErrorDetail[]): void {
 
 // Build the DiscountCodeBxgyInput for a reusable "spend X, get the gift(s) free" code.
 // - customerBuys: minimum purchase AMOUNT (base currency) on the qualifying collection (gifts
-//   excluded by the _fge_gift tag), so the gift can't self-qualify.
+//   excluded by the app:fge_gift tag), so the gift can't self-qualify.
 // - customerGets: the gift variant(s) at 100% off via discountOnQuantity (BXGY rejects top-level
 //   percentage); quantity = number of gift variants (one unit of each, e.g. an AND set).
 // Reusable semantics: NO usageLimit, NO appliesOncePerCustomer — one code per (campaign,tier,set).
@@ -115,6 +116,16 @@ export async function createScopedGiftDiscount(
     throw new ShopifyUserError([
       { message: 'createScopedGiftDiscount requires at least one gift variant' },
     ]);
+  }
+  // Precondition: the customerBuys scope must be a REAL, NON-EMPTY collection. A missing collection
+  // (provisioning silently failed) or an empty one makes the threshold void, so the BXGY gift would
+  // always be free ($0 leak). Refuse to mint — do NOT call discountCodeBxgyCreate.
+  const qualifyingCount = await collectionProductCount(client, input.qualifyingCollectionId);
+  if (qualifyingCount === null) {
+    throw new EmptyQualifyingScopeError(input.qualifyingCollectionId, 'missing');
+  }
+  if (qualifyingCount === 0) {
+    throw new EmptyQualifyingScopeError(input.qualifyingCollectionId, 'empty');
   }
   const data = await client.request<CreateResponse>(CREATE_MUTATION, {
     bxgyCodeDiscount: buildBxgyCodeDiscount(input),

@@ -6,10 +6,17 @@ import {
   type ScopedGiftDiscountInput,
 } from './discounts.js';
 import { AdminGraphqlClient } from './client.js';
-import { ShopifyUserError } from './errors.js';
+import { EmptyQualifyingScopeError, ShopifyUserError } from './errors.js';
 import { mockFetch, parseBody, testConfig } from './test-helpers.js';
 
 const COLLECTION = 'gid://shopify/Collection/777';
+
+// The mint precondition queries the qualifying collection's product count BEFORE the create
+// mutation, so a successful create is a two-call sequence: [count, create].
+const countOk = (count: number) => ({
+  body: { data: { collection: { id: COLLECTION, productsCount: { count } } } },
+});
+const countMissing = { body: { data: { collection: null } } };
 
 const baseInput: ScopedGiftDiscountInput = {
   code: 'GIFT-OPAQUE-7F3A',
@@ -54,23 +61,23 @@ function getBxgy(body: ReturnType<typeof parseBody>): BxgyView {
 
 describe('createScopedGiftDiscount — BXGY payload', () => {
   it('measures the threshold on the qualifying collection (customerBuys), NOT the gift', async () => {
-    const { fetch, calls } = mockFetch([createOk]);
+    const { fetch, calls } = mockFetch([countOk(5), createOk]);
     const client = new AdminGraphqlClient(testConfig(fetch));
 
     await createScopedGiftDiscount(client, baseInput);
 
-    const input = getBxgy(parseBody(calls[0]!));
+    const input = getBxgy(parseBody(calls[1]!));
     expect(input.customerBuys.value.amount).toBe('100.00'); // base-currency threshold
     expect(input.customerBuys.items.collections.add).toEqual([COLLECTION]);
   });
 
   it('gives the resolved gift variant(s) free via discountOnQuantity (one unit each)', async () => {
-    const { fetch, calls } = mockFetch([createOk]);
+    const { fetch, calls } = mockFetch([countOk(5), createOk]);
     const client = new AdminGraphqlClient(testConfig(fetch));
 
     await createScopedGiftDiscount(client, baseInput);
 
-    const input = getBxgy(parseBody(calls[0]!));
+    const input = getBxgy(parseBody(calls[1]!));
     expect(input.customerGets.items.products.productVariantsToAdd).toEqual(
       baseInput.giftVariantIds,
     );
@@ -79,12 +86,12 @@ describe('createScopedGiftDiscount — BXGY payload', () => {
   });
 
   it('forwards combinesWith explicitly and stays reusable (no single-use limits)', async () => {
-    const { fetch, calls } = mockFetch([createOk]);
+    const { fetch, calls } = mockFetch([countOk(5), createOk]);
     const client = new AdminGraphqlClient(testConfig(fetch));
 
     await createScopedGiftDiscount(client, baseInput);
 
-    const input = getBxgy(parseBody(calls[0]!));
+    const input = getBxgy(parseBody(calls[1]!));
     expect(input.combinesWith).toEqual(baseInput.combinesWith);
     expect(input.context).toEqual({ all: 'ALL' });
     expect('usageLimit' in input).toBe(false);
@@ -93,7 +100,7 @@ describe('createScopedGiftDiscount — BXGY payload', () => {
   });
 
   it('returns the opaque code and created discount id', async () => {
-    const { fetch } = mockFetch([createOk]);
+    const { fetch } = mockFetch([countOk(5), createOk]);
     const client = new AdminGraphqlClient(testConfig(fetch));
 
     await expect(createScopedGiftDiscount(client, baseInput)).resolves.toEqual({
@@ -111,8 +118,32 @@ describe('createScopedGiftDiscount — BXGY payload', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('REFUSES to mint when the qualifying collection is missing (no create call)', async () => {
+    const { fetch, calls } = mockFetch([countMissing]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    await expect(createScopedGiftDiscount(client, baseInput)).rejects.toBeInstanceOf(
+      EmptyQualifyingScopeError,
+    );
+    // Only the count query ran — discountCodeBxgyCreate was NOT called against a missing scope.
+    expect(calls).toHaveLength(1);
+    expect(parseBody(calls[0]!).query).not.toContain('discountCodeBxgyCreate');
+  });
+
+  it('REFUSES to mint when the qualifying collection is empty (no create call)', async () => {
+    const { fetch, calls } = mockFetch([countOk(0)]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    await expect(createScopedGiftDiscount(client, baseInput)).rejects.toBeInstanceOf(
+      EmptyQualifyingScopeError,
+    );
+    expect(calls).toHaveLength(1);
+    expect(parseBody(calls[0]!).query).not.toContain('discountCodeBxgyCreate');
+  });
+
   it('throws ShopifyUserError when the mutation reports userErrors', async () => {
     const { fetch } = mockFetch([
+      countOk(5),
       {
         body: {
           data: {

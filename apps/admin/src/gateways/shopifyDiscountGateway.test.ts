@@ -9,14 +9,26 @@ import { describe, expect, it } from 'vitest';
 import { DuplicateDiscountCodeError } from '../ports.js';
 import { ShopifyDiscountGatewayAdapter } from './shopifyDiscountGateway.js';
 
-function clientReturning(body: unknown): AdminGraphqlClient {
-  const fetch: FetchLike = () =>
-    Promise.resolve({
+// createScopedGiftDiscount first queries the qualifying collection's product count (mint
+// precondition), THEN runs discountCodeBxgyCreate. So the client must answer two calls: a non-empty
+// count, then the create body under test.
+const COUNT_OK = {
+  data: { collection: { id: 'gid://shopify/Collection/test', productsCount: { count: 9 } } },
+};
+
+function clientReturning(createBodyResponse: unknown): AdminGraphqlClient {
+  const bodies = [COUNT_OK, createBodyResponse];
+  let call = 0;
+  const fetch: FetchLike = () => {
+    const body = bodies[Math.min(call, bodies.length - 1)];
+    call += 1;
+    return Promise.resolve({
       ok: true,
       status: 200,
       json: () => Promise.resolve(body),
       text: () => Promise.resolve(''),
     });
+  };
   return new AdminGraphqlClient({
     shopDomain: 's.myshopify.com',
     accessToken: 't',

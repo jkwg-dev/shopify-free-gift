@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AdminGraphqlClient } from './client.js';
 import {
+  collectionProductCount,
   ensureQualifyingCollection,
   QUALIFYING_COLLECTION_HANDLE,
   waitForGiftProductsExcluded,
@@ -59,7 +60,7 @@ describe('ensureQualifyingCollection', () => {
     expect(input.handle).toBe(QUALIFYING_COLLECTION_HANDLE);
     expect(input.ruleSet.appliedDisjunctively).toBe(false);
     expect(input.ruleSet.rules).toEqual([
-      { column: 'TAG', relation: 'NOT_EQUALS', condition: '_fge_gift' },
+      { column: 'TAG', relation: 'NOT_EQUALS', condition: 'app:fge_gift' },
     ]);
   });
 
@@ -121,5 +122,32 @@ describe('waitForGiftProductsExcluded', () => {
       sleep: noSleep,
     });
     expect(ok).toBe(false);
+  });
+});
+
+describe('collectionProductCount', () => {
+  it('returns the product count for an existing collection', async () => {
+    const { fetch } = mockFetch([
+      { body: { data: { collection: { id: COLLECTION_GID, productsCount: { count: 16 } } } } },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    expect(await collectionProductCount(client, COLLECTION_GID)).toBe(16);
+  });
+
+  it('returns null when the collection does not exist (provisioning failed)', async () => {
+    const { fetch } = mockFetch([{ body: { data: { collection: null } } }]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    expect(await collectionProductCount(client, COLLECTION_GID)).toBeNull();
+  });
+
+  it('returns 0 for an empty collection', async () => {
+    const { fetch } = mockFetch([
+      { body: { data: { collection: { id: COLLECTION_GID, productsCount: { count: 0 } } } } },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    expect(await collectionProductCount(client, COLLECTION_GID)).toBe(0);
   });
 });
