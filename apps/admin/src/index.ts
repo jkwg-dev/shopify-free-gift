@@ -24,7 +24,7 @@ export {
 } from './store/giftCodeMapping.js';
 
 export { encryptToken, decryptToken, TokenDecryptionError } from './security/crypto.js';
-export { verifyOAuthHmac, verifyWebhookHmac } from './security/hmac.js';
+export { verifyOAuthHmac, verifyWebhookHmac, verifyAppProxyHmac } from './security/hmac.js';
 export {
   verifySessionToken,
   SessionTokenError,
@@ -56,3 +56,30 @@ export {
   PrismaGiftCodeMappingTable,
 } from './db/repositories.js';
 export { isPrismaUniqueViolation, type PrismaLike } from './db/prismaLike.js';
+
+// --- Phase 4: /validate (public storefront endpoint behind a Shopify App Proxy) ---
+export type {
+  ValidateRequest,
+  ValidateCartLineInput,
+  ValidateResult,
+  GiftAward,
+  ValidateError,
+  ValidateErrorCode,
+} from './validate/contract.js';
+export {
+  resolveValidate,
+  ValidateBadRequestError,
+  type ActiveCampaignContext,
+  type ValidateServiceDeps,
+} from './validate/service.js';
+export {
+  handleValidate,
+  type ValidateHttpRequest,
+  type ValidateHttpResponse,
+  type ValidateHandlerDeps,
+} from './validate/handler.js';
+export {
+  FixedWindowRateLimiter,
+  type RateLimiter,
+  type FixedWindowOptions,
+} from './validate/rateLimit.js';

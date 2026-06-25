@@ -38,6 +38,8 @@ export {
 
 export { fetchGiftVariants, type GiftVariant } from './products.js';
 
+export { fetchVariantPricing, type VariantPricing } from './pricing.js';
+
 export {
   APP_UNINSTALLED_TOPIC,
   registerAppUninstalledWebhook,
