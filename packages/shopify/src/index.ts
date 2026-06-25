@@ -46,16 +46,22 @@ export {
   type AccessTokenResult,
 } from './oauth.js';
 
-// BXGY groundwork (Phase 5b primitive switch): the qualifying smart collection + gift product tag.
+// BXGY primitive (Phase 5b): the shared qualifying smart collection + gift product tag.
 export {
   GIFT_PRODUCT_TAG,
-  qualifyingCollectionHandle,
+  QUALIFYING_COLLECTION_HANDLE,
   ensureQualifyingCollection,
   waitForGiftProductsExcluded,
   type QualifyingCollection,
   type WaitOptions,
 } from './collections.js';
-export { tagGiftProducts, untagGiftProducts } from './productTags.js';
+export {
+  giftProductIdsForVariants,
+  tagProductsAsGift,
+  untagProductsAsGift,
+  tagGiftProducts,
+  untagGiftProducts,
+} from './productTags.js';
 
 export {
   APP_UNINSTALLED_TOPIC,

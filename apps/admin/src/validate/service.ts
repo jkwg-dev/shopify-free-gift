@@ -45,9 +45,12 @@ export type ValidateServiceDeps = {
   ) => Promise<readonly VariantPricing[]>;
   // Concurrency-safe get-or-create for the reusable scoped gift code.
   readonly mappingStore: GiftCodeMappingStore;
+  // GID of the shared qualifying smart collection (BXGY customerBuys scope). Provisioned at campaign
+  // activation (tag gifts → ensure collection → wait for exclusion) before any code is minted.
+  readonly qualifyingCollectionId: string;
   readonly now: () => Date;
-  // Stacking policy for minted gift codes. Defaults to fully non-combinable: suppression relies on
-  // a higher-tier code carrying a higher minimum, which stacking would defeat.
+  // Stacking policy for minted gift codes. Defaults to GIFT_COMBINES_WITH (productDiscounts:false so
+  // gift offers are mutually exclusive; combines with order/shipping discounts).
   readonly giftCombinesWith?: DiscountCombinesWith;
 };
 
@@ -59,10 +62,14 @@ export class ValidateBadRequestError extends Error {
   }
 }
 
-const NON_COMBINABLE: DiscountCombinesWith = {
+// Gift codes are mutually exclusive at the discount layer via productDiscounts:false (the core
+// suppression requirement; also backed by server highest-only resolution). They MAY coexist with
+// order/shipping discounts. GreenTee runs promos via direct price edits (not product discount
+// codes), so "gift not combinable with other product discounts" is an accepted side effect.
+const GIFT_COMBINES_WITH: DiscountCombinesWith = {
   productDiscounts: false,
-  orderDiscounts: false,
-  shippingDiscounts: false,
+  orderDiscounts: true,
+  shippingDiscounts: true,
 };
 
 function giftSetVariantIds(campaign: Campaign): Set<string> {
@@ -222,8 +229,9 @@ export async function resolveValidate(
       title: `${campaign.name} — tier ${domainTier.position}`,
       giftVariantIds,
       minimumSubtotal: domainTier.baseThreshold,
+      qualifyingCollectionId: deps.qualifyingCollectionId,
       startsAt: campaign.startsAt.toISOString(),
-      combinesWith: deps.giftCombinesWith ?? NON_COMBINABLE,
+      combinesWith: deps.giftCombinesWith ?? GIFT_COMBINES_WITH,
     },
   );
   if (mapping.code === null) {

@@ -18,11 +18,14 @@ export type ScopedGiftDiscountInput = {
   readonly code: string;
   // Merchant-facing label shown in the Shopify admin discounts list.
   readonly title: string;
-  // Resolved gift variant GIDs — the exact variants discounted to $0.
+  // Resolved gift variant GIDs — the exact variants the shopper gets free (customerGets).
   readonly giftVariantIds: readonly string[];
-  // Minimum subtotal in the shop's BASE currency, so one code serves every market; Shopify
-  // applies native market conversion at checkout.
+  // Qualifying-spend threshold in the shop's BASE currency (Shopify converts per market at
+  // checkout). Used as the BXGY customerBuys minimum purchase amount.
   readonly minimumSubtotal: Money;
+  // GID of the shared qualifying smart collection (everything NOT tagged _fge_gift). Used as the
+  // BXGY customerBuys scope so the THRESHOLD is measured against qualifying items, never the gift.
+  readonly qualifyingCollectionId: string;
   // ISO 8601 activation instant. Supplied by the caller — this package keeps no clock.
   readonly startsAt: string;
   readonly combinesWith: DiscountCombinesWith;
@@ -33,8 +36,13 @@ export type CreatedDiscount = {
   readonly discountId: string;
 };
 
-const CREATE_MUTATION = `mutation CreateScopedGiftDiscount($basicCodeDiscount: DiscountCodeBasicInput!) {
-  discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
+// BXGY ("Buy X Get Y"), not "amount off products": an amount-off-products discount measures its
+// minimum against the DISCOUNTED (gift) items, so an expensive gift self-qualifies and a cheap gift
+// can never qualify. BXGY separates customerBuys (qualifying spend on the qualifying collection,
+// excluding gifts) from customerGets (the free gift), giving a real server-side backstop — drop
+// below the threshold and Shopify releases the gift. (Confirmed via live spike.)
+const CREATE_MUTATION = `mutation CreateScopedGiftDiscount($bxgyCodeDiscount: DiscountCodeBxgyInput!) {
+  discountCodeBxgyCreate(bxgyCodeDiscount: $bxgyCodeDiscount) {
     codeDiscountNode { id }
     userErrors { field message code }
   }
@@ -48,7 +56,7 @@ const DEACTIVATE_MUTATION = `mutation DeactivateDiscount($id: ID!) {
 }`;
 
 type CreateResponse = {
-  readonly discountCodeBasicCreate: {
+  readonly discountCodeBxgyCreate: {
     readonly codeDiscountNode: { readonly id: string } | null;
     readonly userErrors: readonly UserErrorDetail[];
   };
@@ -67,24 +75,34 @@ function throwOnUserErrors(userErrors: readonly UserErrorDetail[]): void {
   }
 }
 
-// Build the DiscountCodeBasicInput for a 100%-off, variant-scoped, reusable gift code.
-// Reusable semantics: NO usageLimit (unlimited) and NO appliesOncePerCustomer — the same
-// code is shared by every shopper in this (campaign, tier, gift-set). The discount only
-// reduces the scoped variants when present and the minimum is met; it never adds the gift.
-function buildBasicCodeDiscount(input: ScopedGiftDiscountInput): Record<string, unknown> {
+// Build the DiscountCodeBxgyInput for a reusable "spend X, get the gift(s) free" code.
+// - customerBuys: minimum purchase AMOUNT (base currency) on the qualifying collection (gifts
+//   excluded by the _fge_gift tag), so the gift can't self-qualify.
+// - customerGets: the gift variant(s) at 100% off via discountOnQuantity (BXGY rejects top-level
+//   percentage); quantity = number of gift variants (one unit of each, e.g. an AND set).
+// Reusable semantics: NO usageLimit, NO appliesOncePerCustomer — one code per (campaign,tier,set).
+// NOTE (spike): when customerBuys is a narrow product scope, Shopify requires the amount >= the
+// cheapest prerequisite item; the SHARED store-wide qualifying collection contains sub-threshold
+// items so any tier threshold is valid. If it isn't, Shopify returns a userError (surfaced below).
+function buildBxgyCodeDiscount(input: ScopedGiftDiscountInput): Record<string, unknown> {
   return {
     title: input.title,
     code: input.code,
     startsAt: input.startsAt,
     combinesWith: input.combinesWith,
     context: { all: 'ALL' },
-    minimumRequirement: {
-      subtotal: { greaterThanOrEqualToSubtotal: moneyToDecimalString(input.minimumSubtotal) },
+    customerBuys: {
+      value: { amount: moneyToDecimalString(input.minimumSubtotal) },
+      items: { collections: { add: [input.qualifyingCollectionId] } },
     },
     customerGets: {
-      value: { percentage: 1.0 },
+      value: {
+        discountOnQuantity: {
+          quantity: String(input.giftVariantIds.length),
+          effect: { percentage: 1.0 },
+        },
+      },
       items: { products: { productVariantsToAdd: input.giftVariantIds } },
-      appliesOnOneTimePurchase: true,
     },
   };
 }
@@ -93,18 +111,24 @@ export async function createScopedGiftDiscount(
   client: AdminGraphqlClient,
   input: ScopedGiftDiscountInput,
 ): Promise<CreatedDiscount> {
+  if (input.giftVariantIds.length === 0) {
+    throw new ShopifyUserError([
+      { message: 'createScopedGiftDiscount requires at least one gift variant' },
+    ]);
+  }
   const data = await client.request<CreateResponse>(CREATE_MUTATION, {
-    basicCodeDiscount: buildBasicCodeDiscount(input),
+    bxgyCodeDiscount: buildBxgyCodeDiscount(input),
   });
-  const result = data.discountCodeBasicCreate;
+  const result = data.discountCodeBxgyCreate;
   throwOnUserErrors(result.userErrors);
   if (result.codeDiscountNode === null) {
-    throw new ShopifyUserError([{ message: 'discountCodeBasicCreate returned no node' }]);
+    throw new ShopifyUserError([{ message: 'discountCodeBxgyCreate returned no node' }]);
   }
   return { code: input.code, discountId: result.codeDiscountNode.id };
 }
 
 // Codes are immutable: superseding (deactivate + create new) is the only update path.
+// discountCodeDeactivate operates on any DiscountCodeNode, so it handles BXGY and basic codes alike.
 export async function deactivateDiscount(
   client: AdminGraphqlClient,
   discountId: string,

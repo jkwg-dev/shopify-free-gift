@@ -98,3 +98,10 @@ export {
   GIFT_ENGINE_SCOPES,
 } from './validate/composition.js';
 export { resolveRootEntry, type RootEntryResult, type RootEntryDeps } from './install/rootEntry.js';
+export {
+  provisionGifts,
+  reconcileGiftTagsOnTeardown,
+  type GiftTagGateway,
+  type ProvisionResult,
+} from './services/giftLifecycle.js';
+export { getGiftTagGateway } from './validate/composition.js';

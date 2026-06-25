@@ -2,9 +2,11 @@ import type { AdminGraphqlClient } from './client.js';
 import { GIFT_PRODUCT_TAG } from './collections.js';
 import { ShopifyUserError, type UserErrorDetail } from './errors.js';
 
-// Tag/untag the PRODUCTS that own the given gift variants with GIFT_PRODUCT_TAG, so they drop out of
-// the qualifying smart collection. Resolves each variant to its product first (tags are per-product).
-// Idempotent: tagsAdd is a no-op if the tag already exists; tagsRemove a no-op if absent.
+// Tag/untag PRODUCTS with GIFT_PRODUCT_TAG so they drop out of the qualifying smart collection.
+// Two levels: by product id (what the admin tag-lifecycle guard uses — it reconciles at product
+// granularity across active campaigns) and a variant convenience that resolves variants -> products
+// first. Idempotent: tagsAdd no-ops an existing tag; tagsRemove no-ops an absent one. Tags are
+// per-product, so tagging removes ALL of a product's variants from the qualifying scope.
 
 const PRODUCT_IDS_FOR_VARIANTS = `query ProductIdsForVariants($ids: [ID!]!) {
   nodes(ids: $ids) {
@@ -39,8 +41,8 @@ function isVariantNode(
   return node !== null && node.__typename === 'ProductVariant';
 }
 
-// Resolve gift variant GIDs to their owning product GIDs (de-duplicated; tags are per product).
-async function productIdsForVariants(
+// Resolve gift variant GIDs to their owning product GIDs (de-duplicated).
+export async function giftProductIdsForVariants(
   client: AdminGraphqlClient,
   variantIds: readonly string[],
 ): Promise<string[]> {
@@ -57,11 +59,10 @@ async function productIdsForVariants(
   return [...productIds];
 }
 
-export async function tagGiftProducts(
+export async function tagProductsAsGift(
   client: AdminGraphqlClient,
-  variantIds: readonly string[],
-): Promise<readonly string[]> {
-  const productIds = await productIdsForVariants(client, variantIds);
+  productIds: readonly string[],
+): Promise<void> {
   for (const id of productIds) {
     const data = await client.request<TagsResponse>(TAGS_ADD, { id, tags: [GIFT_PRODUCT_TAG] });
     const errors = data.tagsAdd?.userErrors ?? [];
@@ -69,14 +70,12 @@ export async function tagGiftProducts(
       throw new ShopifyUserError(errors);
     }
   }
-  return productIds;
 }
 
-export async function untagGiftProducts(
+export async function untagProductsAsGift(
   client: AdminGraphqlClient,
-  variantIds: readonly string[],
-): Promise<readonly string[]> {
-  const productIds = await productIdsForVariants(client, variantIds);
+  productIds: readonly string[],
+): Promise<void> {
   for (const id of productIds) {
     const data = await client.request<UntagResponse>(TAGS_REMOVE, { id, tags: [GIFT_PRODUCT_TAG] });
     const errors = data.tagsRemove?.userErrors ?? [];
@@ -84,5 +83,23 @@ export async function untagGiftProducts(
       throw new ShopifyUserError(errors);
     }
   }
+}
+
+// Variant convenience: resolve to owning products, then tag/untag them. Returns the product ids.
+export async function tagGiftProducts(
+  client: AdminGraphqlClient,
+  variantIds: readonly string[],
+): Promise<readonly string[]> {
+  const productIds = await giftProductIdsForVariants(client, variantIds);
+  await tagProductsAsGift(client, productIds);
+  return productIds;
+}
+
+export async function untagGiftProducts(
+  client: AdminGraphqlClient,
+  variantIds: readonly string[],
+): Promise<readonly string[]> {
+  const productIds = await giftProductIdsForVariants(client, variantIds);
+  await untagProductsAsGift(client, productIds);
   return productIds;
 }

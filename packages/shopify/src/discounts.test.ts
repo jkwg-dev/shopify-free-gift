@@ -1,27 +1,30 @@
 import { money } from '@free-gift-engine/core';
 import { describe, expect, it } from 'vitest';
-import { AdminGraphqlClient } from './client.js';
 import {
   createScopedGiftDiscount,
   deactivateDiscount,
   type ScopedGiftDiscountInput,
 } from './discounts.js';
+import { AdminGraphqlClient } from './client.js';
 import { ShopifyUserError } from './errors.js';
 import { mockFetch, parseBody, testConfig } from './test-helpers.js';
+
+const COLLECTION = 'gid://shopify/Collection/777';
 
 const baseInput: ScopedGiftDiscountInput = {
   code: 'GIFT-OPAQUE-7F3A',
   title: 'Campaign 12 / Gold / set abc123',
   giftVariantIds: ['gid://shopify/ProductVariant/1', 'gid://shopify/ProductVariant/2'],
   minimumSubtotal: money(10000, 'USD'),
+  qualifyingCollectionId: COLLECTION,
   startsAt: '2026-06-01T00:00:00.000Z',
-  combinesWith: { productDiscounts: false, orderDiscounts: true, shippingDiscounts: false },
+  combinesWith: { productDiscounts: false, orderDiscounts: true, shippingDiscounts: true },
 };
 
 const createOk = {
   body: {
     data: {
-      discountCodeBasicCreate: {
+      discountCodeBxgyCreate: {
         codeDiscountNode: { id: 'gid://shopify/DiscountCodeNode/99' },
         userErrors: [],
       },
@@ -29,54 +32,59 @@ const createOk = {
   },
 };
 
-type BasicCodeDiscountView = {
+type BxgyView = {
   readonly code: string;
   readonly combinesWith: unknown;
   readonly context: unknown;
-  readonly minimumRequirement: { subtotal: { greaterThanOrEqualToSubtotal: string } };
+  readonly customerBuys: {
+    value: { amount: string };
+    items: { collections: { add: string[] } };
+  };
   readonly customerGets: {
-    value: { percentage: number };
+    value: { discountOnQuantity: { quantity: string; effect: { percentage: number } } };
     items: { products: { productVariantsToAdd: string[] } };
   };
   readonly usageLimit?: unknown;
   readonly appliesOncePerCustomer?: unknown;
 };
 
-function getBasicCodeDiscount(body: ReturnType<typeof parseBody>): BasicCodeDiscountView {
-  return body.variables.basicCodeDiscount as BasicCodeDiscountView;
+function getBxgy(body: ReturnType<typeof parseBody>): BxgyView {
+  return body.variables.bxgyCodeDiscount as BxgyView;
 }
 
-describe('createScopedGiftDiscount — payload', () => {
-  it('mints a 100%-off discount scoped to exactly the resolved variants', async () => {
+describe('createScopedGiftDiscount — BXGY payload', () => {
+  it('measures the threshold on the qualifying collection (customerBuys), NOT the gift', async () => {
     const { fetch, calls } = mockFetch([createOk]);
     const client = new AdminGraphqlClient(testConfig(fetch));
 
     await createScopedGiftDiscount(client, baseInput);
 
-    const input = getBasicCodeDiscount(parseBody(calls[0]!));
-    expect(input.customerGets.value.percentage).toBe(1);
+    const input = getBxgy(parseBody(calls[0]!));
+    expect(input.customerBuys.value.amount).toBe('100.00'); // base-currency threshold
+    expect(input.customerBuys.items.collections.add).toEqual([COLLECTION]);
+  });
+
+  it('gives the resolved gift variant(s) free via discountOnQuantity (one unit each)', async () => {
+    const { fetch, calls } = mockFetch([createOk]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    await createScopedGiftDiscount(client, baseInput);
+
+    const input = getBxgy(parseBody(calls[0]!));
     expect(input.customerGets.items.products.productVariantsToAdd).toEqual(
       baseInput.giftVariantIds,
     );
+    expect(input.customerGets.value.discountOnQuantity.quantity).toBe('2'); // 2 gift variants
+    expect(input.customerGets.value.discountOnQuantity.effect.percentage).toBe(1);
   });
 
-  it('sets the minimum subtotal in the base currency as a decimal string', async () => {
+  it('forwards combinesWith explicitly and stays reusable (no single-use limits)', async () => {
     const { fetch, calls } = mockFetch([createOk]);
     const client = new AdminGraphqlClient(testConfig(fetch));
 
     await createScopedGiftDiscount(client, baseInput);
 
-    const input = getBasicCodeDiscount(parseBody(calls[0]!));
-    expect(input.minimumRequirement.subtotal.greaterThanOrEqualToSubtotal).toBe('100.00');
-  });
-
-  it('forwards combinesWith explicitly and makes the discount reusable (no single-use limits)', async () => {
-    const { fetch, calls } = mockFetch([createOk]);
-    const client = new AdminGraphqlClient(testConfig(fetch));
-
-    await createScopedGiftDiscount(client, baseInput);
-
-    const input = getBasicCodeDiscount(parseBody(calls[0]!));
+    const input = getBxgy(parseBody(calls[0]!));
     expect(input.combinesWith).toEqual(baseInput.combinesWith);
     expect(input.context).toEqual({ all: 'ALL' });
     expect('usageLimit' in input).toBe(false);
@@ -94,12 +102,21 @@ describe('createScopedGiftDiscount — payload', () => {
     });
   });
 
+  it('rejects an empty gift set before calling Shopify', async () => {
+    const { fetch, calls } = mockFetch([]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    await expect(
+      createScopedGiftDiscount(client, { ...baseInput, giftVariantIds: [] }),
+    ).rejects.toBeInstanceOf(ShopifyUserError);
+    expect(calls).toHaveLength(0);
+  });
+
   it('throws ShopifyUserError when the mutation reports userErrors', async () => {
     const { fetch } = mockFetch([
       {
         body: {
           data: {
-            discountCodeBasicCreate: {
+            discountCodeBxgyCreate: {
               codeDiscountNode: null,
               userErrors: [{ field: ['code'], message: 'Code already exists', code: 'TAKEN' }],
             },
@@ -114,7 +131,7 @@ describe('createScopedGiftDiscount — payload', () => {
   });
 });
 
-describe('deactivateDiscount', () => {
+describe('deactivateDiscount (type-agnostic — handles BXGY and basic)', () => {
   it('deactivates by id', async () => {
     const { fetch, calls } = mockFetch([
       {

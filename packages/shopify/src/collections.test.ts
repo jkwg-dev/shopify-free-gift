@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AdminGraphqlClient } from './client.js';
 import {
   ensureQualifyingCollection,
-  qualifyingCollectionHandle,
+  QUALIFYING_COLLECTION_HANDLE,
   waitForGiftProductsExcluded,
 } from './collections.js';
 import { ShopifyUserError } from './errors.js';
@@ -11,31 +11,33 @@ import { mockFetch, parseBody, testConfig } from './test-helpers.js';
 const COLLECTION_GID = 'gid://shopify/Collection/1';
 
 describe('ensureQualifyingCollection', () => {
-  it('reuses an existing collection (idempotent by handle, no create)', async () => {
+  it('reuses the existing shared collection (idempotent by handle, no create)', async () => {
     const { fetch, calls } = mockFetch([
       {
         body: {
-          data: { collectionByIdentifier: { id: COLLECTION_GID, handle: 'fge-qualifying-c1' } },
+          data: {
+            collectionByIdentifier: { id: COLLECTION_GID, handle: QUALIFYING_COLLECTION_HANDLE },
+          },
         },
       },
     ]);
     const client = new AdminGraphqlClient(testConfig(fetch));
 
-    const result = await ensureQualifyingCollection(client, 'c1');
+    const result = await ensureQualifyingCollection(client);
 
     expect(result.id).toBe(COLLECTION_GID);
     expect(calls).toHaveLength(1); // only the lookup; no create
-    expect(parseBody(calls[0]!).variables).toEqual({ handle: 'fge-qualifying-c1' });
+    expect(parseBody(calls[0]!).variables).toEqual({ handle: QUALIFYING_COLLECTION_HANDLE });
   });
 
-  it('creates a smart collection with the tag NOT_EQUALS rule when none exists', async () => {
+  it('creates the shared smart collection with the tag NOT_EQUALS rule when none exists', async () => {
     const { fetch, calls } = mockFetch([
       { body: { data: { collectionByIdentifier: null } } },
       {
         body: {
           data: {
             collectionCreate: {
-              collection: { id: COLLECTION_GID, handle: 'fge-qualifying-c1' },
+              collection: { id: COLLECTION_GID, handle: QUALIFYING_COLLECTION_HANDLE },
               userErrors: [],
             },
           },
@@ -44,7 +46,7 @@ describe('ensureQualifyingCollection', () => {
     ]);
     const client = new AdminGraphqlClient(testConfig(fetch));
 
-    const result = await ensureQualifyingCollection(client, 'c1');
+    const result = await ensureQualifyingCollection(client);
 
     expect(result.id).toBe(COLLECTION_GID);
     const input = parseBody(calls[1]!).variables['input'] as {
@@ -54,7 +56,7 @@ describe('ensureQualifyingCollection', () => {
         rules: { column: string; relation: string; condition: string }[];
       };
     };
-    expect(input.handle).toBe('fge-qualifying-c1');
+    expect(input.handle).toBe(QUALIFYING_COLLECTION_HANDLE);
     expect(input.ruleSet.appliedDisjunctively).toBe(false);
     expect(input.ruleSet.rules).toEqual([
       { column: 'TAG', relation: 'NOT_EQUALS', condition: '_fge_gift' },
@@ -73,13 +75,7 @@ describe('ensureQualifyingCollection', () => {
       },
     ]);
     const client = new AdminGraphqlClient(testConfig(fetch));
-    await expect(ensureQualifyingCollection(client, 'c1')).rejects.toBeInstanceOf(ShopifyUserError);
-  });
-});
-
-describe('qualifyingCollectionHandle', () => {
-  it('is deterministic per campaign', () => {
-    expect(qualifyingCollectionHandle('c1')).toBe('fge-qualifying-c1');
+    await expect(ensureQualifyingCollection(client)).rejects.toBeInstanceOf(ShopifyUserError);
   });
 });
 

@@ -11,12 +11,10 @@ export const GIFT_PRODUCT_TAG = '_fge_gift';
 export type QualifyingCollection = { readonly id: string; readonly handle: string };
 
 // Smart-collection rule "tag NOT_EQUALS _fge_gift" auto-includes every non-gift product (verified
-// supported: CollectionRuleColumn.TAG + CollectionRuleRelation.NOT_EQUALS). One collection per
-// campaign, looked up by a deterministic handle for idempotency. (The rule is campaign-independent,
-// so all campaigns' collections are effectively identical — see the Step 1 report.)
-export function qualifyingCollectionHandle(campaignId: string): string {
-  return `fge-qualifying-${campaignId}`;
-}
+// supported: CollectionRuleColumn.TAG + CollectionRuleRelation.NOT_EQUALS). The rule is
+// campaign-independent, so ONE SHARED collection serves every campaign/tier (looked up by this
+// deterministic handle for idempotency).
+export const QUALIFYING_COLLECTION_HANDLE = 'fge-qualifying';
 
 const COLLECTION_BY_HANDLE = `query QualifyingCollectionByHandle($handle: String!) {
   collectionByIdentifier(identifier: { handle: $handle }) { id handle }
@@ -37,13 +35,12 @@ type CreateResponse = {
   };
 };
 
-// Create-or-reuse the campaign's qualifying smart collection (idempotent by handle). The collection
-// auto-includes all products NOT tagged GIFT_PRODUCT_TAG.
+// Create-or-reuse the single shared qualifying smart collection (idempotent by handle). The
+// collection auto-includes all products NOT tagged GIFT_PRODUCT_TAG.
 export async function ensureQualifyingCollection(
   client: AdminGraphqlClient,
-  campaignId: string,
 ): Promise<QualifyingCollection> {
-  const handle = qualifyingCollectionHandle(campaignId);
+  const handle = QUALIFYING_COLLECTION_HANDLE;
   const existing = await client.request<ByHandleResponse>(COLLECTION_BY_HANDLE, { handle });
   if (existing.collectionByIdentifier !== null) {
     return existing.collectionByIdentifier;
@@ -51,7 +48,7 @@ export async function ensureQualifyingCollection(
 
   const data = await client.request<CreateResponse>(COLLECTION_CREATE, {
     input: {
-      title: `Free gift — qualifying products (${campaignId})`,
+      title: 'Free gift — qualifying products',
       handle,
       ruleSet: {
         appliedDisjunctively: false,

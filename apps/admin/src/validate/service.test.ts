@@ -125,6 +125,7 @@ function makeDeps(
       ),
     priceVariants: makePricer(options.prices ?? DEFAULT_PRICES),
     mappingStore: store,
+    qualifyingCollectionId: 'gid://shopify/Collection/test',
     now: options.now ?? (() => NOW),
   };
   return { deps, gateway };

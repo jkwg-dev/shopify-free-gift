@@ -80,6 +80,7 @@ function makeDeps(
       Promise.resolve({ shopId: 'shop1', baseCurrency: 'USD', campaign: andCampaign() }),
     priceVariants,
     mappingStore: new GiftCodeMappingStore(new FakeMappingTable(), gateway),
+    qualifyingCollectionId: 'gid://shopify/Collection/test',
     now: () => NOW,
     // The real handler falls back to verifyAppProxyHmac when this is absent.
     ...(useRealSignature ? {} : { verifySignature: () => true }),

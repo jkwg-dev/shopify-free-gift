@@ -11,8 +11,13 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import {
   AdminGraphqlClient,
+  ensureQualifyingCollection,
   exchangeAccessToken,
   fetchVariantPricing,
+  giftProductIdsForVariants,
+  tagProductsAsGift,
+  untagProductsAsGift,
+  waitForGiftProductsExcluded,
   type FetchLike,
 } from '@free-gift-engine/shopify';
 import { buildAuthorizeUrl, type OAuthCallbackDeps } from '../auth/oauth.js';
@@ -23,6 +28,7 @@ import {
   PrismaShopRepository,
 } from '../db/repositories.js';
 import { ShopifyDiscountGatewayAdapter } from '../gateways/shopifyDiscountGateway.js';
+import type { GiftTagGateway } from '../services/giftLifecycle.js';
 import type { OAuthTokenExchanger, ShopifyDiscountGateway } from '../ports.js';
 import { decryptToken } from '../security/crypto.js';
 import { GiftCodeMappingStore } from '../store/giftCodeMapping.js';
@@ -140,6 +146,9 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
     mappingTable,
     new ShopifyDiscountGatewayAdapter(client),
   );
+  // The BXGY codes reference the shared qualifying collection; ensure it exists. (Gift products are
+  // tagged + membership confirmed at campaign provisioning — see services/giftLifecycle.)
+  const qualifyingCollection = await ensureQualifyingCollection(client);
 
   const resolveActiveCampaign = async (domain: string): Promise<ActiveCampaignContext | null> => {
     const shop = await shopRepo().findByDomain(domain);
@@ -179,9 +188,26 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
     resolveActiveCampaign,
     priceVariants: (ids, ctx) => fetchVariantPricing(client, ids, ctx),
     mappingStore,
+    qualifyingCollectionId: qualifyingCollection.id,
     now: () => new Date(),
   };
   return validateDeps;
+}
+
+// --- Gift-product tag lifecycle (BXGY provisioning) ----------------------------------------------
+
+// Wires the GiftTagGateway port to packages/shopify for the single store. Used by the campaign
+// provisioning/teardown flow (provisionGifts / reconcileGiftTagsOnTeardown) — Phase 5b Step 3.
+export async function getGiftTagGateway(): Promise<GiftTagGateway> {
+  const client = await adminClientForShop(requireEnv('SHOPIFY_SHOP_DOMAIN'));
+  return {
+    ensureQualifyingCollection: () => ensureQualifyingCollection(client),
+    resolveGiftProductIds: (variantIds) => giftProductIdsForVariants(client, variantIds),
+    tagProductsAsGift: (productIds) => tagProductsAsGift(client, productIds),
+    untagProductsAsGift: (productIds) => untagProductsAsGift(client, productIds),
+    waitForGiftProductsExcluded: (collectionId, productIds) =>
+      waitForGiftProductsExcluded(client, collectionId, productIds),
+  };
 }
 
 // --- OAuth install -------------------------------------------------------------------------------
