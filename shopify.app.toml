@@ -3,11 +3,11 @@
 # the live Dev Dashboard config, so keep application_url / [auth] / [app_proxy] in sync with the
 # Dashboard and never leave placeholders here.
 #
-# client_id + name come from `shopify app config link` (Dev Dashboard app "free-gift-tiered").
+# client_id + name come from `shopify app config link` (Dev Dashboard app "free-gift-engine").
 
 client_id = "b17eeffcb3567de7684f87a3a4543612"
-name = "free-gift-tiered"
-application_url = "https://free-gift-tiered.vercel.app"
+name = "free-gift-engine"
+application_url = "https://free-gift-engine.vercel.app"
 # Headless until Phase 3b (the "/" route redirects installs into OAuth; no embedded App Bridge UI).
 embedded = false
 
@@ -19,11 +19,11 @@ optional_scopes = []
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = ["https://free-gift-tiered.vercel.app/api/auth/callback"]
+redirect_urls = ["https://free-gift-engine.vercel.app/api/auth/callback"]
 
 [app_proxy]
 # Storefront https://{shop}/apps/free-gift/* -> {application_url}/apps/free-gift/*
-url = "https://free-gift-tiered.vercel.app/apps/free-gift"
+url = "https://free-gift-engine.vercel.app/apps/free-gift"
 prefix = "apps"
 subpath = "free-gift"
 
@@ -34,9 +34,9 @@ api_version = "2026-04"
   # two blocks below (keep api_version) and configure webhooks in the Dev Dashboard, then re-deploy.
   [[webhooks.subscriptions]]
   topics = ["app/uninstalled"]
-  uri = "https://free-gift-tiered.vercel.app/api/webhooks"
+  uri = "https://free-gift-engine.vercel.app/api/webhooks"
 
   [webhooks.privacy_compliance]
-  customer_data_request_url = "https://free-gift-tiered.vercel.app/api/webhooks"
-  customer_deletion_url = "https://free-gift-tiered.vercel.app/api/webhooks"
-  shop_deletion_url = "https://free-gift-tiered.vercel.app/api/webhooks"
+  customer_data_request_url = "https://free-gift-engine.vercel.app/api/webhooks"
+  customer_deletion_url = "https://free-gift-engine.vercel.app/api/webhooks"
+  shop_deletion_url = "https://free-gift-engine.vercel.app/api/webhooks"

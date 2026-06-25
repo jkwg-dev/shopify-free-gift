@@ -87,18 +87,18 @@ case; the chooser must offer S/M/L as distinct options, never collapse them.
 
 These are environment-specific and cannot be invented — provide them in Vercel env / `.env`:
 
-| Value                         | Purpose                                                                                            |
-| ----------------------------- | -------------------------------------------------------------------------------------------------- |
-| `SHOPIFY_SHOP_DOMAIN`         | the dev store, e.g. `our-dev-store.myshopify.com`                                                  |
-| `SHOPIFY_API_KEY`             | **Client ID** from the Dev Dashboard app                                                           |
-| `SHOPIFY_API_SECRET`          | **Client secret** — the SINGLE shared secret for OAuth HMAC, webhook HMAC, AND App Proxy signature |
-| `SHOPIFY_APP_URL`             | the app/host URL (Vercel production), e.g. `https://your-app.vercel.app`                           |
-| `SHOPIFY_SCOPES`              | `read_products,write_discounts,read_discounts` (must match the toml + Dashboard app)               |
-| `SHOPIFY_API_VERSION`         | `2026-04`                                                                                          |
-| `SHOPIFY_BASE_CURRENCY`       | `CAD` (this store's base)                                                                          |
-| `TOKEN_ENCRYPTION_KEY`        | AES-256-GCM key, base64 (`openssl rand -base64 32`) — encrypts the offline token at rest           |
-| `DATABASE_URL` / `DIRECT_URL` | the Neon dev branch (pooled / direct)                                                              |
-| `SEED_*` GIDs                 | real `ProductVariant` GIDs (2 + 2 + 8 = 12), below                                                 |
+| Value                         | Purpose                                                                                             |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `SHOPIFY_SHOP_DOMAIN`         | the dev store, e.g. `our-dev-store.myshopify.com`                                                   |
+| `SHOPIFY_API_KEY`             | **Client ID** from the Dev Dashboard app                                                            |
+| `SHOPIFY_API_SECRET`          | **Client secret** — the SINGLE shared secret for OAuth HMAC, webhook HMAC, AND App Proxy signature  |
+| `SHOPIFY_APP_URL`             | the app/host URL (Vercel production), e.g. `https://your-app.vercel.app`                            |
+| `SHOPIFY_SCOPES`              | `read_products,write_products,write_discounts,read_discounts` (must match the toml + Dashboard app) |
+| `SHOPIFY_API_VERSION`         | `2026-04`                                                                                           |
+| `SHOPIFY_BASE_CURRENCY`       | `CAD` (this store's base)                                                                           |
+| `TOKEN_ENCRYPTION_KEY`        | AES-256-GCM key, base64 (`openssl rand -base64 32`) — encrypts the offline token at rest            |
+| `DATABASE_URL` / `DIRECT_URL` | the Neon dev branch (pooled / direct)                                                               |
+| `SEED_*` GIDs                 | real `ProductVariant` GIDs (2 + 2 + 8 = 12), below                                                  |
 
 > No admin access token here — it's obtained by **OAuth install** and stored encrypted in the Shop
 > row; the app decrypts it per request.
@@ -139,8 +139,9 @@ Since 2026-01-01 legacy custom apps can't be created from the Shopify admin; cre
    ```
    Then fill the `https://…vercel.app` placeholders in `shopify.app.toml` (application_url, the
    `[auth] redirect_urls` callback, `[app_proxy]` url, webhook URLs) and confirm `[access_scopes]`
-   = `read_products,write_discounts,read_discounts`. (If the CLI rejects/rewrites anything, set it
-   in the Dev Dashboard UI instead — see the note in the toml.)
+   = `read_products,write_products,write_discounts,read_discounts`. (If the CLI rejects/rewrites
+   anything, set it in the Dev Dashboard UI instead — see the note in the toml.) `write_products` is
+   required to tag gift products + create the qualifying collection (BXGY); see `docs/phase-5b-reseed.md`.
 3. **Provision the Neon dev branch**; set `DATABASE_URL` + `DIRECT_URL`, then apply migrations
    (committed; never db push):
    ```sh
