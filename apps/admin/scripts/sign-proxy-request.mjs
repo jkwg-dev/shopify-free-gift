@@ -1,15 +1,22 @@
-// Build a signed App Proxy request so you can call /validate directly during the smoke walk
-// (the discount code is only minted when /validate is hit). Mirrors verifyAppProxyHmac: a hex
-// SHA-256 HMAC of the other query params, sorted and concatenated as `key=value` with NO
-// separator, keyed by SHOPIFY_API_SECRET (the app's Client secret).
+// Exercise /validate with a properly SIGNED App Proxy request and print the status + body.
 //
-//   SHOPIFY_API_SECRET=... APP_URL=https://your-app.vercel.app \
-//   SHOP=our-dev-store.myshopify.com \
-//   BODY='{"cart":[{"variantId":"gid://shopify/ProductVariant/123","quantity":1,"appAdded":false}],"choices":{},"declined":false,"presentmentCurrency":"CAD","countryCode":"CA"}' \
+// IMPORTANT — who signs: per Shopify's docs, the CLIENT never signs an app-proxy request. Shopify
+// computes the `signature` when it FORWARDS a storefront request to your app. So a self-signed
+// request must go to the APP ORIGIN directly — it reproduces, byte-for-byte, what Shopify forwards
+// (shop, path_prefix, timestamp, [logged_in_customer_id], signature). Self-signing and POSTing to
+// the storefront proxy URL would NOT work: Shopify would append its own signature (two `signature`
+// params -> our verifier rejects), and a client signature can't bypass a password-protected
+// storefront. To test the REAL Shopify->proxy path you must publish the Online Store channel (then
+// you do NOT sign — Shopify does).
+//
+// Signature scheme (matches verifyAppProxyHmac): hex SHA-256 HMAC over the OTHER query params,
+// rendered `key=value`, sorted by key, concatenated with NO separator, keyed by SHOPIFY_API_SECRET
+// (the shpss_ Client secret).
+//
+//   SHOPIFY_API_SECRET=<client secret> APP_URL=https://<your-app>.vercel.app \
+//   SHOP=greentee-dev.myshopify.com \
+//   BODY='{"cart":[...],"choices":{"<tierId>":"a"},"declined":false,"presentmentCurrency":"CAD","countryCode":"CA"}' \
 //   [CUSTOMER=42] node apps/admin/scripts/sign-proxy-request.mjs
-//
-// Prints a ready-to-run curl command (and the signed URL). The same request that Shopify would
-// forward through the App Proxy — useful for testing the deployed route without the storefront.
 import { createHmac } from 'node:crypto';
 
 function requireEnv(name) {
@@ -21,7 +28,7 @@ function requireEnv(name) {
 }
 
 const secret = requireEnv('SHOPIFY_API_SECRET');
-const appUrl = requireEnv('APP_URL').replace(/\/$/, '');
+const appUrl = requireEnv('APP_URL').replace(/\/$/, ''); // app origin (Vercel), NOT the storefront
 const shop = requireEnv('SHOP');
 const body = requireEnv('BODY');
 const customer = process.env['CUSTOMER'];
@@ -44,6 +51,13 @@ const signature = createHmac('sha256', secret).update(message).digest('hex');
 const qs = new URLSearchParams({ ...params, signature }).toString();
 const url = `${appUrl}/apps/free-gift/validate?${qs}`;
 
-console.log('Signed URL:\n' + url + '\n');
-console.log('curl command:');
-console.log(`curl -sS -X POST '${url}' -H 'content-type: application/json' -d '${body}'`);
+console.log(`POST ${url}\n`);
+
+const response = await fetch(url, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body,
+});
+const text = await response.text();
+console.log(`HTTP ${response.status}`);
+console.log(text);

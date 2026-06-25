@@ -131,18 +131,27 @@ Since 2026-01-01 legacy custom apps can't be created from the Shopify admin; cre
 
 ### Calling /validate during the walk (signed request)
 
-The code is only minted when `/validate` is hit. Generate a properly **signed** App Proxy request
-(the same signature Shopify would forward) with the helper:
+The code is only minted when `/validate` is hit. Shopify signs app-proxy requests on the way to
+your app (the client never signs), so the helper reproduces that forwarded request and sends it
+**directly to the app origin** (`APP_URL`), then prints the status + body:
 
 ```sh
 SHOPIFY_API_SECRET=<client secret> APP_URL=https://your-app.vercel.app \
-SHOP=our-dev-store.myshopify.com \
+SHOP=greentee-dev.myshopify.com \
 BODY='{"cart":[{"variantId":"gid://shopify/ProductVariant/123","quantity":1,"appAdded":false}],"choices":{"<tier1Id>":"a"},"declined":false,"presentmentCurrency":"CAD","countryCode":"CA"}' \
 pnpm --filter @free-gift-engine/admin run sign-proxy
 ```
 
-It prints a ready `curl` command. Then apply the returned code via `https://{shop}/discount/{CODE}`
-and proceed to the native checkout.
+Expect `HTTP 200` with our JSON (`{"status":"gift",...}` / `{"status":"no-gift",...}`). Then apply
+the returned code via `https://{shop}/discount/{CODE}` and proceed to the native checkout.
+
+> **Password-protected dev store caveat:** this helper targets the **app origin**, not
+> `https://{shop}/apps/free-gift/validate`. Don't self-sign and POST to the storefront URL — Shopify
+> appends its own `signature` (two `signature` params → 401), and a client signature can't pass the
+> password page. To exercise the _real_ Shopify→proxy path you must **publish the Online Store
+> channel** (then the request is unsigned by you — Shopify signs it). The direct signed call proves
+> the app end-to-end (signature verify → resolution → minting); Shopify's edge forwarding is the
+> only part it doesn't cover.
 
 > The storefront UI (auto-add, perception widget, OR chooser, decline) is **Phase 5**. Until then,
 > drive `/validate` directly (the theme's future job): POST the cart to the App-Proxy path, then
