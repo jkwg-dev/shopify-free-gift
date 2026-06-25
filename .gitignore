@@ -5,6 +5,8 @@ node_modules/
 dist/
 .next/
 out/
+# Next.js generates this on build/dev (augments tsconfig too); not committed.
+next-env.d.ts
 
 # turbo / tooling caches
 .turbo/
