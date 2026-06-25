@@ -108,6 +108,15 @@ The shopper MUST clearly notice the gift. No silent additions.
 - Decline: a clearly labeled "Add my free gift" checkbox, checked by default, that removes or re-adds the gift line.
 - Robustness: subscribe to the theme's cart-change events, debounce, avoid flicker and double-adds, and handle the drawer re-rendering. Must work on mobile and meet basic accessibility (labels, focus, contrast).
 
+### Phase 5 perception rules (capture now, build later)
+
+The real campaign has a many-option OR tier (eight GFJ Hats at $1500); these rules are required when Phase 5 builds the theme extension:
+
+- **Many-option OR reflects per-option availability**: hide or disable an out-of-stock option in the chooser (e.g. an unavailable hat). `/validate`'s `gift-unavailable` status is the backstop, never the first line of defence — never offer a gift the shopper cannot actually receive.
+- **OR re-selection is transactional**: changing the chosen gift must re-call `/validate`, remove the prior gift line, add the newly chosen one, and apply the new code. Gift codes are non-combinable, so the previous code no longer applies — no stale gift line and no stale code may linger.
+- **Copy says "choose one"**: every OR tier — including the eight-hat $1500 tier — must read as an explicit "Choose your free gift," not a fixed or random reward. The mockup's singular "A GFJ Hat" copy is misleading for a choose-one-of-eight tier; the cart chooser and explainer must make the choice obvious.
+- **One code per result in the UI**: an AND tier is multiple variants under ONE code applied via a single `/discount/CODE`; an OR tier yields the chosen variant's code. (Already in the frozen `/validate` contract — `ValidateResult` carries a single `code`; restated here for Phase 5 cart reconciliation.)
+
 ## Tooling & conventions
 
 - Monorepo via pnpm workspaces + Turborepo.
