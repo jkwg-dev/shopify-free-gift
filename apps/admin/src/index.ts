@@ -36,6 +36,7 @@ export { generateOpaqueCode } from './security/opaqueCode.js';
 export {
   buildAuthorizeUrl,
   handleOAuthCallback,
+  isValidShopDomain,
   OAuthError,
   type AuthorizeUrlInput,
   type OAuthCallbackDeps,
@@ -93,5 +94,7 @@ export {
   getOAuthCallbackDeps,
   getWebhookDeps,
   buildInstallRedirect,
+  isShopInstalled,
   GIFT_ENGINE_SCOPES,
 } from './validate/composition.js';
+export { resolveRootEntry, type RootEntryResult, type RootEntryDeps } from './install/rootEntry.js';

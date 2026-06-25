@@ -15,6 +15,12 @@ export class OAuthError extends Error {
 
 const SHOP_DOMAIN = /^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/;
 
+// Shared shop-domain guard (reused by the "/" entry route to prevent open redirects). Same regex
+// the OAuth begin/callback already enforce.
+export function isValidShopDomain(shop: string): boolean {
+  return SHOP_DOMAIN.test(shop);
+}
+
 export type AuthorizeUrlInput = {
   readonly shop: string;
   readonly apiKey: string;

@@ -103,6 +103,22 @@ async function adminClientForShop(
   return client;
 }
 
+// Install-state for the "/" entry route: a usable offline token exists iff the Shop row is present,
+// not uninstalled, and its token decrypts. Never throws — any doubt returns false so "/" redirects
+// to OAuth begin (safe for an already-installed shop). Reuses the 3a repo + crypto.
+export async function isShopInstalled(shopDomain: string): Promise<boolean> {
+  try {
+    const shop = await shopRepo().findByDomain(shopDomain);
+    if (shop === null || shop.uninstalledAt !== null) {
+      return false;
+    }
+    decryptToken(shop.encryptedAccessToken, requireEnv('TOKEN_ENCRYPTION_KEY'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // --- /validate -----------------------------------------------------------------------------------
 
 let validateDeps: ValidateHandlerDeps | null = null;
