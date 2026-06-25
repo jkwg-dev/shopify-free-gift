@@ -3,6 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@free-gift-engine/core": "workspace:*",
+    "@free-gift-engine/shopify": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

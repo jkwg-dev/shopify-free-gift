@@ -1,0 +1,94 @@
+// Prisma schema for the admin data layer. Postgres (hosted dev branch — Neon/Supabase/Vercel —
+// matching the deploy target; no Docker). Migrations are committed (prisma migrate), never db push.
+// `DIRECT_URL` is the unpooled connection used for migrations; `DATABASE_URL` may be pooled.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Shop {
+  id                   String     @id @default(cuid())
+  domain               String     @unique
+  encryptedAccessToken String
+  scopes               String
+  installedAt          DateTime   @default(now())
+  uninstalledAt        DateTime?
+  campaigns            Campaign[]
+
+  @@map("shops")
+}
+
+model Campaign {
+  id                String            @id @default(cuid())
+  shopId            String
+  shop              Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name              String
+  suppression       String // 'highest-only' | 'cumulative'
+  declineEnabled    Boolean           @default(true)
+  startsAt          DateTime
+  endsAt            DateTime
+  displayTimezone   String
+  active            Boolean           @default(false)
+  configVersionHash String
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  tiers             Tier[]
+  giftCodeMappings  GiftCodeMapping[]
+
+  @@index([shopId])
+  @@map("campaigns")
+}
+
+model Tier {
+  id                    String            @id @default(cuid())
+  campaignId            String
+  campaign              Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  position              Int
+  baseThresholdAmount   Int // integer minor units
+  baseThresholdCurrency String
+  giftConfig            Json // serialized core GiftConfig (kind AND/OR + variants/options)
+  marketThresholds      MarketThreshold[]
+
+  @@index([campaignId])
+  @@map("tiers")
+}
+
+model MarketThreshold {
+  id                        String  @id @default(cuid())
+  tierId                    String
+  tier                      Tier    @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  market                    String
+  presentmentCurrency       String
+  manualFxRate              Float?
+  roundingRule              String
+  resolvedThresholdAmount   Int
+  resolvedThresholdCurrency String
+
+  @@unique([tierId, market])
+  @@map("market_thresholds")
+}
+
+model GiftCodeMapping {
+  id                  String   @id @default(cuid())
+  campaignId          String
+  campaign            Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  tierId              String
+  resolvedGiftSetHash String
+  configVersionHash   String
+  code                String?  @unique
+  discountId          String?
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+
+  // The reusable-code minting key. UNIQUE so two concurrent /validate calls converge on ONE row
+  // (the loser hits this constraint and reuses the winner's code).
+  @@unique([campaignId, tierId, resolvedGiftSetHash, configVersionHash], name: "minting_key")
+  @@index([campaignId])
+  @@map("gift_code_mappings")
+}
