@@ -33,11 +33,13 @@ import type { ActiveCampaignContext } from './service.js';
 
 // Minimal access scopes the engine actually uses (audited against packages/shopify):
 //   read_products   — gift-variant validation (fetchGiftVariants) + contextualPricing reads
-//   write_discounts — create/deactivate the scoped 100%-off codes
+//   write_products  — tag gift products (GIFT_PRODUCT_TAG) so they drop out of the qualifying
+//                     smart collection, and create that collection (BXGY customerBuys scope)
+//   write_discounts — create/deactivate the BXGY gift codes
 //   read_discounts  — the Admin discounts API requires it (we read the created code node back)
-// We never create/modify products, so write_products is intentionally NOT requested. This must
-// match [access_scopes] in shopify.app.toml and the Dev Dashboard app.
-export const GIFT_ENGINE_SCOPES = 'read_products,write_discounts,read_discounts';
+// Adding write_products requires re-consent/reinstall on the store (scope change). This must match
+// [access_scopes] in shopify.app.toml and the Dev Dashboard app.
+export const GIFT_ENGINE_SCOPES = 'read_products,write_products,write_discounts,read_discounts';
 
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;

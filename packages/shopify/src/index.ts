@@ -46,6 +46,17 @@ export {
   type AccessTokenResult,
 } from './oauth.js';
 
+// BXGY groundwork (Phase 5b primitive switch): the qualifying smart collection + gift product tag.
+export {
+  GIFT_PRODUCT_TAG,
+  qualifyingCollectionHandle,
+  ensureQualifyingCollection,
+  waitForGiftProductsExcluded,
+  type QualifyingCollection,
+  type WaitOptions,
+} from './collections.js';
+export { tagGiftProducts, untagGiftProducts } from './productTags.js';
+
 export {
   APP_UNINSTALLED_TOPIC,
   registerAppUninstalledWebhook,
