@@ -46,3 +46,23 @@ export {
   type ResolveResult,
   type ResolvedTierGift,
 } from './resolve.js';
+
+// Shared /validate wire contract (server in apps/admin, client in extensions/theme).
+export type {
+  ValidateCartLineInput,
+  ValidateRequest,
+  ValidateResult,
+  ValidateNoGiftReason,
+  ValidateError,
+  ValidateErrorCode,
+} from './validate.js';
+
+// Pure storefront gift-line reconciliation (Phase 5a).
+export {
+  reconcileGiftLines,
+  GIFT_LINE_PROPERTY,
+  type CartLineView,
+  type GiftLineAdd,
+  type GiftLineRemoval,
+  type GiftReconciliation,
+} from './reconcile.js';

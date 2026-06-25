@@ -1,0 +1,30 @@
+{% comment %}
+  Free Gift Engine — cart app block (Phase 5a SKELETON).
+  Place in the cart drawer / cart page via the theme editor. Markup is intentionally minimal:
+  the perception UI (progress widget, gift chooser, decline checkbox, toasts), the storefront JS
+  that subscribes to AJAX cart events, calls /validate, reconciles gift lines, and applies the
+  discount code are all Phase 5b. This block only renders the mount point + config seams.
+
+  The widget NEVER sets prices (the minted code + Shopify discount do) and NEVER trusts client
+  state for eligibility (the server recomputes in /validate).
+{% endcomment %}
+
+<div
+  class="fge-app-block"
+  data-fge-app-block
+  data-proxy-path="/apps/free-gift/validate"
+  data-presentment-currency="{{ cart.currency.iso_code }}"
+  data-country="{{ localization.country.iso_code }}"
+  hidden
+>
+  {% comment %} 5b renders the tier/progress widget, the "Choose your free gift" chooser, and the
+  "Add my free gift" decline checkbox here, and mounts assets/free-gift.js. {% endcomment %}
+</div>
+
+{% schema %}
+{
+  "name": "Free Gift",
+  "target": "section",
+  "settings": []
+}
+{% endschema %}

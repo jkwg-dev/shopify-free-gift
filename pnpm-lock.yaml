@@ -73,7 +73,11 @@ importers:
         specifier: ^6.1.0
         version: 6.19.3(magicast@0.3.5)(typescript@5.9.3)
 
-  extensions/theme: {}
+  extensions/theme:
+    dependencies:
+      '@free-gift-engine/core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
   packages/core: {}
 

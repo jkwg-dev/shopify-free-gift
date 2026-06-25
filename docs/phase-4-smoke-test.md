@@ -7,6 +7,26 @@ non-combinability enforcing suppression). This runbook validates them on a dev s
 > **Do not run any of this until the dev-store target and dev database branch are confirmed.**
 > It installs the app, creates a real campaign, and mints real discount codes on a real store.
 
+## Status
+
+**Phase 4: PASSED** — acceptance = the direct signed `/validate` call returns our correct `gift`
+JSON end-to-end (App Proxy signature verify → server-authoritative resolution → scoped-code
+minting).
+
+Four pre-production gate items (recorded; finally **observed live in Phase 5b** with the real cart,
+or in the published-storefront follow-up):
+
+| Gate item                                      | Where it's finally observed                                  | Status                                     |
+| ---------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------ |
+| Drop-below-threshold revert (gift → paid)      | 5b live cart + native checkout                               | pending live (logic unit-tested)           |
+| Non-combinability (lower code can't stack)     | 5b live cart + native checkout                               | pending live (enforced by `combinesWith`)  |
+| CAD presentment threshold (resolved, not base) | signed call shows `appliedThreshold`; confirm at 5b checkout | verified via signed call; checkout pending |
+| Real Shopify → App Proxy forwarding            | published Online Store channel (follow-up)                   | **UNVERIFIED** until publish               |
+
+> 5b's live cart widget is where **drop-below revert** and **non-combinability** are first
+> observed against a real cart/checkout; until then they rest on the unit tests + the discount's
+> `combinesWith` + minimum-subtotal backstop.
+
 ## What we're proving
 
 1. Each tier's gift drops to **$0 in the native checkout** via the applied code.

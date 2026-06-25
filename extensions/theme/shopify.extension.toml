@@ -1,0 +1,12 @@
+# Theme app extension config (Shopify CLI). Phase 5a skeleton — the app block can be placed in the
+# cart drawer / cart page via the theme editor. Real perception UI + storefront JS wiring is 5b.
+#
+# Uncertainty note: exact keys can vary by CLI version (~4.x). If `shopify app dev`/`deploy` rejects
+# a field, defer to the CLI-generated config; this declares intent (one theme app extension with a
+# cart app block).
+api_version = "2026-04"
+
+[[extensions]]
+type = "theme"
+name = "Free Gift Engine"
+handle = "free-gift-engine"

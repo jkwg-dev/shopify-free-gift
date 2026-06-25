@@ -1,3 +1,27 @@
-// Theme App Extension (OS 2.0 app block) + storefront perception UX land here (Phase 5).
-// Placeholder export keeps the scaffold typed.
-export const THEME_EXTENSION = '@free-gift-engine/theme' as const;
+// Theme app extension public surface (Phase 5a): the /validate client and the variant-level choice
+// model. The pure cart reconciler lives in @free-gift-engine/core (reconcileGiftLines). The live
+// AJAX-cart wiring, perception UI, chooser/decline UI, and /discount/CODE application are Phase 5b.
+export {
+  postValidate,
+  DEFAULT_PROXY_PATH,
+  type ValidateClientResponse,
+  type PostValidateOptions,
+} from './validateClient.js';
+
+export {
+  groupGiftOptionsByProduct,
+  type GiftOptionView,
+  type GiftProductGroup,
+} from './choices.js';
+
+// Re-export the reconciler + contract from core so 5b imports a single widget surface.
+export {
+  reconcileGiftLines,
+  GIFT_LINE_PROPERTY,
+  type CartLineView,
+  type GiftReconciliation,
+  type GiftLineAdd,
+  type GiftLineRemoval,
+  type ValidateRequest,
+  type ValidateResult,
+} from '@free-gift-engine/core';
