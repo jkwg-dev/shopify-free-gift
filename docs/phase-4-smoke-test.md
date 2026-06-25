@@ -35,21 +35,33 @@ Bands (highest-only): **CA$500–999** → tier 1 · **CA$1000–1499** → tier
 
 ## Stand-in fixtures (Option B — product identity irrelevant; counts match 2 / 2 / 8)
 
-The seed stores variant GIDs only (no product names; the engine keys on variant GID). Map your
-stand-in products to roles:
+The seed stores variant GIDs only (no product names; the engine keys on variant GID). Real GIDs on
+greentee-dev (verified live; CAD prices via `contextualPricing(CA)`):
 
-| Role / option id       | Stand-in product · variant        | Notes                                                |
-| ---------------------- | --------------------------------- | ---------------------------------------------------- |
-| tier 1 `a`             | The Complete Snowboard · **Ice**  | sibling variant of one product (variant-granular OR) |
-| tier 1 `b`             | The Complete Snowboard · **Dawn** | sibling variant of the same product                  |
-| tier 2 (AND)           | **Hidden** + **Multi-location**   | both free under one code                             |
-| tier 3 `opt-1`         | The Collection Liquid · **S**     | in stock — selectable                                |
-| tier 3 `opt-2`         | The Collection Liquid · **M**     | **out of stock** — gift-unavailable case             |
-| tier 3 `opt-3`         | The Collection Liquid · **L**     | **out of stock** — gift-unavailable case             |
-| tier 3 `opt-4`…`opt-8` | five distinct snowboards          | in stock — selectable                                |
+| Role / option id | Product · variant                 | Variant GID                                   | CAD price · stock         |
+| ---------------- | --------------------------------- | --------------------------------------------- | ------------------------- |
+| tier 1 `a`       | The Complete Snowboard · **Ice**  | `gid://shopify/ProductVariant/44289298038893` | 699.95 · in stock         |
+| tier 1 `b`       | The Complete Snowboard · **Dawn** | `gid://shopify/ProductVariant/44289298071661` | 699.95 · in stock         |
+| tier 2 (AND) #1  | The **Hidden** Snowboard          | `gid://shopify/ProductVariant/44289298301037` | 749.95 · in stock         |
+| tier 2 (AND) #2  | The **Multi-location** Snowboard  | `gid://shopify/ProductVariant/44289298595949` | 729.95 · in stock         |
+| tier 3 `opt-1`   | The Collection Liquid · **S**     | `gid://shopify/ProductVariant/45375032393837` | 749.95 · in stock         |
+| tier 3 `opt-2`   | The Collection Liquid · **M**     | `gid://shopify/ProductVariant/45375032426605` | 749.95 · in stock         |
+| tier 3 `opt-3`   | The Collection Liquid · **L**     | `gid://shopify/ProductVariant/45375032459373` | 749.95 · **OUT OF STOCK** |
+| tier 3 `opt-4`   | The Collection Snowboard: Oxygen  | `gid://shopify/ProductVariant/44289298727021` | 1025.00 · in stock        |
+| tier 3 `opt-5`   | The Minimal Snowboard             | `gid://shopify/ProductVariant/44289297711213` | 885.95 · in stock         |
+| tier 3 `opt-6`   | The Videographer Snowboard        | `gid://shopify/ProductVariant/44289298333805` | 885.95 · in stock         |
+| tier 3 `opt-7`   | The Compare at Price Snowboard    | `gid://shopify/ProductVariant/44289297842285` | 785.95 · in stock         |
+| tier 3 `opt-8`   | The Multi-managed Snowboard       | `gid://shopify/ProductVariant/44289298628717` | 629.95 · in stock         |
 
-`opt-1..opt-3` are three sibling variants of one product (The Collection Liquid) → another
-variant-granular case; the chooser must offer S/M/L as distinct options, never collapse them.
+> **Stock correction (live data):** only **Liquid L (`opt-3`) is out of stock**; **S and M are in
+> stock**. So the gift-unavailable step uses **`opt-3` (L)**, not M. If you want M out of stock too,
+> set it in the dev store; otherwise use L.
+
+`opt-1..opt-3` are three sibling variants of one product (The Collection Liquid) → a variant-granular
+case; the chooser must offer S/M/L as distinct options, never collapse them.
+
+**Qualifying paid item** (crosses CA$500, not a gift variant): **The Collection Snowboard: Hydrogen**
+— `gid://shopify/ProductVariant/44289298235501`, **CA$600.00** via `contextualPricing(CA)`, in stock.
 
 ## Values you must supply (do not commit; from env / secret manager)
 
@@ -71,20 +83,24 @@ These are environment-specific and cannot be invented — provide them in Vercel
 > No admin access token here — it's obtained by **OAuth install** and stored encrypted in the Shop
 > row; the app decrypts it per request.
 
+The exact env var names the seed reads (role-based; the $1500 tier is ONE comma-separated list):
+
 ```
-SEED_OR500_A=gid://shopify/ProductVariant/...        # Complete Snowboard - Ice
-SEED_OR500_B=gid://shopify/ProductVariant/...        # Complete Snowboard - Dawn
-SEED_AND1000_A=gid://shopify/ProductVariant/...      # Hidden
-SEED_AND1000_B=gid://shopify/ProductVariant/...      # Multi-location
-# Eight options as ONE comma-separated list: Collection Liquid S, M(OOS), L(OOS), + 5 snowboards
-SEED_OR1500_GIDS=gid://...S,gid://...M,gid://...L,gid://...,gid://...,gid://...,gid://...,gid://...
+SEED_OR500_A=gid://shopify/ProductVariant/44289298038893     # Complete Snowboard - Ice
+SEED_OR500_B=gid://shopify/ProductVariant/44289298071661     # Complete Snowboard - Dawn
+SEED_AND1000_A=gid://shopify/ProductVariant/44289298301037   # Hidden
+SEED_AND1000_B=gid://shopify/ProductVariant/44289298595949   # Multi-location
+# Eight options, ONE comma-separated list (opt-1..opt-8): Liquid S, M, L(OOS), Oxygen, Minimal,
+# Videographer, Compare-at-Price, Multi-managed
+SEED_OR1500_GIDS=gid://shopify/ProductVariant/45375032393837,gid://shopify/ProductVariant/45375032426605,gid://shopify/ProductVariant/45375032459373,gid://shopify/ProductVariant/44289298727021,gid://shopify/ProductVariant/44289297711213,gid://shopify/ProductVariant/44289298333805,gid://shopify/ProductVariant/44289297842285,gid://shopify/ProductVariant/44289298628717
 ```
 
 ## Prerequisites
 
 - A Shopify **dev store** (Advanced-equivalent; no Plus features), base currency **CAD**, with the
   stand-in variants above, 1+ normal priced product, and a non-base **USD** market enabled and
-  priced. The Collection Liquid **M and L** variants are intentionally **out of stock**; **S** in stock.
+  priced. Per live data, **Liquid L is out of stock** (S and M in stock) — used for the
+  gift-unavailable step.
 - Make at least one gift variant (e.g. Complete Snowboard · Ice) **also** normally purchasable so
   step 7 (paid-duplicate) can be exercised.
 - App Proxy: prefix `apps`, subpath `free-gift` (see `apps/admin/shopify.app.toml`) ⇒ storefront
@@ -120,12 +136,15 @@ Since 2026-01-01 legacy custom apps can't be created from the Shopify admin; cre
    curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
      https://your-app.vercel.app/apps/free-gift/validate -d '{}'      # expect 401
    ```
-7. **Seed** the campaign (12 real GIDs; see env block above):
+7. **Seed** the campaign (real greentee-dev GIDs from the env block above) — prints the tier ids:
    ```sh
-   SHOPIFY_SHOP_DOMAIN=... \
-   SEED_OR500_A=... SEED_OR500_B=... \
-   SEED_AND1000_A=... SEED_AND1000_B=... \
-   SEED_OR1500_GIDS=gid://...,gid://...,gid://...,gid://...,gid://...,gid://...,gid://...,gid://... \
+   DATABASE_URL=... DIRECT_URL=... \
+   SHOPIFY_SHOP_DOMAIN=greentee-dev.myshopify.com \
+   SEED_OR500_A=gid://shopify/ProductVariant/44289298038893 \
+   SEED_OR500_B=gid://shopify/ProductVariant/44289298071661 \
+   SEED_AND1000_A=gid://shopify/ProductVariant/44289298301037 \
+   SEED_AND1000_B=gid://shopify/ProductVariant/44289298595949 \
+   SEED_OR1500_GIDS=gid://shopify/ProductVariant/45375032393837,gid://shopify/ProductVariant/45375032426605,gid://shopify/ProductVariant/45375032459373,gid://shopify/ProductVariant/44289298727021,gid://shopify/ProductVariant/44289297711213,gid://shopify/ProductVariant/44289298333805,gid://shopify/ProductVariant/44289297842285,gid://shopify/ProductVariant/44289298628717 \
    pnpm --filter @free-gift-engine/admin run seed:smoke
    ```
 
@@ -161,18 +180,18 @@ the returned code via `https://{shop}/discount/{CODE}` and proceed to the native
 
 ## Steps — record expected vs actual
 
-| #   | Scenario              | Action                                                                                         | Expected                                                                                | Actual |
-| --- | --------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------ |
-| 1   | Tier 1 variant choice | CAD cart ≈ **CA$600**, choose `a` (Ice) → /validate → apply → checkout; repeat with `b` (Dawn) | Each yields `gift`, tier 1, exactly the chosen variant at **$0** under **its own code** |        |
-| 2   | Tier 2 (AND) both     | CAD cart ≈ **CA$1200** → /validate → apply → checkout                                          | `gift`, tier 2; **both** variants are **$0** under the **one** code                     |        |
-| 3   | Tier 3 (OR ×8) exact  | CAD cart ≈ **CA$1600**, choose an in-stock option (e.g. `opt-4`) → apply → checkout            | `gift`, tier 3, only that variant is $0; other options unaffected                       |        |
-| 4   | Suppression           | At CA$1200 inspect tier-1 gift; at CA$1600 inspect tier-1/2 gifts                              | Lower-tier gifts are **not** free (only the highest qualifying tier)                    |        |
-| 5   | Drop below threshold  | From a qualifying cart with the code applied, remove items below the tier threshold            | At checkout the gift **reverts to paid** (minimum not met)                              |        |
-| 6   | Non-combinable        | Get the tier-1 code (~CA$600) and tier-3 code (~CA$1600); apply the lower on top of the top    | Shopify **blocks** stacking — one product-class code applies; no double gift            |        |
-| 7   | Paid duplicate        | Cart with an **app-added free** Ice line **and** a separately **paid** Ice line                | The paid unit **counts** toward the subtotal; only the free unit is excluded            |        |
-| 8   | Gift-unavailable      | At CA$1600, choose `opt-2` (Collection Liquid **M**, out of stock)                             | `no-gift` / `gift-unavailable`; choosing `opt-1` (S, in stock) instead succeeds         |        |
-| 9   | Non-base market (USD) | Switch to **USD** (country US); cart ≥ **US$370**, choose a tier-1 gift → apply → checkout     | `currency=USD`, `appliedThreshold=US$370` (resolved, not CA$500); gift is **$0**        |        |
-| 10  | Latency               | Measure /validate round-trip: first (cold) and a warm call                                     | Record both; if checkout-path latency is a real problem, _then_ weigh the CF Worker     |        |
+| #   | Scenario              | Action                                                                                            | Expected                                                                                | Actual |
+| --- | --------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------ |
+| 1   | Tier 1 variant choice | **1× Hydrogen (CA$600)**, choose `a` (Ice) → /validate → apply → checkout; repeat with `b` (Dawn) | Each yields `gift`, tier 1, exactly the chosen variant at **$0** under **its own code** |        |
+| 2   | Tier 2 (AND) both     | **2× Hydrogen (CA$1200)** → /validate → apply → checkout                                          | `gift`, tier 2; **both** variants are **$0** under the **one** code                     |        |
+| 3   | Tier 3 (OR ×8) exact  | **3× Hydrogen (CA$1800)**, choose an in-stock option (e.g. `opt-4` Oxygen) → apply → checkout     | `gift`, tier 3, only that variant is $0; other options unaffected                       |        |
+| 4   | Suppression           | At CA$1200 inspect tier-1 gift; at CA$1600 inspect tier-1/2 gifts                                 | Lower-tier gifts are **not** free (only the highest qualifying tier)                    |        |
+| 5   | Drop below threshold  | From a qualifying cart with the code applied, remove items below the tier threshold               | At checkout the gift **reverts to paid** (minimum not met)                              |        |
+| 6   | Non-combinable        | Get the tier-1 code (~CA$600) and tier-3 code (~CA$1600); apply the lower on top of the top       | Shopify **blocks** stacking — one product-class code applies; no double gift            |        |
+| 7   | Paid duplicate        | Cart with an **app-added free** Ice line **and** a separately **paid** Ice line                   | The paid unit **counts** toward the subtotal; only the free unit is excluded            |        |
+| 8   | Gift-unavailable      | At CA$1800, choose `opt-3` (Collection Liquid **L**, out of stock)                                | `no-gift` / `gift-unavailable`; choosing `opt-1` (S, in stock) instead succeeds         |        |
+| 9   | Non-base market (USD) | Switch to **USD** (country US); cart ≥ **US$370**, choose a tier-1 gift → apply → checkout        | `currency=USD`, `appliedThreshold=US$370` (resolved, not CA$500); gift is **$0**        |        |
+| 10  | Latency               | Measure /validate round-trip: first (cold) and a warm call                                        | Record both; if checkout-path latency is a real problem, _then_ weigh the CF Worker     |        |
 
 ### Latency measurement
 
@@ -188,8 +207,28 @@ the returned code via `https://{shop}/discount/{CODE}` and proceed to the native
 - Hammer the endpoint past the limit (60/min) → **429**.
 - Two simultaneous qualifying calls → **one** discount in the Shopify admin, same code.
 
+## Phase 4 acceptance vs. required follow-up (two different proofs)
+
+These prove different things; neither replaces the other:
+
+- **Phase 4 acceptance — direct signed call to the app origin.** Proves OUR code end-to-end:
+  App-Proxy signature verify → server-authoritative resolution → scoped-code minting. This is the
+  acceptance gate for Phase 4.
+- **Required follow-up (NOT a Phase 4 blocker) — real storefront → App Proxy path.** The
+  edge-forwarding leg stays **UNVERIFIED** until this runs: Shopify actually forwarding
+  `https://greentee-dev.myshopify.com/apps/free-gift/validate` to the app with a Shopify-generated
+  signature. Failures invisible to the direct call live here — a wrong App Proxy **subpath**, a
+  non-base **proxy URL**, or an **unpublished** channel. The direct call cannot catch any of these.
+
+  Steps: **publish the Online Store channel** on greentee-dev (its storefront/password gate
+  currently blocks proxy requests), then hit the storefront proxy URL **without** signing (Shopify
+  signs on forward) and confirm you get our `gift`/`no-gift` JSON, not a `/password` redirect or 404.
+  Record the result; until then the edge leg is unproven.
+
 ## After the smoke test
 
-- If all steps pass: proceed to **Phase 3b** (Polaris admin UI) against the frozen contracts.
+- Phase 4 acceptance = the direct signed call returns our `gift` JSON end-to-end. Then proceed to
+  **Phase 3b** (Polaris admin UI) against the frozen contracts.
+- Queue the **published-storefront proxy test** above as the required follow-up.
 - If latency (step 10) is a real problem: open the Cloudflare Worker question per CLAUDE.md — not before.
 - Record results (fill the Actual column) and attach to the Phase 4 review.
