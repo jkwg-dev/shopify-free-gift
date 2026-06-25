@@ -25,7 +25,7 @@ import {
 } from '@free-gift-engine/shopify';
 import type { Campaign, Tier } from '../domain.js';
 import type { GiftCodeMappingStore } from '../store/giftCodeMapping.js';
-import type { GiftAward, ValidateRequest, ValidateResult } from './contract.js';
+import type { ValidateRequest, ValidateResult } from './contract.js';
 
 // The single active campaign for a shop plus the shop's base currency (the currency the discount's
 // minimum-subtotal is set in). Resolved at the composition root from the shop + campaign records.
@@ -188,47 +188,55 @@ export async function resolveValidate(
     return { status: 'no-gift', reason: resolved.reason };
   }
 
+  // Cumulative is unsupported on Advanced: multiple non-combinable codes cannot all redeem on one
+  // cart, and a single union code cannot enforce per-tier minimums (CLAUDE.md). The admin must not
+  // create cumulative campaigns; if one slips through and resolves more than one tier, refuse here
+  // rather than hand out codes that cannot all apply.
+  if (resolved.resolved.length > 1) {
+    return { status: 'no-gift', reason: 'cumulative-unsupported' };
+  }
+
+  const winning = resolved.resolved[0];
+  if (winning === undefined) {
+    return { status: 'no-gift', reason: 'below-threshold' };
+  }
+
   // Never promise an out-of-stock (or unresolved) gift variant.
-  for (const tier of resolved.resolved) {
-    for (const gift of tier.gifts) {
-      const priced = pricingById.get(gift.variantId);
-      if (priced === undefined || !priced.availableForSale) {
-        return { status: 'no-gift', reason: 'gift-unavailable' };
-      }
+  const giftVariantIds = winning.gifts.map((g: Gift) => g.variantId);
+  for (const variantId of giftVariantIds) {
+    const priced = pricingById.get(variantId);
+    if (priced === undefined || !priced.availableForSale) {
+      return { status: 'no-gift', reason: 'gift-unavailable' };
     }
   }
 
-  const tierById = new Map<string, Tier>(campaign.tiers.map((t) => [t.id, t]));
-  const combinesWith = deps.giftCombinesWith ?? NON_COMBINABLE;
-  const awards: GiftAward[] = [];
-  for (const tier of resolved.resolved) {
-    const domainTier = tierById.get(tier.tierId) as Tier;
-    const giftVariantIds = tier.gifts.map((g: Gift) => g.variantId);
-    const mapping = await deps.mappingStore.getOrCreate(
-      {
-        campaignId: campaign.id,
-        tierId: tier.tierId,
-        resolvedGiftSetHash: resolvedGiftSetHash(tier.gifts),
-        configVersionHash: campaign.configVersionHash,
-      },
-      {
-        title: `${campaign.name} — tier ${domainTier.position}`,
-        giftVariantIds,
-        minimumSubtotal: domainTier.baseThreshold,
-        startsAt: campaign.startsAt.toISOString(),
-        combinesWith,
-      },
-    );
-    if (mapping.code === null) {
-      throw new Error(`Gift-code mapping for tier ${tier.tierId} resolved without a code`);
-    }
-    awards.push({
-      tierId: tier.tierId,
+  const domainTier = campaign.tiers.find((t) => t.id === winning.tierId) as Tier;
+  const mapping = await deps.mappingStore.getOrCreate(
+    {
+      campaignId: campaign.id,
+      tierId: winning.tierId,
+      resolvedGiftSetHash: resolvedGiftSetHash(winning.gifts),
+      configVersionHash: campaign.configVersionHash,
+    },
+    {
+      title: `${campaign.name} — tier ${domainTier.position}`,
       giftVariantIds,
-      code: mapping.code,
-      appliedThreshold: thresholdByTier.get(tier.tierId) as Money,
-    });
+      minimumSubtotal: domainTier.baseThreshold,
+      startsAt: campaign.startsAt.toISOString(),
+      combinesWith: deps.giftCombinesWith ?? NON_COMBINABLE,
+    },
+  );
+  if (mapping.code === null) {
+    throw new Error(`Gift-code mapping for tier ${winning.tierId} resolved without a code`);
   }
 
-  return { status: 'gift', currency: presentment, subtotal: resolved.subtotal, awards };
+  return {
+    status: 'gift',
+    currency: presentment,
+    subtotal: resolved.subtotal,
+    tierId: winning.tierId,
+    giftVariantIds,
+    code: mapping.code,
+    appliedThreshold: thresholdByTier.get(winning.tierId) as Money,
+  };
 }

@@ -1,0 +1,17 @@
+# Shopify app configuration (Shopify CLI / config-as-code).
+#
+# This Phase-4 runtime slice declares ONLY the App Proxy that exposes /validate same-origin on the
+# storefront. The rest of the app config (client_id, application_url, access_scopes, OAuth/redirect
+# URLs) and the embedded Polaris admin land in Phase 3b; the proxy and deployment are applied via
+# `shopify app deploy` / the Partner Dashboard against the dev store.
+#
+# App Proxy routing:
+#   storefront  https://{shop}/apps/free-gift/*   ->   {application_url}/apps/free-gift/*
+# Shopify appends signed query params (shop, logged_in_customer_id, path_prefix, timestamp,
+# signature); the route handler verifies them with verifyAppProxyHmac before trusting anything.
+# So the storefront calls POST /apps/free-gift/validate.
+
+[app_proxy]
+url = "https://REPLACE_WITH_VERCEL_DEPLOYMENT_URL/apps/free-gift"
+prefix = "apps"
+subpath = "free-gift"

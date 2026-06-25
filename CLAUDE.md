@@ -66,6 +66,21 @@ Core `Money` is integer minor units, but the minor-unit exponent depends on the 
 - The hash inputs — the resolved tier and resolved gift-set — are produced by the pure functions in `packages/core` (unit-testable here). The actual Shopify code creation + Postgres persistence stays in `packages/shopify` / the `/validate` route.
 - **Gift codes are non-combinable among themselves (this is what makes reusable codes safe for suppression)**. Every gift code is created with `combinesWith.productDiscounts: false`. Our gift codes are product-class code discounts, so Shopify allows only one product-class discount per cart — a shopper who discovers a lower-tier code cannot manually stack it on top of the highest-tier code. Suppression is therefore enforced at the **discount layer**, not only by `/validate` handing out a single code. (Confirmed against 2026-04: combinability is governed solely by `combinesWith`; `productDiscounts` defaults to `false`, and same-line product-discount stacking requires Plus + `productDiscounts: true`, which we are on Advanced and never set.) If a campaign ever needs a gift to stack with a _separate_ promo (e.g. an order-level percentage code), it may set `orderDiscounts`/`shippingDiscounts` true but MUST keep `productDiscounts: false`, or suppression breaks. The admin UI MUST NOT expose any toggle that can set `productDiscounts: true` for gift codes.
 
+### Decision: cumulative suppression is unsupported on Advanced
+
+Only **`highest-only`** is a shippable suppression mode. Cumulative (every qualified tier's gift free at once) cannot be built without Shopify Functions, so it is gated, not shipped:
+
+- The non-combinability that enforces highest-only (`productDiscounts: false`) is the exact thing that makes cumulative impossible: multiple non-combinable codes cannot all apply to one cart, and `/discount/CODE` applies a single code — so multiple cumulative awards can never be redeemed together.
+- A single **union code** scoped to all unlocked gift variants does not work either: one code carries one minimum-subtotal, so it would zero a higher tier's gift when only a lower tier's threshold is met (revenue leak), or under-deliver if pinned to the highest minimum.
+- Correct cumulative needs per-product discount allocation in a single Shopify **Function** (Plus only). We are on Advanced and Functions-free by design.
+
+Consequences (do not regress):
+
+- `packages/core` keeps its pure cumulative logic (correct, tested, harmless, feasible later under Plus + a product-discount Function). Do **not** delete it.
+- The admin UI (3b) MUST NOT offer `cumulative` as a selectable suppression mode; `highest-only` is the only creatable mode.
+- `/validate` treats a cumulative campaign as a misconfiguration (defense-in-depth): if core resolves more than one tier's gift-set, it returns `no-gift` / `cumulative-unsupported` rather than handing out codes that cannot all apply.
+- A qualifying `/validate` result therefore carries exactly **one** `code` (the winning tier's resolved gift variants — multiple variants for an AND tier, applied via one `/discount/CODE`).
+
 ### Decision: /validate hosting, auth, and enforcement model
 
 - **Hosting/auth**: `/validate` is a Next.js **route handler exposed through a Shopify App Proxy** (a same-origin `/apps/...` storefront endpoint). It is a PUBLIC storefront call, so it CANNOT use an App Bridge session token. Every request is authenticated by verifying the **App Proxy HMAC signature** (`signature` query param = hex SHA-256 HMAC of the other params, sorted and concatenated as `key=value` with NO separator, keyed by the app shared secret — distinct from the OAuth scheme, which joins with `&` and names the param `hmac`). Unsigned/invalid requests are rejected (401). The endpoint is rate-limited per shop+buyer to blunt spam/scraping. Confirmed against 2026-04.
@@ -73,6 +88,14 @@ Core `Money` is integer minor units, but the minor-unit exponent depends on the 
 - **Defense-in-depth, not the sole gate**: a returned code only discounts its scoped variant(s), and only when the REAL cart meets the discount's base-currency minimum at checkout (Shopify converts per market). So even a fooled `/validate` cannot leak revenue, and suppression holds because a higher-tier code carries a higher minimum. `/validate` recomputes server-side to (a) return the correct gift for the real cart and (b) avoid handing out misleading codes — not as if it were the only check. Do not over-engineer a perfect cart-authority fetch beyond what correctness needs.
 - **Client may supply only**: the cart (variant + qty + an app-added gift claim), the OR choice(s), the decline flag, and a claimed presentment currency/country. Every one is re-validated server-side: `isGift` is re-derived (see above), the claimed currency is validated against the authoritative country pricing, an unknown/missing OR choice is rejected (no silent default), decline → no gift, and outside the schedule window → no gift.
 - **Out-of-stock gift**: if a resolved gift variant is unavailable, `/validate` returns `no-gift` with reason `gift-unavailable` rather than promising an unfulfillable reward; the storefront degrades gracefully.
+
+### Decision: deploy target
+
+- **Vercel serverless.** The embedded Next admin and the App Proxy `/validate` route run as serverless functions; everything heavy is external (Shopify enforces pricing at checkout; Postgres arbitrates concurrency; code creation is idempotent and rare). Matches the Vercel Cron already referenced for the scheduler.
+- The `/validate` route runs on the **Node.js runtime** (`export const runtime = 'nodejs'`), not Edge — it needs Prisma and Node `crypto` for the App Proxy HMAC. Pin the function region close to the database (the route does DB reads on the synchronous checkout-click path).
+- The rate limiter MUST be a **shared cross-instance store** — serverless instances rotate, so an in-process counter is meaningless. It is Postgres-backed (`rate_limits` table; atomic `INSERT … ON CONFLICT … DO UPDATE … RETURNING`), behind the `RateLimiter` port so it stays swappable (KV/Upstash later). Stale windows are pruned periodically (Vercel Cron).
+- **Latency caveat** (the one thing to measure): `/validate` is on the checkout-click path via the App Proxy, so cold starts could add delay. CLAUDE.md permits moving `/validate` to a Cloudflare Worker ONLY if measured checkout latency demands it. Do not pre-optimize — measure the real round-trip in the smoke test and record it; only then consider the Worker.
+- Data model adds a `RateLimit` row `(bucketKey, windowStart, count)` (PK on the pair). `bucketKey` is derived from the trusted App Proxy identity (shop + logged-in customer / forwarded IP), never a client-supplied value alone.
 
 ## Storefront UX: perception (required)
 

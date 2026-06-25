@@ -74,6 +74,19 @@ model MarketThreshold {
   @@map("market_thresholds")
 }
 
+// Shared cross-instance fixed-window rate limiter for the public /validate endpoint (Vercel
+// serverless). Keyed by (bucketKey, windowStart). The increment is a single atomic
+// INSERT ... ON CONFLICT DO UPDATE ... RETURNING (see PostgresRateLimiter); stale windows are
+// pruned periodically (Vercel Cron). windowStart is epoch milliseconds (BigInt).
+model RateLimit {
+  bucketKey   String
+  windowStart BigInt
+  count       Int    @default(0)
+
+  @@id([bucketKey, windowStart])
+  @@map("rate_limits")
+}
+
 model GiftCodeMapping {
   id                  String   @id @default(cuid())
   campaignId          String

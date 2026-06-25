@@ -5,14 +5,19 @@
   "type": "module",
   "dependencies": {
     "@free-gift-engine/core": "workspace:*",
-    "@free-gift-engine/shopify": "workspace:*"
+    "@free-gift-engine/shopify": "workspace:*",
+    "@prisma/client": "^6.1.0",
+    "next": "^15.1.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0"
+    "@types/node": "^22.10.0",
+    "prisma": "^6.1.0"
   },
   "scripts": {
+    "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "seed:smoke": "node scripts/seed-smoke.mjs"
   }
 }

@@ -144,7 +144,7 @@ export async function handleValidate(
   const customer = single(req.query['logged_in_customer_id']);
   const ip = req.headers['x-forwarded-for'];
   const rateKey = `${shop}:${customer && customer.length > 0 ? customer : (ip ?? 'anon')}`;
-  if (!deps.rateLimiter.take(rateKey)) {
+  if (!(await deps.rateLimiter.take(rateKey))) {
     return err(429, 'RATE_LIMITED', 'Too many requests');
   }
 

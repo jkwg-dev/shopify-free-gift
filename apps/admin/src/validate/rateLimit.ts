@@ -1,11 +1,13 @@
-// Lightweight abuse guard for the public /validate endpoint. Code creation is already deduped by
-// the gift-code mapping store, so this only needs to blunt spam/scraping, not enforce exact quotas.
-// The default is an in-memory fixed window — per process instance; a multi-instance deploy that
-// needs a shared limit would inject a Redis-backed implementation of this same interface.
+// Abuse guard for the public /validate endpoint. Code creation is already deduped by the gift-code
+// mapping store, so this only needs to blunt spam/scraping, not enforce exact quotas. `take` is
+// async because the production limiter is a SHARED, cross-instance store (Postgres — see
+// PostgresRateLimiter): on Vercel serverless, instances rotate constantly, so an in-process counter
+// is meaningless. The route depends only on this interface (dependency inversion), so the store is
+// swappable (Postgres now, KV/Upstash later) without touching the handler.
 
 export interface RateLimiter {
-  // True if this call is within budget; false if the caller has exceeded the limit.
-  take(key: string): boolean;
+  // Resolves true if this call is within budget; false if the caller has exceeded the limit.
+  take(key: string): Promise<boolean>;
 }
 
 export type FixedWindowOptions = {
@@ -15,22 +17,24 @@ export type FixedWindowOptions = {
   readonly now: () => number;
 };
 
+// In-process fixed window. Suitable for tests and single-process/local use ONLY — NOT for serverless
+// (use PostgresRateLimiter there).
 export class FixedWindowRateLimiter implements RateLimiter {
   private readonly buckets = new Map<string, { count: number; windowStart: number }>();
 
   constructor(private readonly options: FixedWindowOptions) {}
 
-  take(key: string): boolean {
+  take(key: string): Promise<boolean> {
     const now = this.options.now();
     const bucket = this.buckets.get(key);
     if (bucket === undefined || now - bucket.windowStart >= this.options.windowMs) {
       this.buckets.set(key, { count: 1, windowStart: now });
-      return true;
+      return Promise.resolve(true);
     }
     if (bucket.count >= this.options.limit) {
-      return false;
+      return Promise.resolve(false);
     }
     bucket.count += 1;
-    return true;
+    return Promise.resolve(true);
   }
 }

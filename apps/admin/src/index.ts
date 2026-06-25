@@ -62,7 +62,6 @@ export type {
   ValidateRequest,
   ValidateCartLineInput,
   ValidateResult,
-  GiftAward,
   ValidateError,
   ValidateErrorCode,
 } from './validate/contract.js';
@@ -83,3 +82,10 @@ export {
   type RateLimiter,
   type FixedWindowOptions,
 } from './validate/rateLimit.js';
+export {
+  PostgresRateLimiter,
+  type WindowCounter,
+  type PostgresRateLimiterOptions,
+} from './validate/rateLimitPostgres.js';
+export { ShopifyDiscountGatewayAdapter } from './gateways/shopifyDiscountGateway.js';
+export { getValidateDeps } from './validate/composition.js';

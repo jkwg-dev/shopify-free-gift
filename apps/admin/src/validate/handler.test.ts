@@ -75,7 +75,7 @@ function makeDeps(
   const gateway = new FakeDiscountGateway();
   return {
     apiSecret: SECRET,
-    rateLimiter: { take: () => true },
+    rateLimiter: { take: () => Promise.resolve(true) },
     resolveActiveCampaign: () =>
       Promise.resolve({ shopId: 'shop1', baseCurrency: 'USD', campaign: andCampaign() }),
     priceVariants,
@@ -124,9 +124,27 @@ describe('handleValidate', () => {
   });
 
   it('returns 429 when rate limited', async () => {
-    const res = await handleValidate(httpReq(), makeDeps({ rateLimiter: { take: () => false } }));
+    const res = await handleValidate(
+      httpReq(),
+      makeDeps({ rateLimiter: { take: () => Promise.resolve(false) } }),
+    );
     expect(res.status).toBe(429);
     expect(res.body).toMatchObject({ error: { code: 'RATE_LIMITED' } });
+  });
+
+  it('derives the rate-limit key from the trusted shop + customer identity', async () => {
+    const keys: string[] = [];
+    const rateLimiter = {
+      take: (key: string) => {
+        keys.push(key);
+        return Promise.resolve(true);
+      },
+    };
+    await handleValidate(
+      httpReq({ query: { shop: 'shop.myshopify.com', logged_in_customer_id: '42' } }),
+      makeDeps({ rateLimiter }),
+    );
+    expect(keys).toEqual(['shop.myshopify.com:42']);
   });
 
   it('returns 400 for a non-JSON body', async () => {

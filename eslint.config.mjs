@@ -15,4 +15,20 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'error',
     },
   },
+  {
+    // Node scripts and ESM/CJS config files run on Node and use its globals. (typescript-eslint
+    // already disables no-undef for .ts; this covers the plain .mjs/.cjs/.js files.)
+    files: ['**/*.{mjs,cjs}', '**/scripts/**/*.{js,mjs}'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+        fetch: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+      },
+    },
+  },
 );

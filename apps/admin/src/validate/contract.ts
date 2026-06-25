@@ -32,29 +32,36 @@ export type ValidateRequest = {
   readonly countryCode: string;
 };
 
-// One qualified tier's resolved reward. In 'highest-only' suppression there is exactly one award;
-// in 'cumulative' there is one per qualified tier (each its own reusable code).
-export type GiftAward = {
-  readonly tierId: string;
-  readonly giftVariantIds: readonly string[];
-  // Reusable, variant-scoped, 100%-off code applied via /discount/CODE.
-  readonly code: string;
-  // The threshold actually enforced in this market, in presentment currency — equals the widget's
-  // "Spend X to unlock" figure (the storefront invariant). The discount's own base-currency
-  // minimum is the authoritative checkout backstop.
-  readonly appliedThreshold: Money;
-};
-
+// A qualifying result yields EXACTLY ONE reusable code (only 'highest-only' suppression is
+// supported on Advanced — see CLAUDE.md). The code covers the winning tier's resolved gift
+// variant(s): an AND tier is multiple variants under this one code, applied via a single
+// /discount/CODE; an OR tier is the single chosen variant. The storefront uses `giftVariantIds`
+// to reconcile cart lines and `code` to apply the discount, then proceeds to the native checkout.
 export type ValidateResult =
   | {
       readonly status: 'gift';
       readonly currency: string;
       readonly subtotal: Money;
-      readonly awards: readonly GiftAward[];
+      readonly tierId: string;
+      readonly giftVariantIds: readonly string[];
+      // Reusable, variant-scoped, 100%-off code applied via /discount/CODE.
+      readonly code: string;
+      // The threshold actually enforced in this market, in presentment currency — equals the
+      // widget's "Spend X to unlock" figure (the storefront invariant). The discount's own
+      // base-currency minimum is the authoritative checkout backstop.
+      readonly appliedThreshold: Money;
     }
   | {
       readonly status: 'no-gift';
-      readonly reason: 'declined' | 'below-threshold' | 'inactive' | 'gift-unavailable';
+      // 'cumulative-unsupported': core resolved more than one tier's gift-set. Cumulative cannot
+      // be redeemed on Advanced (non-combinable codes + a single /discount/CODE), so /validate
+      // refuses rather than hand out multiple unusable codes. The admin must not create it.
+      readonly reason:
+        | 'declined'
+        | 'below-threshold'
+        | 'inactive'
+        | 'gift-unavailable'
+        | 'cumulative-unsupported';
     };
 
 export type ValidateErrorCode = 'INVALID_REQUEST' | 'UNAUTHORIZED' | 'RATE_LIMITED';

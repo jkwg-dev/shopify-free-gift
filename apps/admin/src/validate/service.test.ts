@@ -153,28 +153,25 @@ describe('resolveValidate — suppression', () => {
     expect(result.status).toBe('gift');
     if (result.status !== 'gift') return;
     expect(result.subtotal).toEqual(money(12000, 'USD'));
-    expect(result.awards).toHaveLength(1);
-    expect(result.awards[0]!.tierId).toBe('t2');
-    expect(result.awards[0]!.giftVariantIds).toEqual([G2]);
-    expect(result.awards[0]!.appliedThreshold).toEqual(money(10000, 'USD'));
-    expect(result.awards[0]!.code.length).toBeGreaterThan(0);
+    expect(result.tierId).toBe('t2');
+    expect(result.giftVariantIds).toEqual([G2]);
+    expect(result.appliedThreshold).toEqual(money(10000, 'USD'));
+    expect(result.code.length).toBeGreaterThan(0);
     expect(gateway.createCount).toBe(1);
   });
 
-  it('returns every qualified tier under cumulative', async () => {
+  it('refuses a cumulative campaign that resolves multiple tiers (unsupported on Advanced)', async () => {
     const { deps, gateway } = makeDeps({
       campaign: campaignWith('cumulative', { kind: 'AND', gifts: [{ variantId: G1 }] }),
     });
     const result = await resolveValidate(
       'shop.myshopify.com',
-      req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }),
+      req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }), // qualifies both tiers
       deps,
     );
 
-    expect(result.status).toBe('gift');
-    if (result.status !== 'gift') return;
-    expect(result.awards.map((a) => a.tierId)).toEqual(['t1', 't2']);
-    expect(gateway.createCount).toBe(2);
+    expect(result).toEqual({ status: 'no-gift', reason: 'cumulative-unsupported' });
+    expect(gateway.createCount).toBe(0); // never mint codes that cannot all redeem
   });
 });
 
@@ -206,7 +203,7 @@ describe('resolveValidate — server-authoritative cart', () => {
     expect(result.status).toBe('gift');
     if (result.status !== 'gift') return;
     expect(result.subtotal).toEqual(money(6000, 'USD'));
-    expect(result.awards[0]!.tierId).toBe('t1');
+    expect(result.tierId).toBe('t1');
   });
 
   it('ignores unpriceable phantom lines so the client cannot inflate the tier', async () => {
@@ -227,7 +224,7 @@ describe('resolveValidate — server-authoritative cart', () => {
     expect(result.status).toBe('gift');
     if (result.status !== 'gift') return;
     expect(result.subtotal).toEqual(money(6000, 'USD'));
-    expect(result.awards[0]!.tierId).toBe('t1'); // not t2, despite 50 phantom units
+    expect(result.tierId).toBe('t1'); // not t2, despite 50 phantom units
   });
 });
 
@@ -250,7 +247,7 @@ describe('resolveValidate — OR choice', () => {
 
     expect(result.status).toBe('gift');
     if (result.status !== 'gift') return;
-    expect(result.awards[0]!.giftVariantIds).toEqual([G2]);
+    expect(result.giftVariantIds).toEqual([G2]);
   });
 
   it('rejects a missing OR choice instead of defaulting', async () => {
@@ -282,8 +279,8 @@ describe('resolveValidate — markets', () => {
     if (result.status !== 'gift') return;
     expect(result.currency).toBe('CAD');
     expect(result.subtotal).toEqual(money(8000, 'CAD'));
-    expect(result.awards[0]!.tierId).toBe('t1');
-    expect(result.awards[0]!.appliedThreshold).toEqual(money(7000, 'CAD')); // resolved, not 5000 USD
+    expect(result.tierId).toBe('t1');
+    expect(result.appliedThreshold).toEqual(money(7000, 'CAD')); // resolved, not 5000 USD
   });
 
   it('rejects when the claimed currency does not match the country pricing', async () => {
@@ -383,6 +380,6 @@ describe('resolveValidate — concurrency', () => {
     expect(a.status).toBe('gift');
     expect(b.status).toBe('gift');
     if (a.status !== 'gift' || b.status !== 'gift') return;
-    expect(a.awards[0]!.code).toBe(b.awards[0]!.code);
+    expect(a.code).toBe(b.code);
   });
 });
