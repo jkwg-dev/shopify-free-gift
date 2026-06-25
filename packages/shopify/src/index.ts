@@ -41,6 +41,12 @@ export { fetchGiftVariants, type GiftVariant } from './products.js';
 export { fetchVariantPricing, type VariantPricing } from './pricing.js';
 
 export {
+  exchangeAccessToken,
+  type AccessTokenExchangeInput,
+  type AccessTokenResult,
+} from './oauth.js';
+
+export {
   APP_UNINSTALLED_TOPIC,
   registerAppUninstalledWebhook,
   type WebhookSubscription,

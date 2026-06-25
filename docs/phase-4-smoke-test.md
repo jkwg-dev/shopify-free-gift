@@ -55,16 +55,21 @@ variant-granular case; the chooser must offer S/M/L as distinct options, never c
 
 These are environment-specific and cannot be invented — provide them in Vercel env / `.env`:
 
-| Value                         | Purpose                                                     |
-| ----------------------------- | ----------------------------------------------------------- |
-| `SHOPIFY_SHOP_DOMAIN`         | the dev store, e.g. `our-dev-store.myshopify.com`           |
-| `SHOPIFY_ADMIN_ACCESS_TOKEN`  | offline Admin API token (created when the app is installed) |
-| `SHOPIFY_API_SECRET`          | app shared secret — used to verify the App Proxy signature  |
-| `SHOPIFY_API_VERSION`         | `2026-04`                                                   |
-| `SHOPIFY_BASE_CURRENCY`       | `CAD` (this store's base)                                   |
-| `TOKEN_ENCRYPTION_KEY`        | AES-256-GCM key (only if storing the token encrypted)       |
-| `DATABASE_URL` / `DIRECT_URL` | the dev Postgres branch (pooled / unpooled)                 |
-| `SEED_*` GIDs                 | real `ProductVariant` GIDs (2 + 2 + 8 = 12), below          |
+| Value                         | Purpose                                                                                            |
+| ----------------------------- | -------------------------------------------------------------------------------------------------- |
+| `SHOPIFY_SHOP_DOMAIN`         | the dev store, e.g. `our-dev-store.myshopify.com`                                                  |
+| `SHOPIFY_API_KEY`             | **Client ID** from the Dev Dashboard app                                                           |
+| `SHOPIFY_API_SECRET`          | **Client secret** — the SINGLE shared secret for OAuth HMAC, webhook HMAC, AND App Proxy signature |
+| `SHOPIFY_APP_URL`             | the app/host URL (Vercel production), e.g. `https://your-app.vercel.app`                           |
+| `SHOPIFY_SCOPES`              | `read_products,write_discounts,read_discounts` (must match the toml + Dashboard app)               |
+| `SHOPIFY_API_VERSION`         | `2026-04`                                                                                          |
+| `SHOPIFY_BASE_CURRENCY`       | `CAD` (this store's base)                                                                          |
+| `TOKEN_ENCRYPTION_KEY`        | AES-256-GCM key, base64 (`openssl rand -base64 32`) — encrypts the offline token at rest           |
+| `DATABASE_URL` / `DIRECT_URL` | the Neon dev branch (pooled / direct)                                                              |
+| `SEED_*` GIDs                 | real `ProductVariant` GIDs (2 + 2 + 8 = 12), below                                                 |
+
+> No admin access token here — it's obtained by **OAuth install** and stored encrypted in the Shop
+> row; the app decrypts it per request.
 
 ```
 SEED_OR500_A=gid://shopify/ProductVariant/...        # Complete Snowboard - Ice
@@ -85,27 +90,59 @@ SEED_OR1500_GIDS=gid://...S,gid://...M,gid://...L,gid://...,gid://...,gid://...,
 - App Proxy: prefix `apps`, subpath `free-gift` (see `apps/admin/shopify.app.toml`) ⇒ storefront
   path **`POST /apps/free-gift/validate`**.
 
-## Setup
+## Setup (current flow — Dev Dashboard OAuth install)
+
+Since 2026-01-01 legacy custom apps can't be created from the Shopify admin; create the app in the
+**Dev Dashboard** and install it via an install link.
+
+1. **Create the app** in the Dev Dashboard as an installable **OAuth** app. Note its **Client ID**
+   and **Client secret**.
+2. **Link + configure** config-as-code (run from `apps/admin`, interactively in your own terminal):
+   ```sh
+   cd apps/admin && shopify app config link    # writes client_id into shopify.app.toml
+   ```
+   Then fill the `https://…vercel.app` placeholders in `shopify.app.toml` (application_url, the
+   `[auth] redirect_urls` callback, `[app_proxy]` url, webhook URLs) and confirm `[access_scopes]`
+   = `read_products,write_discounts,read_discounts`. (If the CLI rejects/rewrites anything, set it
+   in the Dev Dashboard UI instead — see the note in the toml.)
+3. **Provision the Neon dev branch**; set `DATABASE_URL` + `DIRECT_URL`, then apply migrations
+   (committed; never db push):
+   ```sh
+   pnpm --filter @free-gift-engine/admin exec prisma migrate deploy
+   ```
+4. **Deploy to Vercel** with all env vars from the table above (Node runtime; region near the DB).
+   `shopify app deploy` pushes the app config. Set distribution = **Custom**, target **greentee-dev**,
+   and generate the **install link**.
+5. **Install**: open the install link, approve. The OAuth callback exchanges the code, encrypts the
+   offline token, and writes it to the Neon **Shop** row; the App Proxy goes live.
+6. **Gate check — unsigned request is rejected**:
+   ```sh
+   curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
+     https://your-app.vercel.app/apps/free-gift/validate -d '{}'      # expect 401
+   ```
+7. **Seed** the campaign (12 real GIDs; see env block above):
+   ```sh
+   SHOPIFY_SHOP_DOMAIN=... \
+   SEED_OR500_A=... SEED_OR500_B=... \
+   SEED_AND1000_A=... SEED_AND1000_B=... \
+   SEED_OR1500_GIDS=gid://...,gid://...,gid://...,gid://...,gid://...,gid://...,gid://...,gid://... \
+   pnpm --filter @free-gift-engine/admin run seed:smoke
+   ```
+
+### Calling /validate during the walk (signed request)
+
+The code is only minted when `/validate` is hit. Generate a properly **signed** App Proxy request
+(the same signature Shopify would forward) with the helper:
 
 ```sh
-# 1. Provision the dev Postgres branch (Neon / Vercel Postgres) and set DATABASE_URL + DIRECT_URL.
-
-# 2. Apply committed migrations to that branch (never db push).
-pnpm --filter @free-gift-engine/admin exec prisma migrate deploy
-
-# 3. Register + install the app on the dev store so the App Proxy exists and an offline
-#    access token is issued (set SHOPIFY_ADMIN_ACCESS_TOKEN / SHOPIFY_API_SECRET from it).
-
-# 4. Deploy the /validate route to Vercel (or `vercel dev`); confirm the App Proxy forwards
-#    https://{shop}/apps/free-gift/validate to it.
-
-# 5. Seed the campaign with the 12 real GIDs (see env block above).
-SHOPIFY_SHOP_DOMAIN=... \
-SEED_OR500_A=... SEED_OR500_B=... \
-SEED_AND1000_A=... SEED_AND1000_B=... \
-SEED_OR1500_GIDS=gid://...,gid://...,gid://...,gid://...,gid://...,gid://...,gid://...,gid://... \
-pnpm --filter @free-gift-engine/admin run seed:smoke
+SHOPIFY_API_SECRET=<client secret> APP_URL=https://your-app.vercel.app \
+SHOP=our-dev-store.myshopify.com \
+BODY='{"cart":[{"variantId":"gid://shopify/ProductVariant/123","quantity":1,"appAdded":false}],"choices":{"<tier1Id>":"a"},"declined":false,"presentmentCurrency":"CAD","countryCode":"CA"}' \
+pnpm --filter @free-gift-engine/admin run sign-proxy
 ```
+
+It prints a ready `curl` command. Then apply the returned code via `https://{shop}/discount/{CODE}`
+and proceed to the native checkout.
 
 > The storefront UI (auto-add, perception widget, OR chooser, decline) is **Phase 5**. Until then,
 > drive `/validate` directly (the theme's future job): POST the cart to the App-Proxy path, then

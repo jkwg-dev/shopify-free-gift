@@ -25,7 +25,7 @@ export async function POST(request: Request): Promise<Response> {
     rawBody: await request.text(),
   };
 
-  const result = await handleValidate(httpRequest, getValidateDeps());
+  const result = await handleValidate(httpRequest, await getValidateDeps());
   return new Response(JSON.stringify(result.body), {
     status: result.status,
     headers: { 'content-type': 'application/json' },

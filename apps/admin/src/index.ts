@@ -88,4 +88,10 @@ export {
   type PostgresRateLimiterOptions,
 } from './validate/rateLimitPostgres.js';
 export { ShopifyDiscountGatewayAdapter } from './gateways/shopifyDiscountGateway.js';
-export { getValidateDeps } from './validate/composition.js';
+export {
+  getValidateDeps,
+  getOAuthCallbackDeps,
+  getWebhookDeps,
+  buildInstallRedirect,
+  GIFT_ENGINE_SCOPES,
+} from './validate/composition.js';

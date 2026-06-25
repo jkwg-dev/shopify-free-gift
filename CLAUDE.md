@@ -97,6 +97,14 @@ Consequences (do not regress):
 - **Latency caveat** (the one thing to measure): `/validate` is on the checkout-click path via the App Proxy, so cold starts could add delay. CLAUDE.md permits moving `/validate` to a Cloudflare Worker ONLY if measured checkout latency demands it. Do not pre-optimize — measure the real round-trip in the smoke test and record it; only then consider the Worker.
 - Data model adds a `RateLimit` row `(bucketKey, windowStart, count)` (PK on the pair). `bucketKey` is derived from the trusted App Proxy identity (shop + logged-in customer / forwarded IP), never a client-supplied value alone.
 
+### Decision: app registration, routes, and credentials
+
+- The app is created in the **Dev Dashboard** as a custom-distribution **OAuth** app (since 2026-01-01 legacy custom apps can't be created from the Shopify admin) and installed via an install link. Standard authorization-code grant with an **offline** token — NOT the client-credentials grant (which issues ~24h tokens and lacks the install/App-Proxy model we need).
+- Next.js routes mounted in the runtime slice, all **Node runtime**: `app/api/auth` (begin), `app/api/auth/callback` (verify HMAC → exchange code → encrypt → persist the offline token to the Shop row), `app/api/webhooks` (verify HMAC → dispatch; `app/uninstalled` runs real cleanup, compliance topics acknowledged), and `app/apps/free-gift/validate` (App Proxy). All reuse the 3a handlers via the composition root — no logic is reimplemented.
+- **Single shared secret**: the Dev Dashboard **Client secret** → `SHOPIFY_API_SECRET` verifies OAuth HMAC, webhook HMAC, AND the App Proxy signature (there is no separate App Proxy secret). **Client ID** → `SHOPIFY_API_KEY`.
+- **No admin token in env**: Admin API calls use the per-shop **offline token from install**, stored AES-256-GCM-encrypted in the Shop row and decrypted per request (`adminClientForShop`). The OAuth-install path is the one that's used.
+- **Minimal scopes** (audited against `packages/shopify`): `read_products` (variant validation + contextualPricing), `write_discounts` (create/deactivate the scoped codes), `read_discounts` (discounts API reads the created node back). No `write_products`. The list lives in `composition.ts` (`GIFT_ENGINE_SCOPES`) and must match `shopify.app.toml [access_scopes]` and the Dashboard app.
+
 ## Storefront UX: perception (required)
 
 The shopper MUST clearly notice the gift. No silent additions.
