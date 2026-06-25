@@ -7,6 +7,7 @@
 api_version = "2026-04"
 
 [[extensions]]
+uid = "155fd892-e83a-caa9-468b-439fa3980c35a19aad49"
 type = "theme"
 name = "Free Gift Engine"
 handle = "free-gift-engine"

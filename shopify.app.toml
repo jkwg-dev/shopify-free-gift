@@ -1,18 +1,41 @@
-# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+# Shopify app configuration (config-as-code). THIS repo-root file is the one the Shopify CLI
+# deploys (`.shopify/` + client_id live here). `shopify app deploy` PUSHES this file and overwrites
+# the live Dev Dashboard config, so keep application_url / [auth] / [app_proxy] in sync with the
+# Dashboard and never leave placeholders here.
+#
+# client_id + name come from `shopify app config link` (Dev Dashboard app "free-gift-tiered").
 
 client_id = "b17eeffcb3567de7684f87a3a4543612"
 name = "free-gift-tiered"
-application_url = "https://example.com"
-embedded = true
+application_url = "https://free-gift-tiered.vercel.app"
+# Headless until Phase 3b (the "/" route redirects installs into OAuth; no embedded App Bridge UI).
+embedded = false
+
+[access_scopes]
+# Minimal scopes the engine uses (composition.ts GIFT_ENGINE_SCOPES). No write_products.
+scopes = "read_products,write_discounts,read_discounts"
+optional_scopes = []
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = ["https://free-gift-tiered.vercel.app/api/auth/callback"]
+
+[app_proxy]
+# Storefront https://{shop}/apps/free-gift/* -> {application_url}/apps/free-gift/*
+url = "https://free-gift-tiered.vercel.app/apps/free-gift"
+prefix = "apps"
+subpath = "free-gift"
 
 [webhooks]
 api_version = "2026-04"
 
-[access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_discounts,write_discounts,read_products"
-optional_scopes = [ ]
-use_legacy_install_flow = false
+  # If `shopify app deploy` rejects the subscription/privacy schema on this CLI version, delete the
+  # two blocks below (keep api_version) and configure webhooks in the Dev Dashboard, then re-deploy.
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "https://free-gift-tiered.vercel.app/api/webhooks"
 
-[auth]
-redirect_urls = [ ]
+  [webhooks.privacy_compliance]
+  customer_data_request_url = "https://free-gift-tiered.vercel.app/api/webhooks"
+  customer_deletion_url = "https://free-gift-tiered.vercel.app/api/webhooks"
+  shop_deletion_url = "https://free-gift-tiered.vercel.app/api/webhooks"

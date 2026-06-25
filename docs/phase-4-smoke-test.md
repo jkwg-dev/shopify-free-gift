@@ -123,7 +123,7 @@ SEED_OR1500_GIDS=gid://shopify/ProductVariant/45375032393837,gid://shopify/Produ
   gift-unavailable step.
 - Make at least one gift variant (e.g. Complete Snowboard · Ice) **also** normally purchasable so
   step 7 (paid-duplicate) can be exercised.
-- App Proxy: prefix `apps`, subpath `free-gift` (see `apps/admin/shopify.app.toml`) ⇒ storefront
+- App Proxy: prefix `apps`, subpath `free-gift` (see the repo-root `shopify.app.toml`) ⇒ storefront
   path **`POST /apps/free-gift/validate`**.
 
 ## Setup (current flow — Dev Dashboard OAuth install)
