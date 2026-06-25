@@ -42,8 +42,11 @@ appAdded: has _fge_gift property }`.
   `{ "<TIER1_ID>": "a" }` (tier-1 id from the seed output; `a` = Ice).
   - The **section** app block (`free-gift.liquid`) is NOT used in 5b-1 — it's reserved for the 5b-2
     perception UI. The engine is the **app embed**, not a section block.
-- Build the asset before deploy: `pnpm --filter @free-gift-engine/theme build` (produces
-  `assets/free-gift.js`; committed, but rebuild if `src/storefront.ts` or core changes).
+- Build the asset before deploy: `pnpm --filter @free-gift-engine/theme-widget build` (the source +
+  build live in `packages/theme-widget`; it writes `extensions/theme/assets/free-gift.js`, which is
+  committed — rebuild if `packages/theme-widget/src` or core changes). `extensions/theme` itself is a
+  pure theme-extension dir (only `assets`/`blocks`/`locales` + `shopify.extension.toml`; the CLI
+  rejects anything else such as `.turbo`/`node_modules`/`src`).
 
 ## Preview the theme
 

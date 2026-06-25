@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  // ../../packages/core/src/reconcile.ts
+  // ../core/src/reconcile.ts
   var GIFT_LINE_PROPERTY = "_fge_gift";
   function reconcileGiftLines(cart, result) {
     const desired = result.status === "gift" ? result.giftVariantIds : [];

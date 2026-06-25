@@ -1,7 +1,8 @@
-// Bundle the storefront controller (TS, importing the pure core reconciler) into a single browser
-// asset the theme app extension serves: assets/free-gift.js. The js-to-ts plugin resolves the
-// codebase's NodeNext-style `.js` import specifiers to their `.ts` source (core + theme), the same
-// gap next.config handles for the admin app.
+// Bundle the storefront controller (TS, importing the pure core reconciler) into the theme
+// extension's served asset: ../../extensions/theme/assets/free-gift.js. This package holds the
+// source/build; extensions/theme is a PURE theme-extension dir (only assets/blocks/locales +
+// shopify.extension.toml — the CLI rejects anything else, e.g. .turbo/node_modules/src). The
+// js-to-ts plugin resolves the codebase's NodeNext `.js` specifiers to their `.ts` source.
 import { build } from 'esbuild';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -24,9 +25,9 @@ await build({
   bundle: true,
   format: 'iife',
   target: 'es2019',
-  outfile: resolve(import.meta.dirname, 'assets/free-gift.js'),
+  outfile: resolve(import.meta.dirname, '../../extensions/theme/assets/free-gift.js'),
   legalComments: 'none',
   plugins: [jsToTs],
 });
 
-console.log('Built assets/free-gift.js');
+console.log('Built extensions/theme/assets/free-gift.js');
