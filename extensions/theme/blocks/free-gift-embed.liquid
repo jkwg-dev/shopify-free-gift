@@ -1,0 +1,38 @@
+{% comment %}
+  Free Gift Engine — app EMBED (Phase 5b-1). This is the ENGINE: it loads the storefront controller
+  site-wide (every page, so it reacts to the cart drawer opening from anywhere) and renders a hidden
+  config element the controller reads. No visible UI — the perception UI (progress widget, chooser,
+  decline) is the separate section app block (free-gift.liquid), Phase 5b-2.
+
+  Enable it in the theme editor under: Theme settings (gear) -> App embeds -> "Free Gift Engine".
+
+  `default_choices` is a TEMPORARY 5b-1 seam (the chooser UI is 5b-2): JSON mapping an OR tier id to
+  its chosen option id, e.g. { "<tier1Id>": "a" }.
+{% endcomment %}
+
+<div
+  data-fge-app-block
+  data-proxy-path="/apps/free-gift/validate"
+  data-presentment-currency="{{ cart.currency.iso_code }}"
+  data-country="{{ localization.country.iso_code }}"
+  data-default-choices="{{ block.settings.default_choices | escape }}"
+  hidden
+></div>
+
+<script src="{{ 'free-gift.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Free Gift Engine",
+  "target": "body",
+  "settings": [
+    {
+      "type": "textarea",
+      "id": "default_choices",
+      "label": "Default gift choices (temporary, 5b-1)",
+      "info": "JSON mapping tier id -> OR option id, e.g. {\"<tier1Id>\":\"a\"}. Replaced by the chooser UI in 5b-2.",
+      "default": ""
+    }
+  ]
+}
+{% endschema %}

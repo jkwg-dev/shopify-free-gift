@@ -35,9 +35,13 @@ appAdded: has _fge_gift property }`.
 
 - Phase 4 setup done: app installed on greentee-dev, deployed to Vercel with env, campaign seeded
   (see `docs/phase-4-smoke-test.md`). The signed direct `/validate` call passed.
-- The theme app extension deployed (`shopify app deploy`) and the **Free Gift** app block added to
-  the cart drawer / cart section via the **theme editor**, with **Default gift choices** set to the
-  seeded tier-1 OR default, e.g. `{ "<TIER1_ID>": "a" }` (tier-1 id from the seed output; `a` = Ice).
+- The theme app extension deployed (`shopify app deploy`), then the **"Free Gift Engine" app embed**
+  enabled in the theme editor under **Theme settings (gear) → App embeds** (this loads the engine
+  site-wide — no section needed; this theme's cart sections don't accept app blocks, which is fine).
+  In the embed's settings, set **Default gift choices** to the seeded tier-1 OR default, e.g.
+  `{ "<TIER1_ID>": "a" }` (tier-1 id from the seed output; `a` = Ice).
+  - The **section** app block (`free-gift.liquid`) is NOT used in 5b-1 — it's reserved for the 5b-2
+    perception UI. The engine is the **app embed**, not a section block.
 - Build the asset before deploy: `pnpm --filter @free-gift-engine/theme build` (produces
   `assets/free-gift.js`; committed, but rebuild if `src/storefront.ts` or core changes).
 
