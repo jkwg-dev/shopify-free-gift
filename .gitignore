@@ -20,3 +20,8 @@ coverage/
 # misc
 *.log
 .DS_Store
+
+# Shopify CLI: the repo-root shopify.app.toml is the single source of truth (see commit history).
+# `shopify app config link` run from apps/admin regenerates a stale nested copy — never commit it.
+apps/admin/shopify.app.toml
+.shopify/
