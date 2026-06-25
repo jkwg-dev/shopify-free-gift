@@ -15,7 +15,8 @@
 //   SHOPIFY_SHOP_DOMAIN                e.g. our-dev-store.myshopify.com
 //   SEED_OR500_SOCKS, SEED_OR500_SLEEVES                 tier $500 (OR)
 //   SEED_AND1000_BRUSH, SEED_AND1000_TEEHOLDER           tier $1000 (AND)
-//   SEED_HAT_1 .. SEED_HAT_8                             tier $1500 (OR, eight hats)
+//   SEED_HAT_GIDS                                        tier $1500 (OR) — comma-separated hat GIDs
+//                                                        (eight per the spec; core OR handles any N)
 // => 12 gift variant GIDs total (2 + 2 + 8).
 //
 // Tip: make at least one gift variant (e.g. SEED_OR500_SOCKS) also a normally purchasable catalog
@@ -59,7 +60,13 @@ async function main() {
   const sleeves = requireEnv('SEED_OR500_SLEEVES');
   const brush = requireEnv('SEED_AND1000_BRUSH');
   const teeHolder = requireEnv('SEED_AND1000_TEEHOLDER');
-  const hats = Array.from({ length: 8 }, (_, i) => requireEnv(`SEED_HAT_${i + 1}`));
+  const hats = requireEnv('SEED_HAT_GIDS')
+    .split(',')
+    .map((gid) => gid.trim())
+    .filter((gid) => gid.length > 0);
+  if (hats.length === 0) {
+    throw new Error('SEED_HAT_GIDS must list at least one hat variant GID (comma-separated)');
+  }
 
   const shop = await prisma.shop.upsert({
     where: { domain },
