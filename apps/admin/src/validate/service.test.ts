@@ -260,6 +260,23 @@ describe('resolveValidate — OR choice', () => {
       ),
     ).rejects.toBeInstanceOf(InvalidGiftChoiceError);
   });
+
+  it('mints distinct codes for sibling-variant OR choices (variant-granular minting key)', async () => {
+    // G1 and G2 stand in for two variants of ONE product. Core has no productId, so the options
+    // never collapse: each resolved variant keys its own scoped code.
+    const { deps, gateway } = makeDeps({ campaign: orCampaign });
+    const cart = [{ variantId: P1, quantity: 1, appAdded: false }];
+    const a = await resolveValidate('s.myshopify.com', req({ cart, choices: { t1: 'a' } }), deps);
+    const b = await resolveValidate('s.myshopify.com', req({ cart, choices: { t1: 'b' } }), deps);
+
+    expect(a.status).toBe('gift');
+    expect(b.status).toBe('gift');
+    if (a.status !== 'gift' || b.status !== 'gift') return;
+    expect(a.giftVariantIds).toEqual([G1]);
+    expect(b.giftVariantIds).toEqual([G2]);
+    expect(a.code).not.toBe(b.code);
+    expect(gateway.createCount).toBe(2);
+  });
 });
 
 describe('resolveValidate — markets', () => {

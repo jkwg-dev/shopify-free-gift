@@ -1,27 +1,26 @@
 // Smoke-test seed: creates ONE highest-only campaign directly in the dev database (no admin UI yet
-// — that's Phase 3b). Mirrors the REAL storefront spec (the mockup is canonical). Idempotent:
-// re-running replaces the shop's campaigns.
+// — that's Phase 3b). Mirrors the real storefront spec (2 / 2 / 8). Idempotent: re-running replaces
+// the shop's campaigns.
 //
 //   node apps/admin/scripts/seed-smoke.mjs
 //
-// Tiers (base currency USD), suppression = highest-only (only the highest qualifying tier's gift):
-//   $500+   OR  -> choose one of {GFJ Socks, GFJ Arm Sleeves}
-//   $1000+  AND -> both {GFJ Club Brush, GFJ G-Bear Tee Holder} under ONE code
-//   $1500+  OR  -> choose one of EIGHT GFJ Hat variants
-// Each tier also carries one CAD market threshold (manual FX) for the non-base-market step.
+// Tiers — BASE CURRENCY = CAD (this dev store's base), suppression = highest-only:
+//   CA$500+   OR  -> choose one of two variants            (SEED_OR500_A, SEED_OR500_B)
+//   CA$1000+  AND -> both variants under ONE code          (SEED_AND1000_A, SEED_AND1000_B)
+//   CA$1500+  OR  -> choose one of N variants              (SEED_OR1500_GIDS, comma-separated)
+// Each tier carries one NON-base market threshold (USD) with manual FX, for the presentment step.
+//
+// The seed is product-agnostic: it stores variant GIDs only (the engine keys on variant GID and has
+// no productId). It does NOT hardcode product names and does NOT call Shopify — human-readable
+// labels for the stand-in products live in docs/phase-4-smoke-test.md (and the Phase 3b admin will
+// show real titles via packages/shopify when campaigns are built through the UI).
 //
 // Required env (every GID MUST be a real ProductVariant on the dev store):
 //   DATABASE_URL / DIRECT_URL          the dev Postgres branch
 //   SHOPIFY_SHOP_DOMAIN                e.g. our-dev-store.myshopify.com
-//   SEED_OR500_SOCKS, SEED_OR500_SLEEVES                 tier $500 (OR)
-//   SEED_AND1000_BRUSH, SEED_AND1000_TEEHOLDER           tier $1000 (AND)
-//   SEED_HAT_GIDS                                        tier $1500 (OR) — comma-separated hat GIDs
-//                                                        (eight per the spec; core OR handles any N)
-// => 12 gift variant GIDs total (2 + 2 + 8).
-//
-// Tip: make at least one gift variant (e.g. SEED_OR500_SOCKS) also a normally purchasable catalog
-// item so the runbook can exercise the paid-duplicate rule (a paid unit still counts toward the
-// subtotal; only the app-added free unit is excluded).
+//   SEED_OR500_A, SEED_OR500_B                          tier CA$500 (OR)
+//   SEED_AND1000_A, SEED_AND1000_B                      tier CA$1000 (AND)
+//   SEED_OR1500_GIDS                                    tier CA$1500 (OR) — comma-separated GIDs
 //
 // configVersionHash is a fixed seed marker — /validate only needs it to be STABLE (it keys the
 // gift-code mapping). Real campaigns created via the Phase 3b admin compute it from config.
@@ -37,17 +36,17 @@ function requireEnv(name) {
   return value;
 }
 
-// Manual FX for the one non-base market exercised by the runbook (USD base -> CAD presentment).
-function cadThreshold(resolvedThresholdAmount) {
+// One non-base market (USD) per tier, manual FX from the CAD base. Amounts are minor units, USD.
+function usdMarketThreshold(resolvedThresholdAmount) {
   return {
     create: [
       {
-        market: 'CA',
-        presentmentCurrency: 'CAD',
-        manualFxRate: 1.4,
+        market: 'US',
+        presentmentCurrency: 'USD',
+        manualFxRate: 0.74, // CAD -> USD
         roundingRule: 'none',
-        resolvedThresholdAmount, // minor units, CAD
-        resolvedThresholdCurrency: 'CAD',
+        resolvedThresholdAmount,
+        resolvedThresholdCurrency: 'USD',
       },
     ],
   };
@@ -56,16 +55,16 @@ function cadThreshold(resolvedThresholdAmount) {
 async function main() {
   const domain = requireEnv('SHOPIFY_SHOP_DOMAIN');
 
-  const socks = requireEnv('SEED_OR500_SOCKS');
-  const sleeves = requireEnv('SEED_OR500_SLEEVES');
-  const brush = requireEnv('SEED_AND1000_BRUSH');
-  const teeHolder = requireEnv('SEED_AND1000_TEEHOLDER');
-  const hats = requireEnv('SEED_HAT_GIDS')
+  const or500a = requireEnv('SEED_OR500_A');
+  const or500b = requireEnv('SEED_OR500_B');
+  const and1000a = requireEnv('SEED_AND1000_A');
+  const and1000b = requireEnv('SEED_AND1000_B');
+  const or1500 = requireEnv('SEED_OR1500_GIDS')
     .split(',')
     .map((gid) => gid.trim())
     .filter((gid) => gid.length > 0);
-  if (hats.length === 0) {
-    throw new Error('SEED_HAT_GIDS must list at least one hat variant GID (comma-separated)');
+  if (or1500.length === 0) {
+    throw new Error('SEED_OR1500_GIDS must list at least one variant GID (comma-separated)');
   }
 
   const shop = await prisma.shop.upsert({
@@ -84,48 +83,48 @@ async function main() {
   const campaign = await prisma.campaign.create({
     data: {
       shopId: shop.id,
-      name: 'Smoke Test — GFJ Free Gift',
+      name: 'Smoke Test — Free Gift',
       suppression: 'highest-only',
       declineEnabled: true,
       startsAt: new Date('2026-01-01T00:00:00Z'),
       endsAt: new Date('2027-01-01T00:00:00Z'),
       displayTimezone: 'UTC',
       active: true,
-      configVersionHash: 'seed-smoke-v2',
+      configVersionHash: 'seed-smoke-v3',
       tiers: {
         create: [
           {
             position: 1,
-            baseThresholdAmount: 50000, // $500.00
-            baseThresholdCurrency: 'USD',
+            baseThresholdAmount: 50000, // CA$500.00
+            baseThresholdCurrency: 'CAD',
             giftConfig: {
               kind: 'OR',
               options: [
-                { id: 'socks', variantId: socks },
-                { id: 'sleeves', variantId: sleeves },
+                { id: 'a', variantId: or500a },
+                { id: 'b', variantId: or500b },
               ],
             },
-            marketThresholds: cadThreshold(70000), // CA$700.00
+            marketThresholds: usdMarketThreshold(37000), // US$370.00
           },
           {
             position: 2,
-            baseThresholdAmount: 100000, // $1000.00
-            baseThresholdCurrency: 'USD',
+            baseThresholdAmount: 100000, // CA$1000.00
+            baseThresholdCurrency: 'CAD',
             giftConfig: {
               kind: 'AND',
-              gifts: [{ variantId: brush }, { variantId: teeHolder }],
+              gifts: [{ variantId: and1000a }, { variantId: and1000b }],
             },
-            marketThresholds: cadThreshold(140000), // CA$1400.00
+            marketThresholds: usdMarketThreshold(74000), // US$740.00
           },
           {
             position: 3,
-            baseThresholdAmount: 150000, // $1500.00
-            baseThresholdCurrency: 'USD',
+            baseThresholdAmount: 150000, // CA$1500.00
+            baseThresholdCurrency: 'CAD',
             giftConfig: {
               kind: 'OR',
-              options: hats.map((variantId, i) => ({ id: `hat-${i + 1}`, variantId })),
+              options: or1500.map((variantId, i) => ({ id: `opt-${i + 1}`, variantId })),
             },
-            marketThresholds: cadThreshold(210000), // CA$2100.00
+            marketThresholds: usdMarketThreshold(111000), // US$1110.00
           },
         ],
       },
@@ -134,10 +133,11 @@ async function main() {
   });
 
   console.log(`Seeded campaign ${campaign.id} ("${campaign.name}") for shop ${domain}`);
-  console.log(`  tier 1 (OR, $500):  socks=${socks}, sleeves=${sleeves}`);
-  console.log(`  tier 2 (AND, $1000): brush=${brush}, teeHolder=${teeHolder}`);
-  console.log(`  tier 3 (OR, $1500):  ${hats.length} hats -> ${hats.join(', ')}`);
-  console.log('  active=true, suppression=highest-only, CAD market threshold per tier');
+  console.log(`  base currency CAD; non-base market USD (manual FX); suppression=highest-only`);
+  console.log(`  tier 1 (OR, CA$500):  a=${or500a}, b=${or500b}`);
+  console.log(`  tier 2 (AND, CA$1000): ${and1000a}, ${and1000b}`);
+  console.log(`  tier 3 (OR, CA$1500):  ${or1500.length} options (opt-1..opt-${or1500.length})`);
+  or1500.forEach((gid, i) => console.log(`    opt-${i + 1} = ${gid}`));
 }
 
 main()
