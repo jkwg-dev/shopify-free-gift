@@ -140,3 +140,26 @@ export async function collectionProductCount(
   });
   return data.collection === null ? null : data.collection.productsCount.count;
 }
+
+// Of the given gift PRODUCTS, which are STILL members of the qualifying collection (hasProduct=true)
+// — i.e. NOT excluded. A non-empty result means those gifts are not tagged/excluded and would count
+// toward their own qualifying spend (self-qualify leak). Used as a mint precondition: the membership
+// effect is authoritative (an untagged product necessarily matches the NOT_EQUALS rule, so it is a
+// member), so this catches both a missing tag and unsettled membership.
+export async function giftProductsStillInCollection(
+  client: AdminGraphqlClient,
+  collectionId: string,
+  giftProductIds: readonly string[],
+): Promise<string[]> {
+  const stillMembers: string[] = [];
+  for (const productId of giftProductIds) {
+    const data = await client.request<HasProductResponse>(COLLECTION_HAS_PRODUCT, {
+      id: collectionId,
+      productId,
+    });
+    if (data.collection?.hasProduct === true) {
+      stillMembers.push(productId);
+    }
+  }
+  return stillMembers;
+}

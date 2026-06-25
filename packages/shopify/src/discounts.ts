@@ -1,8 +1,14 @@
 import type { Money } from '@free-gift-engine/core';
 import type { AdminGraphqlClient } from './client.js';
-import { collectionProductCount } from './collections.js';
-import { EmptyQualifyingScopeError, ShopifyUserError, type UserErrorDetail } from './errors.js';
+import { collectionProductCount, giftProductsStillInCollection } from './collections.js';
+import {
+  EmptyQualifyingScopeError,
+  GiftNotExcludedError,
+  ShopifyUserError,
+  type UserErrorDetail,
+} from './errors.js';
 import { moneyToDecimalString } from './money.js';
+import { giftProductIdsForVariants } from './productTags.js';
 
 // Which other discount classes this code is allowed to stack with. Required and explicit —
 // this package does not pick a stacking policy; the campaign config decides (CLAUDE.md).
@@ -126,6 +132,18 @@ export async function createScopedGiftDiscount(
   }
   if (qualifyingCount === 0) {
     throw new EmptyQualifyingScopeError(input.qualifyingCollectionId, 'empty');
+  }
+  // Precondition: the gift products MUST be excluded from the qualifying scope, else the gift counts
+  // toward its own spend (self-qualify leak). Membership is authoritative — an untagged gift product
+  // necessarily matches the NOT_EQUALS rule, so it shows as a member. Refuse to mint if any remain.
+  const giftProductIds = await giftProductIdsForVariants(client, input.giftVariantIds);
+  const stillMembers = await giftProductsStillInCollection(
+    client,
+    input.qualifyingCollectionId,
+    giftProductIds,
+  );
+  if (stillMembers.length > 0) {
+    throw new GiftNotExcludedError(input.qualifyingCollectionId, stillMembers);
   }
   const data = await client.request<CreateResponse>(CREATE_MUTATION, {
     bxgyCodeDiscount: buildBxgyCodeDiscount(input),

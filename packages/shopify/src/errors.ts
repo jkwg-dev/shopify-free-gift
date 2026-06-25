@@ -54,6 +54,23 @@ export class GiftVariantValidationError extends Error {
   }
 }
 
+// One or more gift products are STILL members of the qualifying collection (not tagged/excluded), so
+// the gift would count toward its own qualifying spend (self-qualify leak). Thrown BEFORE minting —
+// gift products MUST be excluded (provisioned/tagged) first.
+export class GiftNotExcludedError extends Error {
+  constructor(
+    readonly collectionId: string,
+    readonly productIds: readonly string[],
+  ) {
+    super(
+      `Gift product(s) ${productIds.join(', ')} are still members of qualifying collection ` +
+        `${collectionId} — not tagged app:fge_gift / not yet excluded. Refusing to mint a BXGY code ` +
+        `(the gift would self-qualify). Provision (tag + wait for exclusion) before minting.`,
+    );
+    this.name = 'GiftNotExcludedError';
+  }
+}
+
 // The BXGY customerBuys scope (qualifying collection) is missing or empty, so the threshold would be
 // void and the gift would always be free ($0 leak). Thrown BEFORE minting — never create a code
 // against an empty/missing scope.

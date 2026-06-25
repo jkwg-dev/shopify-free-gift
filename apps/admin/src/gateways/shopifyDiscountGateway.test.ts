@@ -9,15 +9,27 @@ import { describe, expect, it } from 'vitest';
 import { DuplicateDiscountCodeError } from '../ports.js';
 import { ShopifyDiscountGatewayAdapter } from './shopifyDiscountGateway.js';
 
-// createScopedGiftDiscount first queries the qualifying collection's product count (mint
-// precondition), THEN runs discountCodeBxgyCreate. So the client must answer two calls: a non-empty
-// count, then the create body under test.
+// createScopedGiftDiscount runs its mint preconditions BEFORE discountCodeBxgyCreate: collection
+// count (non-empty) → resolve gift variants to products → each product excluded from the collection.
+// So the client must answer [count, nodes, hasProduct, create] before the create body under test.
 const COUNT_OK = {
   data: { collection: { id: 'gid://shopify/Collection/test', productsCount: { count: 9 } } },
 };
+const NODES_OK = {
+  data: {
+    nodes: [
+      {
+        __typename: 'ProductVariant',
+        id: 'gid://shopify/ProductVariant/G1',
+        product: { id: 'gid://shopify/Product/P1' },
+      },
+    ],
+  },
+};
+const GIFT_EXCLUDED = { data: { collection: { hasProduct: false } } };
 
 function clientReturning(createBodyResponse: unknown): AdminGraphqlClient {
-  const bodies = [COUNT_OK, createBodyResponse];
+  const bodies = [COUNT_OK, NODES_OK, GIFT_EXCLUDED, createBodyResponse];
   let call = 0;
   const fetch: FetchLike = () => {
     const body = bodies[Math.min(call, bodies.length - 1)];

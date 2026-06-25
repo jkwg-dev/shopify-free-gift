@@ -13,6 +13,7 @@ export { AdminGraphqlClient } from './client.js';
 
 export {
   EmptyQualifyingScopeError,
+  GiftNotExcludedError,
   GiftVariantValidationError,
   ShopifyGraphqlError,
   ShopifyHttpError,
@@ -54,6 +55,7 @@ export {
   ensureQualifyingCollection,
   waitForGiftProductsExcluded,
   collectionProductCount,
+  giftProductsStillInCollection,
   type QualifyingCollection,
   type WaitOptions,
 } from './collections.js';
