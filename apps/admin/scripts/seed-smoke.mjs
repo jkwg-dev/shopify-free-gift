@@ -132,12 +132,19 @@ async function main() {
     include: { tiers: { include: { marketThresholds: true } } },
   });
 
+  const tierId = (position) => campaign.tiers.find((t) => t.position === position)?.id;
+
   console.log(`Seeded campaign ${campaign.id} ("${campaign.name}") for shop ${domain}`);
   console.log(`  base currency CAD; non-base market USD (manual FX); suppression=highest-only`);
-  console.log(`  tier 1 (OR, CA$500):  a=${or500a}, b=${or500b}`);
-  console.log(`  tier 2 (AND, CA$1000): ${and1000a}, ${and1000b}`);
-  console.log(`  tier 3 (OR, CA$1500):  ${or1500.length} options (opt-1..opt-${or1500.length})`);
+  console.log(`  tier 1 (OR, CA$500)   id=${tierId(1)}  a=${or500a}  b=${or500b}`);
+  console.log(`  tier 2 (AND, CA$1000) id=${tierId(2)}  ${and1000a}  ${and1000b}`);
+  console.log(
+    `  tier 3 (OR, CA$1500)  id=${tierId(3)}  ${or1500.length} options (opt-1..opt-${or1500.length})`,
+  );
   or1500.forEach((gid, i) => console.log(`    opt-${i + 1} = ${gid}`));
+  console.log(
+    `\nUse the tier id as the "choices" key for OR tiers, e.g. {"${tierId(1)}":"a"} picks tier-1 option a.`,
+  );
 }
 
 main()
