@@ -91,9 +91,30 @@ clear:reservations` (env `SHOPIFY_SHOP_DOMAIN`, `DATABASE_URL`/`DIRECT_URL`). It
   unresolved rows (code IS NULL) older than `STALE_MINUTES` (default 2); finalized/active codes are
   untouched.
 
-## Step 2 — provision (this now HARD-FAILS on a broken scope)
+## Step 2 — provision (tag the gift products)
 
-Provisioning is the ordered, fail-loud sequence in `provisionGifts`:
+> **⚠️ `provisionGifts` is not yet wired into any runtime path.** It is implemented and unit-tested
+> (`services/giftLifecycle.ts`) but nothing calls it: the `.mjs` seed can't import the TS package, and
+> `/validate` mints without it. Wiring it into campaign activation is a **Phase 3b** task. **Until
+> then, provisioning is the MANUAL step below.** This is exactly why the first re-seed leaked — the
+> gift products were never tagged, so they stayed in the qualifying collection.
+>
+> **Backstop (shipped):** `createScopedGiftDiscount` now refuses to mint
+> (`GiftNotExcludedError`) if any gift product is still a member of the qualifying collection. So an
+> un-provisioned campaign **fails fast at mint** instead of leaking — provisioning is still required to
+> make gifts deliverable, but a missed step can no longer silently re-open the leak.
+
+Manual provisioning (what `provisionGifts` will automate) — tag every gift product `app:fge_gift`:
+
+1. Resolve the campaign's gift **variant** GIDs → owning **product** GIDs (`nodes(ids:)`, dedup).
+2. `tagsAdd(id: <product>, tags: ["app:fge_gift"])` on each distinct gift product.
+3. **Verify the tag persisted** (re-read `product.tags`) — a missing tag means `write_products` isn't
+   on the token; fix that before continuing.
+4. **Wait** for membership to settle (async) — poll `collection.hasProduct(<giftProduct>)` until it is
+   `false` for every gift product.
+5. Confirm the collection is non-empty and still contains the qualifying paid product (Hydrogen).
+
+The reference algorithm (same ordering, fail-loud) lives in `provisionGifts`:
 
 1. `ensureQualifyingCollection` — create-or-reuse the shared `fge-qualifying` smart collection
    (rule `TAG NOT_EQUALS app:fge_gift`).
@@ -167,11 +188,28 @@ should) abort.
 ## Step 4 — mint (only now)
 
 Hit `/validate` for each tier (see `docs/phase-4-smoke-test.md` → "Calling /validate during the
-walk"). `createScopedGiftDiscount` re-checks the qualifying collection's product count and **refuses**
-to call `discountCodeBxgyCreate` if it is missing or empty, so a mint can only succeed against a
-verified, non-empty scope. Confirm in the Shopify admin that each minted code is **BXGY**
-(`customerBuys` = amount on `fge-qualifying`, `customerGets` = the gift variant(s) at 100% off).
+walk"). Before `discountCodeBxgyCreate`, `createScopedGiftDiscount` now enforces two preconditions and
+**refuses to mint** if either fails: the qualifying collection must exist and be non-empty
+(`EmptyQualifyingScopeError`), AND every gift product must be **excluded** from it
+(`GiftNotExcludedError`). So a mint can only succeed against a verified, non-empty scope with the gifts
+actually out of it. Confirm in the Shopify admin that each minted code is **BXGY** (`customerBuys` =
+amount on `fge-qualifying`, `customerGets` = the gift variant(s) at 100% off).
 
 Then resume the Phase 4 / 5b walks: cross threshold → gift `$0`; **drop below** → gift reverts to
 paid (the real BXGY backstop, now that `customerBuys` is a true qualifying scope); lower-tier gift
 left in cart → charged full price.
+
+## Verified live state (greentee-dev, `fge-qualifying` = `gid://shopify/Collection/318060200045`)
+
+After manual provisioning (Step 2 run via `tagsAdd`):
+
+- All **9 gift products** carry `app:fge_gift` and are **excluded** (`hasProduct=false`): The
+  Complete (Ice/Dawn), Hidden, Multi-location, Collection Liquid (S/M/L), Oxygen, Minimal,
+  Videographer, Compare-at-Price, Multi-managed.
+- The qualifying paid product **Hydrogen** (`gid://shopify/Product/7993113018477`) is still a member
+  (`hasProduct=true`).
+- `productsCount` went **17 → 8** (the 9 gift products left; scope non-empty).
+
+So gift exclusion now holds independently of the qualifier, and the mint-path guard
+(`GiftNotExcludedError`) prevents regressions. Existing BXGY codes reference the collection by id and
+Shopify evaluates membership live at checkout, so they are correct now too — no re-mint required.
