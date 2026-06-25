@@ -4,3 +4,5 @@ dist
 coverage
 .turbo
 pnpm-lock.yaml
+# Generated theme-extension bundle
+extensions/*/assets/free-gift.js

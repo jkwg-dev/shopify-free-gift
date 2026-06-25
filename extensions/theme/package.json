@@ -6,7 +6,11 @@
   "dependencies": {
     "@free-gift-engine/core": "workspace:*"
   },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
   "scripts": {
+    "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run --passWithNoTests"

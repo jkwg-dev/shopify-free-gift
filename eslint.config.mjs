@@ -4,7 +4,15 @@ import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/.next/**', '**/node_modules/**', '**/coverage/**', '**/.turbo/**'],
+    ignores: [
+      '**/dist/**',
+      '**/.next/**',
+      '**/node_modules/**',
+      '**/coverage/**',
+      '**/.turbo/**',
+      // Generated theme-extension bundle (built by extensions/theme/build.mjs from src/).
+      'extensions/*/assets/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
