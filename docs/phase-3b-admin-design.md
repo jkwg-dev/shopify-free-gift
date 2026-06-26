@@ -1,8 +1,9 @@
 # Phase 3b — admin design (UI + scope setting + provisioning automation + scheduling + channel policy)
 
-**Status: decisions LOCKED; Stage A SHIPPED (embedded shell + App Bridge session-token boundary +
-read-only campaign list). Stages B–E designed, not built. Decisions also recorded in CLAUDE.md
-("Decision: Phase 3b admin").**
+**Status: decisions LOCKED; Stages A–B SHIPPED. Stage A = embedded shell + App Bridge session-token
+boundary + read-only campaign list. Stage B = campaign + tier EDITOR (create/edit INACTIVE drafts;
+JWT on writes; pure tier-shape validation; server-side currency-exponent boundary for admin entry).
+Stages C–E designed, not built. Decisions also recorded in CLAUDE.md ("Decision: Phase 3b admin").**
 
 ## Locked decisions (2026-06-26)
 
@@ -185,10 +186,19 @@ publication>)` reads channel publication with `read_products` (NO new scope)**. 
 - **Stage A — embedded shell + read-only list.** Add Polaris + App Bridge + `embedded=true` +
   session-token-verified embedded API; render a **read-only campaign list** (`listByShop`). _Dev-test:_
   open the app in the dev admin, see seeded campaigns. Lowest risk; establishes the auth boundary.
-- **Stage B — campaign + tier editor (draft only).** Create/edit via the repo: name, schedule, decline,
-  suppression fixed highest-only, tiers (threshold, OR/AND, gift variant picker, per-market table). Saves
-  as **inactive draft** (no provisioning/activation yet). _Dev-test:_ build a campaign in the UI; verify
-  rows in the DB; `/config` still inactive (not activated).
+- **Stage B — campaign + tier editor (draft only). SHIPPED.** Create/edit via the repo: name, schedule
+  (UTC), decline, suppression fixed highest-only (read-only), tiers (base threshold, OR/AND, gift variant
+  picker via App Bridge `resourcePicker({type:'variant'})`, per-market table). Saves as **inactive draft**
+  (no provisioning/activation). Writes verify the App Bridge JWT (`authenticateShop`); ownership-checked
+  (→404); refuses to edit an active campaign (→400). Tier-shape validation is pure + tested:
+  `packages/core/configValidation.validateCampaignConfig` (ascending thresholds, AND≥2, OR≥1, no dup
+  variant/option-id, one currency) + `apps/admin/src/admin/campaignValidation.validateCampaignInput`
+  (suppression policy, schedule order, name, dup-market). Admin decimal entry ↔ Money minor units via
+  `editorMapping.ts` (the `packages/shopify` currency-exponent boundary — JPY-safe). Files:
+  `app/{AdminApp,CampaignEditor,appBridge}.tsx`, `app/api/admin/campaigns/[id]/route.ts` (+ POST on the
+  collection route), `src/admin/{editorTypes,editorMapping,campaignValidation,routeHelpers}.ts`.
+  No data-model/migration change (the schema already models Campaign/Tier/MarketThreshold). _Dev-test:_
+  build a campaign in the UI; verify rows in the DB; `/config` still inactive (not activated).
 - **Stage C — activate/deactivate + provisioning automation.** `setActive`; on activate run
   `provisionGifts` + eager-mint + (on edit) supersede; on deactivate run teardown + deactivate codes.
   _Dev-test:_ activate in the UI → collection/tags provisioned → widget offers gifts; deactivate → gifts

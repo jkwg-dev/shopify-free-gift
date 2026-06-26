@@ -28,7 +28,7 @@ function inputWith(thresholdMinor: number, variantId = 'v1'): CampaignInputDTO {
       {
         position: 0,
         baseThreshold: money(thresholdMinor, 'USD'),
-        gift: { kind: 'AND', gifts: [{ variantId }] },
+        gift: { kind: 'OR', options: [{ id: 'a', variantId }] },
         marketThresholds: [],
       },
     ],
@@ -69,7 +69,10 @@ describe('createCampaign', () => {
     const expectedHash = configVersionHash({
       suppression: 'highest-only',
       tiers: [
-        { threshold: money(5000, 'USD'), gift: { kind: 'AND', gifts: [{ variantId: 'v1' }] } },
+        {
+          threshold: money(5000, 'USD'),
+          gift: { kind: 'OR', options: [{ id: 'a', variantId: 'v1' }] },
+        },
       ],
     });
     expect(response.configVersionHash).toBe(expectedHash);

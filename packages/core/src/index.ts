@@ -30,6 +30,13 @@ export {
 
 export { isCampaignActive, type Schedule } from './schedule.js';
 
+export {
+  validateCampaignConfig,
+  type TierConfigForValidation,
+  type ConfigIssue,
+  type ConfigIssueCode,
+} from './configValidation.js';
+
 export { sha256Hex } from './hash.js';
 
 export {

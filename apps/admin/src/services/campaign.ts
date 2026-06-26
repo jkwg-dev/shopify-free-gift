@@ -5,6 +5,7 @@ import type {
   ListCampaignsResponse,
   ValidateVariantsResponse,
 } from '../contract.js';
+import { assertCampaignInputValid } from '../admin/campaignValidation.js';
 import type { Campaign } from '../domain.js';
 import type { CampaignRepository, GiftVariantGateway, NewCampaignInput } from '../ports.js';
 import { supersedeStaleDiscounts, type SupersedeDeps } from './supersede.js';
@@ -108,8 +109,11 @@ export async function createCampaign(
   input: CampaignInputDTO,
   deps: CampaignServiceDeps,
 ): Promise<CampaignResponse> {
+  // Cheap pure checks (shape, suppression, schedule) before the I/O variant-liveness check.
+  assertCampaignInputValid(input);
   await assertVariantsLive(input, deps.variantGateway);
   const hash = toConfigVersionHash(input);
+  // active defaults to false in the repo — Stage B only creates inactive drafts (activation is 3C).
   const campaign = await deps.campaignRepo.create(shopId, toNewCampaignInput(input, hash));
   return toResponse(campaign);
 }
@@ -119,6 +123,7 @@ export async function updateCampaign(
   input: CampaignInputDTO,
   deps: CampaignServiceDeps,
 ): Promise<CampaignResponse> {
+  assertCampaignInputValid(input);
   await assertVariantsLive(input, deps.variantGateway);
   const hash = toConfigVersionHash(input);
   const campaign = await deps.campaignRepo.update(campaignId, toNewCampaignInput(input, hash));

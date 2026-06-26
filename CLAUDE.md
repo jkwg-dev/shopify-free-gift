@@ -118,9 +118,35 @@ Consequences (do not regress):
 
 ### Decision: Phase 3b admin (embedded UI + scheduling + provisioning + channel scope)
 
-Design + staged plan: `docs/phase-3b-admin-design.md`. **Stage A shipped** (embedded shell + the App
-Bridge session-token boundary + a read-only campaign list); Stages B–E are designed, not built. Locked
-decisions:
+Design + staged plan: `docs/phase-3b-admin-design.md`. **Stages A–B shipped**; Stages C–E are
+designed, not built. Stage A = embedded shell + the App Bridge session-token boundary + a read-only
+campaign list. **Stage B = the campaign + tier EDITOR (create/edit INACTIVE drafts only)**:
+
+- **Writes go through the SAME JWT boundary**: `POST /api/admin/campaigns` and
+  `GET`/`PUT /api/admin/campaigns/[id]` verify the App Bridge session token via the same
+  `shopFromBearer`/`authenticateShop` helper as the Stage-A GET (401 on failure). Ownership is
+  enforced in the composition layer (a campaign not owned by the verified shop → 404, never leaked).
+  The App-Proxy routes (`/validate`, `/config`) keep their own HMAC and are NOT subject to JWT/CSP.
+- **Drafts only**: create/update never set `active` (defaults false); Stage B refuses to edit an
+  ACTIVE campaign (`ActiveCampaignNotEditableError` → 400) so a live campaign's codes are never
+  superseded before Stage C builds activation/teardown. No provisioning, no qualifying-scope setting
+  (Stage D), no channel policy (Stage E).
+- **Suppression is fixed to `highest-only`** — the form shows it read-only and the server rejects any
+  other value (`suppression-unsupported`). Cumulative stays non-creatable (Advanced limitation).
+- **Tier-shape validation is pure + tested**: core `validateCampaignConfig` (thresholds strictly
+  ascending by position, AND ≥2 gifts, OR ≥1 option, no duplicate variant/option-id, single currency)
+  - admin `validateCampaignInput` (suppression policy, schedule order, non-empty name, no duplicate
+    market per tier). The service runs it before any persist.
+- **Currency exponent stays server-side**: the editor speaks decimal amount strings; the route maps
+  them to/from Money minor units via `packages/shopify`'s `decimalToMinorUnits`/`minorUnitsToDecimal`
+  (`apps/admin/src/admin/editorMapping.ts`) — the browser never does currency math, so a JPY/KRW
+  threshold is never off by 100×. The frozen `contract.ts` DTOs (Money) are unchanged; the editor DTO
+  is a 3b-owned shape the route maps into them, so 3a is not reopened.
+- **Gift variant selection** uses the App Bridge variant resource picker
+  (`window.shopify.resourcePicker({ type: 'variant' })`); the server re-validates the picked variant
+  GIDs are live (`fetchGiftVariants`) on save. No new scope (`read_products`).
+
+Locked decisions (unchanged from Stage A):
 
 - **One active FGE campaign at a time (mutual exclusion), server-enforced.** Applies to OUR engine's
   campaigns only (not other promo types). On activate, deactivate any other active FGE campaign (with

@@ -16,6 +16,7 @@ import {
   ensureQualifyingCollection,
   EXCLUDE_GIFTS_RULE,
   exchangeAccessToken,
+  fetchGiftVariants,
   fetchVariantMeta,
   fetchVariantPricing,
   giftProductIdsForVariants,
@@ -27,7 +28,15 @@ import {
   type FetchLike,
   type QualifyingRule,
 } from '@free-gift-engine/shopify';
+import { ActiveCampaignNotEditableError } from '../admin/campaignValidation.js';
+import {
+  campaignToEditorView,
+  editorInputToCampaignInput,
+  giftVariantIdsOfCampaign,
+} from '../admin/editorMapping.js';
+import type { CampaignEditorInput, CampaignEditorView } from '../admin/editorTypes.js';
 import { buildAuthorizeUrl, type OAuthCallbackDeps } from '../auth/oauth.js';
+import type { CampaignResponse } from '../contract.js';
 import type { Campaign } from '../domain.js';
 import type { PrismaLike } from '../db/prismaLike.js';
 import {
@@ -36,6 +45,12 @@ import {
   PrismaShopRepository,
 } from '../db/repositories.js';
 import { ShopifyDiscountGatewayAdapter } from '../gateways/shopifyDiscountGateway.js';
+import {
+  createCampaign,
+  getCampaign,
+  updateCampaign,
+  type CampaignServiceDeps,
+} from '../services/campaign.js';
 import type { GiftTagGateway } from '../services/giftLifecycle.js';
 import type { OAuthTokenExchanger, ShopifyDiscountGateway } from '../ports.js';
 import { decryptToken } from '../security/crypto.js';
@@ -240,6 +255,110 @@ export async function listCampaignsByDomain(shopDomain: string): Promise<readonl
     return [];
   }
   return new PrismaCampaignRepository(prismaLike()).listByShop(shop.id);
+}
+
+// --- embedded admin: campaign editor (Phase 3b Stage B) ------------------------------------------
+
+// Build the service deps for a campaign WRITE: the campaign repo, a variant-liveness gateway backed
+// by read_products, and the supersede deps (mapping table + discount gateway). For an inactive draft
+// supersede is a no-op (no active codes), so no Shopify write happens — but the deps are wired so the
+// same path serves Stage C activation later.
+async function campaignServiceDeps(shopDomain: string): Promise<CampaignServiceDeps> {
+  const client = await adminClientForShop(shopDomain);
+  return {
+    campaignRepo: new PrismaCampaignRepository(prismaLike()),
+    variantGateway: {
+      fetch: async (ids) =>
+        (await fetchGiftVariants(client, ids)).map((v) => ({
+          id: v.id,
+          title: v.title,
+          availableForSale: v.availableForSale,
+        })),
+    },
+    mappingTable: new PrismaGiftCodeMappingTable(prismaLike()),
+    gateway: new ShopifyDiscountGatewayAdapter(client, giftsIncludedFlag()),
+  };
+}
+
+// Display label for a gift variant in the editor: the product title, plus the variant option value
+// when it isn't Shopify's single-variant sentinel.
+function variantLabel(meta: { productTitle: string; variantTitle: string }): string {
+  return meta.variantTitle === 'Default Title'
+    ? meta.productTitle
+    : `${meta.productTitle} – ${meta.variantTitle}`;
+}
+
+// Resolve display titles for a campaign's gift variants (best-effort; a deleted variant is omitted
+// and the view falls back to its id). Uses fetchVariantMeta, which does NOT throw on dead variants.
+async function giftVariantTitles(
+  shopDomain: string,
+  campaign: CampaignResponse,
+): Promise<Map<string, string>> {
+  const ids = giftVariantIdsOfCampaign(campaign);
+  if (ids.length === 0) {
+    return new Map();
+  }
+  const client = await adminClientForShop(shopDomain);
+  const meta = await fetchVariantMeta(client, ids);
+  return new Map(meta.map((m) => [m.id, variantLabel(m)]));
+}
+
+// Create an inactive draft campaign for a (session-verified) shop. The service validates shape +
+// suppression + schedule and checks variant liveness; the repo persists with active=false. Throws
+// typed errors (CampaignConfigError / CampaignValidationError / EditorParseError) the route maps.
+export async function createCampaignDraft(
+  shopDomain: string,
+  input: CampaignEditorInput,
+): Promise<CampaignResponse> {
+  const shop = await shopRepo().findByDomain(shopDomain);
+  if (shop === null) {
+    throw new Error(`Shop not installed: ${shopDomain}`);
+  }
+  const dto = editorInputToCampaignInput(input); // may throw EditorParseError
+  return createCampaign(shop.id, dto, await campaignServiceDeps(shopDomain));
+}
+
+// Load one campaign as an editor view (decimals + display titles). Returns null when it doesn't
+// exist or isn't owned by this shop (the route 404s, never leaking another shop's campaign).
+export async function getCampaignEditorView(
+  shopDomain: string,
+  campaignId: string,
+): Promise<CampaignEditorView | null> {
+  const shop = await shopRepo().findByDomain(shopDomain);
+  if (shop === null) {
+    return null;
+  }
+  const campaign = await getCampaign(campaignId, {
+    campaignRepo: new PrismaCampaignRepository(prismaLike()),
+  });
+  if (campaign === null || campaign.shopId !== shop.id) {
+    return null;
+  }
+  return campaignToEditorView(campaign, await giftVariantTitles(shopDomain, campaign));
+}
+
+// Update an inactive draft. Ownership-checked (null -> 404); refuses to edit an ACTIVE campaign in
+// Stage B (throws ActiveCampaignNotEditableError -> 400) so the live campaign's codes are never
+// superseded out from under it before Stage C builds activation/teardown.
+export async function updateCampaignDraft(
+  shopDomain: string,
+  campaignId: string,
+  input: CampaignEditorInput,
+): Promise<CampaignResponse | null> {
+  const shop = await shopRepo().findByDomain(shopDomain);
+  if (shop === null) {
+    return null;
+  }
+  const deps = await campaignServiceDeps(shopDomain);
+  const existing = await deps.campaignRepo.findById(campaignId);
+  if (existing === null || existing.shopId !== shop.id) {
+    return null;
+  }
+  if (existing.active) {
+    throw new ActiveCampaignNotEditableError(campaignId);
+  }
+  const dto = editorInputToCampaignInput(input); // may throw EditorParseError
+  return updateCampaign(campaignId, dto, deps);
 }
 
 // --- /config (read-only campaign structure for the perception UI) --------------------------------

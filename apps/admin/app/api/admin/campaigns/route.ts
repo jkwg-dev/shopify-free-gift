@@ -1,13 +1,18 @@
-// Embedded admin API: GET /api/admin/campaigns — the read-only campaign list (Phase 3b Stage A).
-// AUTH: the App Bridge session token (Bearer JWT), verified server-side via shopFromBearer. This is a
-// DIFFERENT boundary from the App-Proxy routes (/validate, /config), which keep their own HMAC and are
-// untouched. Node runtime (needs node crypto for the JWT + Prisma). Thin adapter over the composition
-// root + the pure list view-model.
+// Embedded admin API: the campaign collection.
+//   GET  /api/admin/campaigns  — the read-only campaign list (Phase 3b Stage A).
+//   POST /api/admin/campaigns  — create an INACTIVE draft campaign (Phase 3b Stage B).
+// AUTH: the App Bridge session token (Bearer JWT), verified server-side via authenticateShop. This
+// is a DIFFERENT boundary from the App-Proxy routes (/validate, /config), which keep their own HMAC
+// and are untouched. Node runtime (needs node crypto for the JWT + Prisma).
 import { campaignListRows } from '../../../../src/admin/campaignList.js';
-import { shopFromBearer } from '../../../../src/admin/session.js';
-import { SessionTokenError } from '../../../../src/security/sessionToken.js';
 import {
-  getAdminSessionConfig,
+  authenticateShop,
+  parseJsonBody,
+  toErrorResponse,
+} from '../../../../src/admin/routeHelpers.js';
+import type { CampaignEditorInput } from '../../../../src/admin/editorTypes.js';
+import {
+  createCampaignDraft,
   listCampaignsByDomain,
 } from '../../../../src/validate/composition.js';
 
@@ -15,15 +20,22 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request): Promise<Response> {
-  let shop: string;
   try {
-    shop = shopFromBearer(request.headers.get('authorization'), getAdminSessionConfig());
+    const shop = authenticateShop(request);
+    const campaigns = await listCampaignsByDomain(shop);
+    return Response.json({ campaigns: campaignListRows(campaigns, new Date()) });
   } catch (err) {
-    if (err instanceof SessionTokenError) {
-      return new Response('Unauthorized', { status: 401 });
-    }
-    throw err;
+    return toErrorResponse(err);
   }
-  const campaigns = await listCampaignsByDomain(shop);
-  return Response.json({ campaigns: campaignListRows(campaigns, new Date()) });
+}
+
+export async function POST(request: Request): Promise<Response> {
+  try {
+    const shop = authenticateShop(request);
+    const input = await parseJsonBody<CampaignEditorInput>(request);
+    const campaign = await createCampaignDraft(shop, input);
+    return Response.json(campaign, { status: 201 });
+  } catch (err) {
+    return toErrorResponse(err);
+  }
 }

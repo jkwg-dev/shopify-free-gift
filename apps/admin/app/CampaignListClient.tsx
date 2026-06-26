@@ -1,12 +1,14 @@
 'use client';
 
-// Read-only campaign list (Phase 3b Stage A). Gets an App Bridge session token (window.shopify.idToken)
-// and calls GET /api/admin/campaigns with it as a Bearer token (the new JWT boundary). Renders the
-// returned view-model rows with Polaris. No mutation — create/edit/activate are Stage B/C.
+// Read-only campaign list (Phase 3b Stage A) + Create/Edit entry points (Stage B). Fetches the
+// JWT-authed list and renders Polaris rows. "Create campaign" and per-row "Edit" call back to the
+// AdminApp shell, which swaps in the editor. Edit is offered only for INACTIVE drafts — editing an
+// active campaign is deferred to Stage C (and the server refuses it).
 import {
   Badge,
   Banner,
   BlockStack,
+  Button,
   Card,
   InlineStack,
   Page,
@@ -14,14 +16,8 @@ import {
   Text,
 } from '@shopify/polaris';
 import { useEffect, useState } from 'react';
+import { authedFetch } from './appBridge.js';
 import type { CampaignListRow, CampaignStatus, TierSummary } from '../src/admin/campaignList.js';
-
-type AppBridge = { idToken: () => Promise<string> };
-declare global {
-  interface Window {
-    shopify?: AppBridge;
-  }
-}
 
 const STATUS_TONE: Record<CampaignStatus, 'success' | 'info' | 'warning' | undefined> = {
   live: 'success',
@@ -53,7 +49,13 @@ function StatusBadge({ status }: { status: CampaignStatus }): React.JSX.Element 
   return tone === undefined ? <Badge>{status}</Badge> : <Badge tone={tone}>{status}</Badge>;
 }
 
-export function CampaignListClient(): React.JSX.Element {
+export function CampaignListClient({
+  onCreate,
+  onEdit,
+}: {
+  readonly onCreate: () => void;
+  readonly onEdit: (id: string) => void;
+}): React.JSX.Element {
   const [rows, setRows] = useState<readonly CampaignListRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,17 +63,7 @@ export function CampaignListClient(): React.JSX.Element {
     let cancelled = false;
     void (async () => {
       try {
-        const bridge = window.shopify;
-        if (bridge === undefined) {
-          throw new Error('App Bridge unavailable — open this app from your Shopify admin.');
-        }
-        const token = await bridge.idToken();
-        const res = await fetch('/api/admin/campaigns', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) {
-          throw new Error(`Request failed (${res.status})`);
-        }
+        const res = await authedFetch('/api/admin/campaigns');
         const data = (await res.json()) as { campaigns: readonly CampaignListRow[] };
         if (!cancelled) {
           setRows(data.campaigns);
@@ -88,7 +80,10 @@ export function CampaignListClient(): React.JSX.Element {
   }, []);
 
   return (
-    <Page title="Free Gift campaigns">
+    <Page
+      title="Free Gift campaigns"
+      primaryAction={{ content: 'Create campaign', onAction: onCreate }}
+    >
       {error !== null ? (
         <Banner tone="critical" title="Couldn't load campaigns">
           {error}
@@ -97,7 +92,7 @@ export function CampaignListClient(): React.JSX.Element {
         <Spinner accessibilityLabel="Loading campaigns" />
       ) : rows.length === 0 ? (
         <Card>
-          <Text as="p">No campaigns yet.</Text>
+          <Text as="p">No campaigns yet. Create your first draft.</Text>
         </Card>
       ) : (
         <BlockStack gap="400">
@@ -105,10 +100,19 @@ export function CampaignListClient(): React.JSX.Element {
             <Card key={c.id}>
               <BlockStack gap="200">
                 <InlineStack gap="200" align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd">
-                    {c.name}
-                  </Text>
-                  <StatusBadge status={c.status} />
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="h2" variant="headingMd">
+                      {c.name}
+                    </Text>
+                    <StatusBadge status={c.status} />
+                  </InlineStack>
+                  <Button
+                    onClick={() => onEdit(c.id)}
+                    disabled={c.status !== 'inactive'}
+                    accessibilityLabel={`Edit ${c.name}`}
+                  >
+                    Edit
+                  </Button>
                 </InlineStack>
                 <Text as="p" tone="subdued">
                   {`${new Date(c.startsAt).toLocaleString()} → ${new Date(c.endsAt).toLocaleString()} (${c.displayTimezone})`}
