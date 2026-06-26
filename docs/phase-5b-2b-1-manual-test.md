@@ -246,3 +246,18 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 | L6  | Reduced motion         | With OS "reduce motion", the fill/dots update instantly (no transition)                                                                               |
 | L7  | Chooser unchanged      | The gift cards/chooser still reflect the actual cart (they update after the reconcile, as before) — only the stepper is decoupled to update early     |
 | L8  | Both surfaces          | Prompt update + animation happen in both the drawer and the /cart page                                                                                |
+
+## Round 12 checks (no full-price beat) — delay step 2
+
+> Apply ORDER change only (remove/adjust → apply code → add); reconcile result, BXGY, tiers, and leak
+> guards UNCHANGED. Redeploy the theme widget. Re-measure a tier-1↔tier-2 transition.
+
+| #   | Check               | Expected                                                                                                                                  |
+| --- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | No full-price gift  | During a tier change the new gift line never renders at full price — it appears already at $0 (added only after its code is on the cart)  |
+| F2  | No subtotal spike   | The cart subtotal does NOT jump to the full-price figure (e.g. $2679) mid-transition; it stays at the qualifying total                    |
+| F3  | Outgoing gift clean | The old tier's gift is removed BEFORE the code swaps, so it never briefly loses its $0 either                                             |
+| F4  | Authoritative $0    | The $0 is real BXGY allocation (server), never an optimistic client label; if add fails (422) no gift shows and nothing fake is displayed |
+| F5  | Leak guard intact   | A code's minimum still gates it — dropping below threshold reverts the gift to paid; suppression/highest-tier-only unchanged              |
+| F6  | First unlock        | First time crossing a threshold, the gift also appears already free (code applied before add)                                             |
+| F7  | Both surfaces       | No full-price beat in either the drawer or the /cart page                                                                                 |

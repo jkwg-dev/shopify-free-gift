@@ -798,21 +798,25 @@
       }
       const plan = reconcileGiftLines(lines, result);
       const add = plan.add.filter((a) => !addAttempted.has(a.variantId));
-      const cartNeedsChange = add.length > 0 || plan.remove.length > 0 || plan.adjust.length > 0;
+      const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
       const codeNeedsChange = plan.applyCode !== appliedCode;
-      if (!cartNeedsChange && !codeNeedsChange) {
+      if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
         return { passes: pass, converged: true, appliedCode, failures };
       }
-      if (cartNeedsChange) {
-        for (const a of add) {
-          addAttempted.add(a.variantId);
-        }
-        const res = await applyCartPlan({ ...plan, add }, io.post);
+      if (hasRemoveAdjust) {
+        const res = await applyCartPlan({ ...plan, add: [] }, io.post);
         failures.push(...res.failures);
       }
       if (codeNeedsChange) {
         await io.setDiscount(plan.applyCode);
         appliedCode = plan.applyCode;
+      }
+      if (add.length > 0) {
+        for (const a of add) {
+          addAttempted.add(a.variantId);
+        }
+        const res = await applyCartPlan({ ...plan, remove: [], adjust: [], add }, io.post);
+        failures.push(...res.failures);
       }
       (_c2 = io.nudge) == null ? void 0 : _c2.call(io);
     }

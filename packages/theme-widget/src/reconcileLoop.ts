@@ -53,23 +53,34 @@ export async function reconcileGiftCart(
 
     const plan = reconcileGiftLines(lines, result);
     const add = plan.add.filter((a) => !addAttempted.has(a.variantId));
-    const cartNeedsChange = add.length > 0 || plan.remove.length > 0 || plan.adjust.length > 0;
+    const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
     const codeNeedsChange = plan.applyCode !== appliedCode;
 
-    if (!cartNeedsChange && !codeNeedsChange) {
+    if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
       return { passes: pass, converged: true, appliedCode, failures }; // cart already matches
     }
 
-    if (cartNeedsChange) {
-      for (const a of add) {
-        addAttempted.add(a.variantId); // add this variant at most once per run (no re-add churn)
-      }
-      const res = await applyCartPlan({ ...plan, add }, io.post);
+    // ORDER (this is what removes the visible FULL-PRICE beat): remove/adjust the OUTGOING gift FIRST,
+    // then apply the (new) code, then ADD the new gift LAST — so the incoming gift is zeroed by BXGY
+    // the instant it lands (never rendered at full price + no subtotal spike), and the outgoing gift is
+    // gone before the code swaps (so it can't briefly lose its discount either). Authoritative-only:
+    // BXGY does the zeroing server-side, so we never show a $0 the server hasn't applied, and the
+    // code's minimum-purchase condition still gates the discount (no leak). If the add fails, we've
+    // merely applied a code with no matching gift (harmless $0 effect) — same end state as before.
+    if (hasRemoveAdjust) {
+      const res = await applyCartPlan({ ...plan, add: [] }, io.post);
       failures.push(...res.failures);
     }
     if (codeNeedsChange) {
       await io.setDiscount(plan.applyCode);
       appliedCode = plan.applyCode;
+    }
+    if (add.length > 0) {
+      for (const a of add) {
+        addAttempted.add(a.variantId); // add this variant at most once per run (no re-add churn)
+      }
+      const res = await applyCartPlan({ ...plan, remove: [], adjust: [], add }, io.post);
+      failures.push(...res.failures);
     }
     io.nudge?.();
   }

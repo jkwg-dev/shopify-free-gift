@@ -111,6 +111,9 @@ function makeIo(
     validate: () => Promise.resolve(result()),
     post,
     setDiscount: (code) => {
+      // Record in the unified `posts` log too (path 'discount') so tests can assert the ORDER of
+      // setDiscount relative to cart/add.js and cart/change.js (the full-price-window fix).
+      posts.push({ path: 'discount', body: { discount: code ?? '' } });
       opts.discounts?.push(code ?? '');
       return Promise.resolve();
     },
@@ -146,13 +149,10 @@ describe('reconcileGiftCart — BUG 1: no stacking, converges to one line @ qty 
     }
 
     expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 }); // never stacked / bumped
-    // After the first converge, later runs make NO cart writes (idempotent).
-    const writesAfterFirst = io.posts.filter(
-      (p, idx) => idx > 0 && (p.path === 'cart/add.js' || p.path === 'cart/change.js'),
-    );
-    // exactly one add (the initial) across all 5 runs
+    // Idempotent across all 5 runs (order-independent): exactly ONE add (the initial) and ZERO
+    // changes — i.e. no cart writes after the gift is in place.
     expect(io.posts.filter((p) => p.path === 'cart/add.js')).toHaveLength(1);
-    expect(writesAfterFirst.length).toBe(0);
+    expect(io.posts.filter((p) => p.path === 'cart/change.js')).toHaveLength(0);
   });
 
   it('self-heals a cart that already stacked the gift (qty 2) back to qty 1', async () => {
@@ -237,6 +237,43 @@ describe('reconcileGiftCart — BUG 2: highest-tier-only across tier changes', (
     expect(countGift(cart, VIDEO)).toEqual({ lines: 0, qty: 0 });
     expect(countGift(cart, BRUSH)).toEqual({ lines: 1, qty: 1 });
     expect(countGift(cart, TEE)).toEqual({ lines: 1, qty: 1 });
+  });
+});
+
+describe('reconcileGiftCart — no full-price beat (apply order)', () => {
+  it('tier change: removes the OLD gift, applies the NEW code, THEN adds the new gift (in that order)', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    cart.seedGift(ICE, 1); // outgoing tier-1 gift, currently discounted by CODE-ICE
+    const io = makeIo(cart, () => giftResult([VIDEO], 'CODE-VIDEO'));
+
+    await reconcileGiftCart(io, { initialCode: 'CODE-ICE' });
+
+    // The new gift must be added only AFTER its code is on the cart, so BXGY zeroes it on arrival
+    // (no full-price render). The old gift is removed BEFORE the code swaps (it can't lose its $0).
+    const seq = io.posts
+      .filter((p) => ['cart/change.js', 'cart/add.js', 'discount'].includes(p.path))
+      .map((p) =>
+        p.path === 'discount' ? `code:${(p.body as { discount: string }).discount}` : p.path,
+      );
+    expect(seq).toEqual(['cart/change.js', 'code:CODE-VIDEO', 'cart/add.js']);
+    expect(countGift(cart, ICE)).toEqual({ lines: 0, qty: 0 });
+    expect(countGift(cart, VIDEO)).toEqual({ lines: 1, qty: 1 });
+  });
+
+  it('first unlock: applies the code BEFORE adding the gift (gift never at full price)', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    const io = makeIo(cart, () => giftResult([ICE], 'CODE-ICE'));
+
+    await reconcileGiftCart(io);
+
+    const seq = io.posts
+      .filter((p) => ['cart/add.js', 'discount'].includes(p.path))
+      .map((p) =>
+        p.path === 'discount' ? `code:${(p.body as { discount: string }).discount}` : p.path,
+      );
+    expect(seq).toEqual(['code:CODE-ICE', 'cart/add.js']);
   });
 });
 
