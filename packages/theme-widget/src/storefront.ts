@@ -1,16 +1,22 @@
-// Phase 5b-1 storefront controller: wires the PURE reconciler (5a) to the real (Dawn-derived) theme
-// cart. On every cart change it reads the cart, calls /validate, and applies reconcileGiftLines'
-// mutations (add/remove gift lines + apply/clear the discount code). Minimal UI — the progress
-// widget, OR/variant chooser, and decline checkbox are Phase 5b-2.
+// Storefront controller: wires the PURE reconciler (5a) to the real (Dawn-derived) theme cart and,
+// since Phase 5b-2a, renders the OR/variant chooser + decline checkbox from the read-only campaign
+// config. On every cart change it reads the cart, calls /validate with the CURRENT chooser selection,
+// and applies reconcileGiftLines' mutations (add/remove gift lines + apply/clear the code). Changing
+// a choice or toggling decline re-runs the same reconcile (transactional OR re-selection).
 //
-// Bundled to assets/free-gift.js by build.mjs (esbuild). Never sets prices (the minted code +
-// Shopify discount do) and never trusts client state for eligibility (the server recomputes).
+// The progress graph, pending hint, drawer/mobile/a11y polish, and stale-discount auto-clear are
+// Phase 5b-2b. Bundled to assets/free-gift.js by build.mjs (esbuild). Never sets prices (the minted
+// code + Shopify discount do) and never trusts client state for eligibility (the server recomputes).
 import {
   GIFT_LINE_PROPERTY,
   reconcileGiftLines,
+  type CampaignConfigResponse,
   type CartLineView,
   type ValidateRequest,
 } from '@free-gift-engine/core';
+import { defaultGiftChoices } from './choices.js';
+import { renderChooser } from './chooser.js';
+import { getConfig } from './configClient.js';
 import { postValidate } from './validateClient.js';
 
 const SOURCE = 'free-gift-engine';
@@ -34,7 +40,7 @@ type AjaxCart = { readonly items: readonly AjaxCartItem[]; readonly currency: st
 type WidgetConfig = {
   readonly proxyPath: string;
   readonly country: string;
-  readonly choices: Readonly<Record<string, string>>;
+  readonly presentmentCurrency: string;
 };
 
 const w = window as ThemeWindow;
@@ -50,19 +56,10 @@ function readConfig(): WidgetConfig | null {
   if (el === null) {
     return null;
   }
-  let choices: Record<string, string> = {};
-  const raw = el.dataset['defaultChoices'];
-  if (raw !== undefined && raw.trim().length > 0) {
-    try {
-      choices = JSON.parse(raw) as Record<string, string>;
-    } catch {
-      choices = {};
-    }
-  }
   return {
     proxyPath: el.dataset['proxyPath'] ?? '/apps/free-gift/validate',
     country: el.dataset['country'] ?? '',
-    choices,
+    presentmentCurrency: el.dataset['presentmentCurrency'] ?? '',
   };
 }
 
@@ -79,6 +76,12 @@ let running = false;
 let pending = false;
 let lastDiscount: string | null = null;
 
+// Chooser-driven state (replaces the retired default_choices seam): the user's per-tier OR selection
+// and the decline flag. Read by every /validate call; mutated by the chooser handlers, each of which
+// triggers a reconcile so a new choice / decline is applied transactionally.
+let choiceState: Record<string, string> = {};
+let declined = false;
+
 async function postJson(path: string, body: unknown): Promise<void> {
   await fetch(`${root}${path}`, {
     method: 'POST',
@@ -91,22 +94,23 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
   const cart = await getCart();
 
   // Server-authoritative: send every line with its app-added claim; the server EXCLUDES app-added
-  // gift lines from the qualifying subtotal (so a gift never inflates the tier).
+  // gift lines from the qualifying subtotal (so a gift never inflates the tier). Choices + decline
+  // come from the chooser state — the existing ValidateRequest shape, only a different source.
   const request: ValidateRequest = {
     cart: cart.items.map((item) => ({
       variantId: toGid(item.variant_id),
       quantity: item.quantity,
       appAdded: isGiftLine(item),
     })),
-    choices: config.choices,
-    declined: false, // decline UI is 5b-2
+    choices: choiceState,
+    declined,
     presentmentCurrency: cart.currency,
     countryCode: config.country,
   };
 
   const response = await postValidate(request, { proxyPath: config.proxyPath });
   if (!response.ok) {
-    // Surface nothing in 5b-1 (no UI); leave the cart untouched on error.
+    // Surface nothing here (no error UI in 5b-2a); leave the cart untouched on error.
     return;
   }
 
@@ -150,8 +154,8 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     selfMutating = false;
   }
 
-  // Ask the theme to re-render its cart UI (drawer/sections). 5b-2 owns the perception UX; here we
-  // just nudge the theme so the gift line appears. Tagged with our source so we ignore the echo.
+  // Ask the theme to re-render its cart UI (drawer/sections) so the gift line appears. Tagged with
+  // our source so we ignore the echo. (Drawer-render polish is 5b-2b.)
   w.publish?.(CART_UPDATE_EVENT, { source: SOURCE });
 }
 
@@ -170,6 +174,41 @@ function schedule(config: WidgetConfig): void {
         schedule(config);
       }
     });
+}
+
+// Fetch the campaign structure and render the chooser. Best-effort: if config is unavailable or the
+// campaign is inactive, the engine still reconciles (AND tiers need no choice); OR tiers simply have
+// no selection until config loads.
+async function initChooser(config: WidgetConfig): Promise<void> {
+  const result = await getConfig({
+    presentmentCurrency: config.presentmentCurrency,
+    countryCode: config.country,
+  });
+  if (!result.ok || result.config.status !== 'active') {
+    return;
+  }
+  const campaignConfig: CampaignConfigResponse = result.config;
+  choiceState = defaultGiftChoices(campaignConfig.tiers);
+
+  const mount = document.querySelector<HTMLElement>('[data-fge-chooser]');
+  if (mount === null) {
+    return;
+  }
+  renderChooser(
+    mount,
+    campaignConfig,
+    { choices: choiceState, declined },
+    {
+      onChoose: (tierId, optionId) => {
+        choiceState = { ...choiceState, [tierId]: optionId };
+        schedule(config);
+      },
+      onDeclineToggle: (next) => {
+        declined = next;
+        schedule(config);
+      },
+    },
+  );
 }
 
 function init(): void {
@@ -209,8 +248,8 @@ function init(): void {
     return result;
   };
 
-  // Initial reconcile (cart may already qualify on load).
-  schedule(config);
+  // Load the chooser (default selection enables the gift), then the initial reconcile.
+  void initChooser(config).finally(() => schedule(config));
 }
 
 if (document.readyState === 'loading') {

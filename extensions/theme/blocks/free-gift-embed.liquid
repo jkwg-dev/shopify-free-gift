@@ -1,13 +1,14 @@
 {% comment %}
-  Free Gift Engine — app EMBED (Phase 5b-1). This is the ENGINE: it loads the storefront controller
-  site-wide (every page, so it reacts to the cart drawer opening from anywhere) and renders a hidden
-  config element the controller reads. No visible UI — the perception UI (progress widget, chooser,
-  decline) is the separate section app block (free-gift.liquid), Phase 5b-2.
+  Free Gift Engine — app EMBED. This is the ENGINE: it loads the storefront controller site-wide
+  (every page, so it reacts to the cart drawer opening from anywhere), renders a hidden config element
+  the controller reads, and provides the chooser mount the perception UI renders into.
 
   Enable it in the theme editor under: Theme settings (gear) -> App embeds -> "Free Gift Engine".
 
-  `default_choices` is a TEMPORARY 5b-1 seam (the chooser UI is 5b-2): JSON mapping an OR tier id to
-  its chosen option id, e.g. { "<tier1Id>": "a" }.
+  Phase 5b-2a: the OR/variant chooser + decline checkbox render into [data-fge-chooser] from the
+  read-only campaign config (GET /apps/free-gift/config). The old `default_choices` setting (a 5b-1
+  seam that needed manual tier-id JSON and broke on every re-seed) is RETIRED — choices now come from
+  the shopper's selection. The tier progress graph + pending hint + placement/mobile polish are 5b-2b.
 {% endcomment %}
 
 <div
@@ -15,9 +16,11 @@
   data-proxy-path="/apps/free-gift/validate"
   data-presentment-currency="{{ cart.currency.iso_code }}"
   data-country="{{ localization.country.iso_code }}"
-  data-default-choices="{{ block.settings.default_choices | escape }}"
   hidden
 ></div>
+
+{% comment %} Chooser mount (visible). 5b-2b moves/styles this into the cart drawer. {% endcomment %}
+<div data-fge-chooser class="fge-chooser-mount"></div>
 
 <script src="{{ 'free-gift.js' | asset_url }}" defer></script>
 
@@ -25,14 +28,6 @@
 {
   "name": "Free Gift Engine",
   "target": "body",
-  "settings": [
-    {
-      "type": "textarea",
-      "id": "default_choices",
-      "label": "Default gift choices (temporary, 5b-1)",
-      "info": "JSON mapping tier id -> OR option id, e.g. {\"<tier1Id>\":\"a\"}. Replaced by the chooser UI in 5b-2.",
-      "default": "{}"
-    }
-  ]
+  "settings": []
 }
 {% endschema %}

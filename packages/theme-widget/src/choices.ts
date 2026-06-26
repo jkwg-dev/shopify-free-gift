@@ -1,21 +1,10 @@
-// Variant-level gift-choice model for the OR chooser (Phase 5a defines it; 5b renders it). Each OR
-// option is a distinct VARIANT carrying its product id + label + availability, so 5b can group
-// sibling variants under one product and render a selector, and disable an out-of-stock variant
-// (e.g. Collection Liquid L). Pure data + a pure grouping helper — no DOM. The reconciler keys on
-// variant GID and never dedups by product, consistent with the backend; grouping here is for
-// PRESENTATION only and must preserve every variant as its own selectable option.
+// Pure grouping helper for the OR chooser (Phase 5a defines it; 5b renders it). The GiftOptionView
+// type now lives in core (the campaign-config contract home) and is re-exported here so the widget
+// keeps a single import surface. Grouping is for PRESENTATION only and must preserve every variant
+// as its own selectable option — the reconciler keys on variant GID and never dedups by product.
+import type { GiftOptionView, TierConfig } from '@free-gift-engine/core';
 
-export type GiftOptionView = {
-  // The OR option id used as the /validate `choices` value (e.g. 'a', 'opt-3').
-  readonly optionId: string;
-  readonly variantId: string;
-  // Product id for grouping in the UI; sibling variants share it. Never used to merge options.
-  readonly productId: string;
-  // Variant label shown in the selector (e.g. 'Ice', 'L').
-  readonly variantLabel: string;
-  // Out-of-stock options are rendered disabled (the /validate gift-unavailable status is the backstop).
-  readonly available: boolean;
-};
+export type { GiftOptionView };
 
 export type GiftProductGroup = {
   readonly productId: string;
@@ -41,4 +30,23 @@ export function groupGiftOptionsByProduct(
     }
   }
   return order.map((productId) => ({ productId, options: byProduct.get(productId) ?? [] }));
+}
+
+// Initial per-tier OR selection so the gift is INCLUDED by default (the decline spec). Picks the
+// first AVAILABLE option per OR tier; if none is available, falls back to the first option (the gift
+// is then unfulfillable and /validate's gift-unavailable is the backstop). AND tiers have no choice.
+// Returns the choices map in the EXISTING /validate `choices` shape (tierId -> optionId) — only the
+// SOURCE moved from the default_choices seam to here.
+export function defaultGiftChoices(tiers: readonly TierConfig[]): Record<string, string> {
+  const choices: Record<string, string> = {};
+  for (const tier of tiers) {
+    if (tier.gift.kind !== 'OR') {
+      continue;
+    }
+    const pick = tier.gift.options.find((o) => o.available) ?? tier.gift.options[0];
+    if (pick !== undefined) {
+      choices[tier.tierId] = pick.optionId;
+    }
+  }
+  return choices;
 }

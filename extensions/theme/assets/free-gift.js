@@ -21,6 +21,120 @@
     };
   }
 
+  // src/choices.ts
+  function groupGiftOptionsByProduct(options) {
+    const order = [];
+    const byProduct = /* @__PURE__ */ new Map();
+    for (const option of options) {
+      const existing = byProduct.get(option.productId);
+      if (existing === void 0) {
+        order.push(option.productId);
+        byProduct.set(option.productId, [option]);
+      } else {
+        existing.push(option);
+      }
+    }
+    return order.map((productId) => {
+      var _a2;
+      return { productId, options: (_a2 = byProduct.get(productId)) != null ? _a2 : [] };
+    });
+  }
+  function defaultGiftChoices(tiers) {
+    var _a2;
+    const choices = {};
+    for (const tier of tiers) {
+      if (tier.gift.kind !== "OR") {
+        continue;
+      }
+      const pick = (_a2 = tier.gift.options.find((o) => o.available)) != null ? _a2 : tier.gift.options[0];
+      if (pick !== void 0) {
+        choices[tier.tierId] = pick.optionId;
+      }
+    }
+    return choices;
+  }
+
+  // src/chooser.ts
+  function renderChooser(mount, config, state, handlers) {
+    mount.textContent = "";
+    if (config.status !== "active") {
+      return;
+    }
+    const root2 = document.createElement("div");
+    root2.className = "fge-chooser";
+    if (config.declineEnabled) {
+      root2.append(renderDecline(state, handlers));
+    }
+    for (const tier of config.tiers) {
+      if (tier.gift.kind === "OR") {
+        root2.append(renderOrTier(tier, state, handlers));
+      }
+    }
+    mount.append(root2);
+  }
+  function renderDecline(state, handlers) {
+    const label = document.createElement("label");
+    label.className = "fge-decline";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !state.declined;
+    cb.addEventListener("change", () => handlers.onDeclineToggle(!cb.checked));
+    label.append(cb, document.createTextNode(" Add my free gift"));
+    return label;
+  }
+  function renderOrTier(tier, state, handlers) {
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = "fge-tier";
+    fieldset.dataset["tierId"] = tier.tierId;
+    const legend = document.createElement("legend");
+    legend.textContent = "Choose your free gift";
+    fieldset.append(legend);
+    const selected = state.choices[tier.tierId];
+    if (tier.gift.kind !== "OR") {
+      return fieldset;
+    }
+    for (const group of groupGiftOptionsByProduct(tier.gift.options)) {
+      const groupEl = document.createElement("div");
+      groupEl.className = "fge-group";
+      for (const opt of group.options) {
+        const label = document.createElement("label");
+        label.className = "fge-option";
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = `fge-tier-${tier.tierId}`;
+        radio.value = opt.optionId;
+        radio.checked = opt.optionId === selected;
+        radio.disabled = !opt.available;
+        radio.addEventListener("change", () => handlers.onChoose(tier.tierId, opt.optionId));
+        const text = opt.available ? opt.variantLabel : `${opt.variantLabel} (out of stock)`;
+        label.append(radio, document.createTextNode(` ${text}`));
+        groupEl.append(label);
+      }
+      fieldset.append(groupEl);
+    }
+    return fieldset;
+  }
+
+  // src/configClient.ts
+  var DEFAULT_CONFIG_PATH = "/apps/free-gift/config";
+  async function getConfig(request, options = {}) {
+    var _a2, _b2;
+    const fetchFn = (_a2 = options.fetchFn) != null ? _a2 : fetch;
+    const path = (_b2 = options.configPath) != null ? _b2 : DEFAULT_CONFIG_PATH;
+    const params = new URLSearchParams({
+      currency: request.presentmentCurrency,
+      country: request.countryCode
+    });
+    const response = await fetchFn(`${path}?${params.toString()}`, {
+      headers: { Accept: "application/json" }
+    });
+    if (!response.ok) {
+      return { ok: false, httpStatus: response.status };
+    }
+    const body = await response.json();
+    return { ok: true, config: body };
+  }
+
   // src/validateClient.ts
   var DEFAULT_PROXY_PATH = "/apps/free-gift/validate";
   async function postValidate(request, options = {}) {
@@ -54,24 +168,15 @@
   var toNumericId = (gid) => Number(gid.split("/").pop());
   var isGiftLine = (item) => item.properties != null && item.properties[GIFT_LINE_PROPERTY] != null;
   function readConfig() {
-    var _a2, _b2;
+    var _a2, _b2, _c2;
     const el = document.querySelector("[data-fge-app-block]");
     if (el === null) {
       return null;
     }
-    let choices = {};
-    const raw = el.dataset["defaultChoices"];
-    if (raw !== void 0 && raw.trim().length > 0) {
-      try {
-        choices = JSON.parse(raw);
-      } catch {
-        choices = {};
-      }
-    }
     return {
       proxyPath: (_a2 = el.dataset["proxyPath"]) != null ? _a2 : "/apps/free-gift/validate",
       country: (_b2 = el.dataset["country"]) != null ? _b2 : "",
-      choices
+      presentmentCurrency: (_c2 = el.dataset["presentmentCurrency"]) != null ? _c2 : ""
     };
   }
   async function getCart() {
@@ -82,6 +187,8 @@
   var running = false;
   var pending = false;
   var lastDiscount = null;
+  var choiceState = {};
+  var declined = false;
   async function postJson(path, body) {
     await fetch(`${root}${path}`, {
       method: "POST",
@@ -98,9 +205,8 @@
         quantity: item.quantity,
         appAdded: isGiftLine(item)
       })),
-      choices: config.choices,
-      declined: false,
-      // decline UI is 5b-2
+      choices: choiceState,
+      declined,
       presentmentCurrency: cart.currency,
       countryCode: config.country
     };
@@ -159,6 +265,31 @@
       }
     });
   }
+  async function initChooser(config) {
+    const result = await getConfig({
+      presentmentCurrency: config.presentmentCurrency,
+      countryCode: config.country
+    });
+    if (!result.ok || result.config.status !== "active") {
+      return;
+    }
+    const campaignConfig = result.config;
+    choiceState = defaultGiftChoices(campaignConfig.tiers);
+    const mount = document.querySelector("[data-fge-chooser]");
+    if (mount === null) {
+      return;
+    }
+    renderChooser(mount, campaignConfig, { choices: choiceState, declined }, {
+      onChoose: (tierId, optionId) => {
+        choiceState = { ...choiceState, [tierId]: optionId };
+        schedule(config);
+      },
+      onDeclineToggle: (next) => {
+        declined = next;
+        schedule(config);
+      }
+    });
+  }
   function init() {
     var _a2;
     const config = readConfig();
@@ -185,7 +316,7 @@
       }
       return result;
     };
-    schedule(config);
+    void initChooser(config).finally(() => schedule(config));
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

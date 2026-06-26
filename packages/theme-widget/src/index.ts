@@ -10,9 +10,19 @@ export {
 
 export {
   groupGiftOptionsByProduct,
+  defaultGiftChoices,
   type GiftOptionView,
   type GiftProductGroup,
 } from './choices.js';
+
+// Read-only campaign-config client + the chooser/decline renderer (Phase 5b-2a).
+export {
+  getConfig,
+  DEFAULT_CONFIG_PATH,
+  type ConfigClientResponse,
+  type GetConfigOptions,
+} from './configClient.js';
+export { renderChooser, type ChooserState, type ChooserHandlers } from './chooser.js';
 
 // Re-export the reconciler + contract from core so 5b imports a single widget surface.
 export {

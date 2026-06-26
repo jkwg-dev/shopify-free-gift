@@ -1,5 +1,6 @@
+import { money, type TierConfig } from '@free-gift-engine/core';
 import { describe, expect, it } from 'vitest';
-import { groupGiftOptionsByProduct, type GiftOptionView } from './choices.js';
+import { defaultGiftChoices, groupGiftOptionsByProduct, type GiftOptionView } from './choices.js';
 
 const completeSnowboard = 'gid://shopify/Product/COMPLETE';
 const liquid = 'gid://shopify/Product/LIQUID';
@@ -48,5 +49,52 @@ describe('groupGiftOptionsByProduct', () => {
     const single = groupGiftOptionsByProduct([options[2]!]);
     expect(single).toHaveLength(1);
     expect(single[0]!.options).toHaveLength(1);
+  });
+});
+
+describe('defaultGiftChoices', () => {
+  it('picks the first AVAILABLE option per OR tier (gift included by default)', () => {
+    const tiers: TierConfig[] = [
+      {
+        tierId: 't1',
+        position: 1,
+        threshold: money(5000, 'USD'),
+        gift: { kind: 'OR', options: options.slice(0, 2) }, // Ice (avail), Dawn (avail)
+      },
+    ];
+    expect(defaultGiftChoices(tiers)).toEqual({ t1: 'a' });
+  });
+
+  it('skips an out-of-stock first option and selects the first available', () => {
+    const tiers: TierConfig[] = [
+      {
+        tierId: 't1',
+        position: 1,
+        threshold: money(5000, 'USD'),
+        gift: {
+          kind: 'OR',
+          options: [options[3]!, options[2]!], // L (unavailable), then S (available)
+        },
+      },
+    ];
+    expect(defaultGiftChoices(tiers)).toEqual({ t1: 'opt-1' }); // S, the first available
+  });
+
+  it('ignores AND tiers (no choice) and skips tiers with no options', () => {
+    const tiers: TierConfig[] = [
+      {
+        tierId: 'tAnd',
+        position: 1,
+        threshold: money(5000, 'USD'),
+        gift: { kind: 'AND', gifts: [] },
+      },
+      {
+        tierId: 'tOr',
+        position: 2,
+        threshold: money(10000, 'USD'),
+        gift: { kind: 'OR', options: [options[0]!] },
+      },
+    ];
+    expect(defaultGiftChoices(tiers)).toEqual({ tOr: 'a' });
   });
 });
