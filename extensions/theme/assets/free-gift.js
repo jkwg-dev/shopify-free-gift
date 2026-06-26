@@ -55,45 +55,71 @@
   }
 
   // src/chooser.ts
+  function buildChooserModel(config, state) {
+    if (config.status !== "active") {
+      return null;
+    }
+    const tiers = config.tiers.map((tier) => {
+      if (tier.gift.kind === "AND") {
+        return {
+          kind: "and",
+          tierId: tier.tierId,
+          threshold: tier.threshold,
+          items: tier.gift.gifts
+        };
+      }
+      return {
+        kind: "or",
+        tierId: tier.tierId,
+        threshold: tier.threshold,
+        groups: groupGiftOptionsByProduct(tier.gift.options),
+        selected: state.choices[tier.tierId]
+      };
+    });
+    return { declineEnabled: config.declineEnabled, declined: state.declined, tiers };
+  }
   function renderChooser(mount, config, state, handlers) {
     mount.textContent = "";
-    if (config.status !== "active") {
+    const model = buildChooserModel(config, state);
+    if (model === null) {
       return;
     }
     const root2 = document.createElement("div");
     root2.className = "fge-chooser";
-    if (config.declineEnabled) {
-      root2.append(renderDecline(state, handlers));
+    if (model.declineEnabled) {
+      root2.append(renderDecline(model.declined, handlers));
     }
-    for (const tier of config.tiers) {
-      if (tier.gift.kind === "OR") {
-        root2.append(renderOrTier(tier, state, handlers));
-      }
+    for (const tier of model.tiers) {
+      root2.append(tier.kind === "or" ? renderOrTier(tier, handlers) : renderAndTier(tier));
     }
     mount.append(root2);
   }
-  function renderDecline(state, handlers) {
+  function renderDecline(declined2, handlers) {
     const label = document.createElement("label");
     label.className = "fge-decline";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = !state.declined;
+    cb.checked = !declined2;
     cb.addEventListener("change", () => handlers.onDeclineToggle(!cb.checked));
     label.append(cb, document.createTextNode(" Add my free gift"));
     return label;
   }
-  function renderOrTier(tier, state, handlers) {
+  function tierFieldset(tier, legendText) {
     const fieldset = document.createElement("fieldset");
     fieldset.className = "fge-tier";
     fieldset.dataset["tierId"] = tier.tierId;
     const legend = document.createElement("legend");
-    legend.textContent = "Choose your free gift";
+    legend.textContent = legendText;
     fieldset.append(legend);
-    const selected = state.choices[tier.tierId];
-    if (tier.gift.kind !== "OR") {
-      return fieldset;
-    }
-    for (const group of groupGiftOptionsByProduct(tier.gift.options)) {
+    const threshold = document.createElement("div");
+    threshold.className = "fge-threshold";
+    threshold.textContent = `Spend ${formatMoney(tier.threshold)}`;
+    fieldset.append(threshold);
+    return fieldset;
+  }
+  function renderOrTier(tier, handlers) {
+    const fieldset = tierFieldset(tier, "Choose your free gift");
+    for (const group of tier.groups) {
       const groupEl = document.createElement("div");
       groupEl.className = "fge-group";
       for (const opt of group.options) {
@@ -103,7 +129,7 @@
         radio.type = "radio";
         radio.name = `fge-tier-${tier.tierId}`;
         radio.value = opt.optionId;
-        radio.checked = opt.optionId === selected;
+        radio.checked = opt.optionId === tier.selected;
         radio.disabled = !opt.available;
         radio.addEventListener("change", () => handlers.onChoose(tier.tierId, opt.optionId));
         const text = opt.available ? opt.variantLabel : `${opt.variantLabel} (out of stock)`;
@@ -113,6 +139,36 @@
       fieldset.append(groupEl);
     }
     return fieldset;
+  }
+  function renderAndTier(tier) {
+    const fieldset = tierFieldset(tier, "Your free gift");
+    const list = document.createElement("div");
+    list.className = "fge-bundle";
+    const intro = document.createElement("span");
+    intro.className = "fge-bundle-intro";
+    intro.textContent = tier.items.length > 1 ? "Get all: " : "Get: ";
+    list.append(intro);
+    tier.items.forEach((item, i) => {
+      if (i > 0) {
+        list.append(document.createTextNode(" + "));
+      }
+      const span = document.createElement("span");
+      span.className = "fge-bundle-item";
+      span.textContent = item.available ? item.variantLabel : `${item.variantLabel} (out of stock)`;
+      list.append(span);
+    });
+    fieldset.append(list);
+    return fieldset;
+  }
+  function formatMoney(m) {
+    var _a2;
+    try {
+      const fmt = new Intl.NumberFormat(void 0, { style: "currency", currency: m.currency });
+      const digits = (_a2 = fmt.resolvedOptions().maximumFractionDigits) != null ? _a2 : 2;
+      return fmt.format(m.amountMinor / 10 ** digits);
+    } catch {
+      return `${m.amountMinor} ${m.currency}`;
+    }
   }
 
   // src/configClient.ts
@@ -279,16 +335,21 @@
     if (mount === null) {
       return;
     }
-    renderChooser(mount, campaignConfig, { choices: choiceState, declined }, {
-      onChoose: (tierId, optionId) => {
-        choiceState = { ...choiceState, [tierId]: optionId };
-        schedule(config);
-      },
-      onDeclineToggle: (next) => {
-        declined = next;
-        schedule(config);
+    renderChooser(
+      mount,
+      campaignConfig,
+      { choices: choiceState, declined },
+      {
+        onChoose: (tierId, optionId) => {
+          choiceState = { ...choiceState, [tierId]: optionId };
+          schedule(config);
+        },
+        onDeclineToggle: (next) => {
+          declined = next;
+          schedule(config);
+        }
       }
-    });
+    );
   }
   function init() {
     var _a2;

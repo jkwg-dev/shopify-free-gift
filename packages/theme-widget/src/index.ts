@@ -22,7 +22,16 @@ export {
   type ConfigClientResponse,
   type GetConfigOptions,
 } from './configClient.js';
-export { renderChooser, type ChooserState, type ChooserHandlers } from './chooser.js';
+export {
+  renderChooser,
+  buildChooserModel,
+  type ChooserState,
+  type ChooserHandlers,
+  type ChooserModel,
+  type ChooserTier,
+  type ChooserOrTier,
+  type ChooserAndTier,
+} from './chooser.js';
 
 // Re-export the reconciler + contract from core so 5b imports a single widget surface.
 export {
