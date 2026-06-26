@@ -67,6 +67,28 @@ async function main() {
     throw new Error('SEED_OR1500_GIDS must list at least one variant GID (comma-separated)');
   }
 
+  // GUARD (5b-2a): a gift variant must NOT be the qualifying paid product. A variant that is both
+  // qualifying AND a gift is internally contradictory (a correct gift is tagged app:fge_gift and
+  // EXCLUDED from the qualifying collection, so it can't drive the threshold) and breaks the cart
+  // (the widget adds it as a gift, colliding with the shopper's paid line). Pass the qualifying
+  // variant GID(s) via SEED_QUALIFYING_GIDS (comma-separated) and we reject any overlap BEFORE
+  // touching the DB. See docs/phase-5b-reseed.md.
+  const qualifying = new Set(
+    (process.env.SEED_QUALIFYING_GIDS ?? '')
+      .split(',')
+      .map((gid) => gid.trim())
+      .filter((gid) => gid.length > 0),
+  );
+  const allGiftGids = [or500a, or500b, and1000a, and1000b, ...or1500];
+  const collisions = [...new Set(allGiftGids.filter((gid) => qualifying.has(gid)))];
+  if (collisions.length > 0) {
+    throw new Error(
+      `Gift/qualifying collision — these gift variants are also the qualifying product and must ` +
+        `NOT be gifts: ${collisions.join(', ')}. Fix SEED_*_GIDS so gift variants are disjoint ` +
+        `from SEED_QUALIFYING_GIDS.`,
+    );
+  }
+
   const shop = await prisma.shop.upsert({
     where: { domain },
     create: {
