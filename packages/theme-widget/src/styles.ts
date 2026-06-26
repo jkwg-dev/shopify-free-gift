@@ -38,10 +38,11 @@ export const FGE_CSS = `
   position:absolute; left:0; top:6px; height:4px; min-width:0;
   background-color:var(--fge-brand); border-radius:999px; transition:width .35s ease;
 }
-.fge-step{ position:absolute; top:8px; transform:translate(-50%,-50%); }
+.fge-step{ position:absolute; top:8px; transform:translate(-50%,-50%); transition:left .35s ease; }
 .fge-step__dot{
   width:14px; height:14px; border-radius:50%;
   background-color:#ffffff; border:2px solid var(--fge-line);
+  transition:background-color .3s ease, border-color .3s ease, box-shadow .3s ease;
 }
 .fge-step.is-reached .fge-step__dot{
   background-color:var(--fge-brand); border-color:var(--fge-brand);
@@ -67,10 +68,10 @@ export const FGE_CSS = `
 .fge-step__dot,
 .fge-card__img{ display:block !important; }
 
-/* --- gift panel (below the cart items; capped so a tall OR tier doesn't push checkout off-screen) --- */
+/* --- gift panel: lives INSIDE the drawer's scrollable items region, after the line items, so it
+   scrolls with the cart (no inner max-height/scroll — that would nest a scrollbar and pin it). --- */
 .fge-gift{
-  border-top:1px solid var(--fge-line); padding-top:12px; margin-top:4px;
-  max-height:42vh; overflow:auto;
+  border-top:1px solid var(--fge-line); padding-top:12px; margin-top:8px;
 }
 .fge-gift__title{ margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.01em; }
 .fge-gift__hint{ margin:0; font-size:13px; color:var(--fge-muted); }
@@ -103,7 +104,7 @@ export const FGE_CSS = `
 .fge-decline input{ accent-color:var(--fge-brand); width:16px; height:16px; }
 
 @media (prefers-reduced-motion: reduce){
-  .fge-stepper__fill{ transition:none; }
+  .fge-stepper__fill, .fge-step, .fge-step__dot{ transition:none; }
 }
 `;
 

@@ -138,82 +138,165 @@ export type StepNode = {
   readonly isCurrent: boolean;
 };
 
-// Pure stepper geometry (unit-tested). fillPct = confirmed subtotal / top threshold (0 when unknown —
-// never optimistic). Each node sits at threshold/top; its label aligns start/center/end so the first
-// and last labels stay inside the track instead of overflowing the drawer edge (the clipping bug).
+// Pure stepper geometry (unit-tested). Nodes are distributed as a CENTERED group — node i (ascending
+// by threshold) sits at (i+1)/(n+1), so there is a symmetric margin on both ends and the cluster is
+// balanced rather than pinned to the right edge (intentional empty track past the last tier). The fill
+// edge tracks the dots: it reaches node i exactly when the confirmed subtotal hits tier i's threshold,
+// interpolating in POSITION space between adjacent nodes; 0 when the subtotal is unknown (never
+// optimistic). Labels align start/center/end so an edge label can't clip off the track.
 export function stepperLayout(model: ProgressModel): { fillPct: number; nodes: StepNode[] } {
-  const top = Math.max(...model.tiers.map((t) => t.threshold.amountMinor), 1);
-  const fillPct =
-    model.subtotal === null
-      ? 0
-      : Math.max(0, Math.min(100, (model.subtotal.amountMinor / top) * 100));
-  const nodes = model.tiers.map((t): StepNode => {
-    const posPct = (t.threshold.amountMinor / top) * 100;
+  const ordered = [...model.tiers].sort(
+    (a, b) => a.threshold.amountMinor - b.threshold.amountMinor,
+  );
+  const n = ordered.length;
+  const posAt = (i: number): number => ((i + 1) / (n + 1)) * 100;
+  const nodes = ordered.map((t, i): StepNode => {
+    const posPct = posAt(i);
     const align: StepAlign = posPct <= 8 ? 'start' : posPct >= 92 ? 'end' : 'center';
     return { tierId: t.tierId, posPct, align, reached: t.reached, isCurrent: t.isCurrent };
   });
-  return { fillPct, nodes };
+  return { fillPct: fillToNodes(model.subtotal, ordered, posAt), nodes };
 }
 
-// Visual horizontal "trail" stepper: track + filled portion (server subtotal) + a node per tier at
-// its threshold; the current (highest reached) tier is marked. Authoritative-only — the fill reflects
-// the confirmed subtotal, never an optimistic guess. Highest-tier-only is stated in the subnote.
-export function renderProgress(mount: HTMLElement, model: ProgressModel | null): void {
-  mount.textContent = '';
-  if (model === null) {
-    return;
+function fillToNodes(
+  subtotal: Money | null,
+  ordered: readonly ProgressTierView[],
+  posAt: (i: number) => number,
+): number {
+  if (subtotal === null || ordered.length === 0) {
+    return 0;
+  }
+  const s = subtotal.amountMinor;
+  const t0 = ordered[0]!.threshold.amountMinor;
+  if (s <= t0) {
+    return t0 <= 0 ? posAt(0) : Math.max(0, (s / t0) * posAt(0));
+  }
+  for (let i = 0; i < ordered.length - 1; i++) {
+    const lo = ordered[i]!.threshold.amountMinor;
+    const hi = ordered[i + 1]!.threshold.amountMinor;
+    if (s < hi) {
+      const frac = hi === lo ? 0 : (s - lo) / (hi - lo);
+      return posAt(i) + (posAt(i + 1) - posAt(i)) * frac;
+    }
+  }
+  return posAt(ordered.length - 1); // at/above the top threshold → cap at the last node
+}
+
+type StepperUi = {
+  readonly headline: HTMLElement;
+  readonly fill: HTMLElement;
+  readonly steps: Map<string, { el: HTMLElement; label: HTMLElement }>;
+};
+
+// Build the stepper skeleton ONCE into `mount` and reuse it across renders — so the fill width changes
+// from its PREVIOUS value (CSS transition animates) instead of being recreated at the target each time.
+// Rebuilds only if the tier set changes (campaign swap), detected via a data-key. Returns live refs.
+function ensureSkeleton(mount: HTMLElement, nodes: readonly StepNode[]): StepperUi {
+  const key = nodes.map((n) => n.tierId).join('|');
+  const existing = mount.querySelector<HTMLElement>('.fge-stepper');
+  if (existing !== null && mount.dataset['fgeTiers'] === key) {
+    const steps = new Map<string, { el: HTMLElement; label: HTMLElement }>();
+    for (const el of existing.querySelectorAll<HTMLElement>('.fge-step')) {
+      steps.set(el.dataset['tier'] ?? '', {
+        el,
+        label: el.querySelector<HTMLElement>('.fge-step__label')!,
+      });
+    }
+    return {
+      headline: mount.querySelector<HTMLElement>('.fge-headline')!,
+      fill: existing.querySelector<HTMLElement>('.fge-stepper__fill')!,
+      steps,
+    };
   }
 
-  // One headline line inside the banner. While PENDING (no server result yet) show a neutral state,
-  // never a specific lower tier — a cart that already qualifies must not flash "Reach CA$500" on open.
+  mount.textContent = '';
   const headline = document.createElement('p');
   headline.className = 'fge-headline';
-  if (model.pending) {
-    headline.textContent = 'Checking your cart…';
-  } else if (model.allUnlocked) {
-    headline.textContent = 'You’ve unlocked your free gift';
-  } else if (model.next !== null) {
-    const amt = document.createElement('span');
-    amt.className = 'fge-amt';
-    amt.textContent = fmt(model.next.spendMore ?? model.next.threshold);
-    const verb = model.next.spendMore !== null ? 'Spend ' : 'Reach ';
-    const tail =
-      model.next.spendMore !== null
-        ? ` more to unlock ${model.next.giftLabel}`
-        : ` to unlock ${model.next.giftLabel}`;
-    headline.append(document.createTextNode(verb), amt, document.createTextNode(tail));
-  }
-  mount.append(headline);
-
-  const { fillPct, nodes } = stepperLayout(model);
-  const byTier = new Map(model.tiers.map((t) => [t.tierId, t]));
-
   const stepper = document.createElement('div');
   stepper.className = 'fge-stepper';
   const track = document.createElement('div');
   track.className = 'fge-stepper__track';
   const fill = document.createElement('div');
   fill.className = 'fge-stepper__fill';
-  fill.style.width = `${fillPct}%`;
   stepper.append(track, fill);
+  const steps = new Map<string, { el: HTMLElement; label: HTMLElement }>();
   for (const node of nodes) {
     const step = document.createElement('div');
-    step.className = `fge-step fge-step--${node.align}`;
-    if (node.reached) step.classList.add('is-reached');
-    if (node.isCurrent) step.classList.add('is-current');
+    step.className = 'fge-step';
+    step.dataset['tier'] = node.tierId;
     step.style.left = `${node.posPct}%`;
     const dot = document.createElement('div');
     dot.className = 'fge-step__dot';
     const label = document.createElement('div');
     label.className = 'fge-step__label';
-    label.textContent = fmt(byTier.get(node.tierId)!.threshold, true);
     step.append(dot, label);
     stepper.append(step);
+    steps.set(node.tierId, { el: step, label });
   }
-  mount.append(stepper);
-
   const subnote = document.createElement('p');
   subnote.className = 'fge-subnote';
   subnote.textContent = 'You receive the gift for your highest unlocked tier — not one per step.';
-  mount.append(subnote);
+  mount.append(headline, stepper, subnote);
+  mount.dataset['fgeTiers'] = key;
+  return { headline, fill, steps };
+}
+
+// Paint the headline. PENDING (no server result yet) → neutral, never a specific lower tier, so a cart
+// that already qualifies doesn't flash "Reach CA$500" on open. No "cart" word here (the theme's "Your
+// cart" header is right above — duplicating it reads as two headers).
+function setHeadline(headline: HTMLElement, model: ProgressModel): void {
+  headline.textContent = '';
+  if (model.pending) {
+    headline.textContent = 'Loading your free gift…';
+    return;
+  }
+  if (model.allUnlocked) {
+    headline.textContent = 'You’ve unlocked your free gift';
+    return;
+  }
+  if (model.next === null) {
+    return;
+  }
+  const amt = document.createElement('span');
+  amt.className = 'fge-amt';
+  amt.textContent = fmt(model.next.spendMore ?? model.next.threshold);
+  const spend = model.next.spendMore !== null;
+  headline.append(
+    document.createTextNode(spend ? 'Spend ' : 'Reach '),
+    amt,
+    document.createTextNode(
+      spend ? ` more to unlock ${model.next.giftLabel}` : ` to unlock ${model.next.giftLabel}`,
+    ),
+  );
+}
+
+// Visual horizontal "trail" stepper: track + filled portion (server subtotal) + a node per tier; the
+// current (highest reached) tier is marked. Authoritative-only — the fill reflects the confirmed
+// subtotal, never an optimistic guess. The skeleton persists across renders so the fill ANIMATES to
+// the new value (CSS transition) rather than snapping. Highest-tier-only is stated in the subnote.
+export function renderProgress(mount: HTMLElement, model: ProgressModel | null): void {
+  if (model === null) {
+    mount.textContent = '';
+    delete mount.dataset['fgeTiers'];
+    return;
+  }
+  const { fillPct, nodes } = stepperLayout(model);
+  const byTier = new Map(model.tiers.map((t) => [t.tierId, t]));
+  const ui = ensureSkeleton(mount, nodes);
+
+  setHeadline(ui.headline, model);
+  ui.fill.style.width = `${fillPct}%`; // CSS transitions width → animates to the confirmed value
+
+  for (const node of nodes) {
+    const step = ui.steps.get(node.tierId);
+    if (step === undefined) {
+      continue;
+    }
+    step.el.className =
+      `fge-step fge-step--${node.align}` +
+      (node.reached ? ' is-reached' : '') +
+      (node.isCurrent ? ' is-current' : '');
+    step.el.style.left = `${node.posPct}%`;
+    step.label.textContent = fmt(byTier.get(node.tierId)!.threshold, true);
+  }
 }

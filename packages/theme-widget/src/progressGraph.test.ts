@@ -151,14 +151,24 @@ describe('buildProgressModel', () => {
 });
 
 describe('stepperLayout (visual geometry, pure)', () => {
-  it('positions nodes by threshold/top, fills from the confirmed subtotal, end-aligns the last label', () => {
-    const m = buildProgressModel(config, gift('t1', 60000))!; // subtotal CA$600, top CA$1500
-    const { fillPct, nodes } = stepperLayout(m);
-    expect(Math.round(fillPct)).toBe(40); // 600/1500
-    expect(nodes.map((n) => Math.round(n.posPct))).toEqual([33, 67, 100]);
-    // first/middle centered, the 100% node end-aligned so its label can't clip off the right edge
-    expect(nodes.map((n) => n.align)).toEqual(['center', 'center', 'end']);
+  it('distributes nodes as a CENTERED group at (i+1)/(n+1), not pinned to the right edge', () => {
+    const m = buildProgressModel(config, gift('t1', 60000))!;
+    const { nodes } = stepperLayout(m);
+    // 3 tiers -> 25/50/75, leaving symmetric empty track on both ends (last node NOT at 100%)
+    expect(nodes.map((n) => Math.round(n.posPct))).toEqual([25, 50, 75]);
+    expect(nodes.map((n) => n.align)).toEqual(['center', 'center', 'center']);
     expect(nodes.map((n) => n.reached)).toEqual([true, false, false]);
+  });
+
+  it('fill edge tracks the dots: it reaches node i exactly at tier i’s threshold', () => {
+    // subtotal CA$600 sits 20% of the way from tier1 (CA$500@25%) to tier2 (CA$1000@50%) -> 30%
+    expect(Math.round(stepperLayout(buildProgressModel(config, gift('t1', 60000))!).fillPct)).toBe(
+      30,
+    );
+    // exactly at tier1's threshold -> the first node (25%)
+    expect(Math.round(stepperLayout(buildProgressModel(config, gift('t1', 50000))!).fillPct)).toBe(
+      25,
+    );
   });
 
   it('fill is 0 when the server has not confirmed a subtotal (no-gift)', () => {
@@ -166,8 +176,8 @@ describe('stepperLayout (visual geometry, pure)', () => {
     expect(stepperLayout(m).fillPct).toBe(0);
   });
 
-  it('fill caps at 100 at/above the top tier', () => {
+  it('fill caps at the LAST node (not the track end) at/above the top tier', () => {
     const m = buildProgressModel(config, gift('t3', 200000))!;
-    expect(stepperLayout(m).fillPct).toBe(100);
+    expect(Math.round(stepperLayout(m).fillPct)).toBe(75); // last of 3 nodes, leaving empty track
   });
 });

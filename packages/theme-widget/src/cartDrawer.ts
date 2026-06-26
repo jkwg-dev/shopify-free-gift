@@ -1,7 +1,8 @@
 // Cart-drawer section injection (Phase 5b-2b-1 layout rework). Instead of a floating body overlay,
 // we INJECT two in-flow sections into the drawer so they blend into the cart content:
 //   • a slim progress stepper right AFTER the "Your cart" header, and
-//   • the "Choose your free gift" chooser BELOW the line-item list (above the subtotal/checkout).
+//   • the "Choose your free gift" chooser INSIDE the scrollable items region, after the line items
+//     (scroll past the cart to reach it — never pinned above the footer competing for top space).
 // The theme replaces the drawer's inner HTML on every cart change (Dawn Sections API), which detaches
 // our sections — so we RE-ATTACH them on every re-render via a childList/subtree MutationObserver. We
 // hold the element references, so re-attaching only RE-PARENTS them (content + selection survive).
@@ -80,24 +81,28 @@ export function mountDrawerSections(opts: DrawerSectionsOptions = {}): DrawerSec
       return;
     }
     const panel = findFirst(drawer, PANEL_SELECTORS) ?? drawer;
-    const header = findFirst(panel, HEADER_SELECTORS);
-    const itemsEnd = findFirst(panel, FOOTER_SELECTORS) ?? findFirst(panel, ITEMS_SELECTORS);
 
+    // Stepper: directly under the theme's "Your cart" header row (single header, our banner below it).
+    const header = findFirst(panel, HEADER_SELECTORS);
     if (header !== null) {
-      header.insertAdjacentElement('afterend', stepperEl); // slim row under "Your cart"
+      header.insertAdjacentElement('afterend', stepperEl);
     } else if (stepperEl.parentNode === null) {
       panel.prepend(stepperEl); // fallback: top of the panel
     }
 
-    if (itemsEnd !== null) {
-      // Below the line items: before the footer (so it's above subtotal/checkout), else after the list.
-      if (FOOTER_SELECTORS.some((s) => itemsEnd.matches(s))) {
-        itemsEnd.insertAdjacentElement('beforebegin', chooserEl);
-      } else {
-        itemsEnd.insertAdjacentElement('afterend', chooserEl);
+    // Chooser: INSIDE the scrollable items region, as its LAST child — so it scrolls with the cart
+    // content (reached by scrolling past the items), never pinned above the footer. Fallbacks keep it
+    // safely placed if the items region isn't found on a given theme.
+    const items = findFirst(panel, ITEMS_SELECTORS);
+    if (items !== null) {
+      items.append(chooserEl);
+    } else {
+      const footer = findFirst(panel, FOOTER_SELECTORS);
+      if (footer !== null) {
+        footer.insertAdjacentElement('beforebegin', chooserEl);
+      } else if (chooserEl.parentNode === null) {
+        panel.append(chooserEl); // last resort: end of the panel
       }
-    } else if (chooserEl.parentNode === null) {
-      panel.append(chooserEl); // fallback: end of the panel
     }
   };
 
