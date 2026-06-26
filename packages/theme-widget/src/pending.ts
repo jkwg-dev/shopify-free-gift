@@ -7,8 +7,14 @@
 // so Checkout can never get stuck. Authoritative: pending only means "work in progress"; the real
 // gift/price always comes from the confirmed cart/validate, never a fake.
 
-export const PENDING_DELAY_MS = 350; // don't engage for fast reconciles (anti-flicker)
+export const PENDING_MIN_MS = 500; // engage immediately, then HOLD at least this long (anti-flicker)
 export const PENDING_MAX_MS = 8000; // safety: never trap the shopper from paying
+
+// Pure: pending clears only once the work is done AND the minimum visible duration has elapsed — i.e.
+// at max(work-done, min-duration). Engaging immediately + holding a beat replaces "delay then show".
+export function pendingShouldClear(workDone: boolean, minElapsed: boolean): boolean {
+  return workDone && minElapsed;
+}
 
 // Theme Checkout buttons (drawer + /cart), resilient across Dawn-like themes.
 const CHECKOUT_SELECTORS = [
@@ -84,7 +90,8 @@ export function dimGiftRows(wantedNumericIds: readonly string[], dim: boolean): 
   }
   for (const r of rows) {
     if (confident.has(r.getAttribute('data-quantity-variant-id') ?? '')) {
-      (r.closest('.cart-item') ?? r).classList.add(ROW_DIM_CLASS);
+      // The data attr is on the quantity input in both contexts; dim the whole ROW it belongs to.
+      (r.closest('.cart-item, tr, li') ?? r).classList.add(ROW_DIM_CLASS);
     }
   }
 }

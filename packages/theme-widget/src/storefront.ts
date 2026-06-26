@@ -19,7 +19,13 @@ import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
-import { PENDING_DELAY_MS, PENDING_MAX_MS, dimGiftRows, setCheckoutLocked } from './pending.js';
+import {
+  PENDING_MIN_MS,
+  PENDING_MAX_MS,
+  dimGiftRows,
+  pendingShouldClear,
+  setCheckoutLocked,
+} from './pending.js';
 import { buildProgressModel, renderProgress } from './progressGraph.js';
 import { reconcileGiftCart } from './reconcileLoop.js';
 import { injectStyles } from './styles.js';
@@ -104,18 +110,13 @@ let sections: CartSection[] = [];
 // on a terminal outcome or the safety timeout (so Checkout never gets stuck). `perceptionConfig` lets
 // the timer callbacks re-render without threading config through them.
 let giftPendingActive = false;
-let giftPendingEngageTimer: ReturnType<typeof setTimeout> | undefined;
+let giftPendingWorkDone = false;
+let giftPendingMinElapsed = false;
+let giftPendingMinTimer: ReturnType<typeof setTimeout> | undefined;
 let giftPendingSafetyTimer: ReturnType<typeof setTimeout> | undefined;
 let perceptionConfig: WidgetConfig | null = null;
 // Re-applies the in-cart gift-row dim across the theme's Sections-API re-renders while pending.
 let cartDimObserver: MutationObserver | null = null;
-const CART_DIM_CONTAINERS = [
-  'cart-drawer-items',
-  '#CartDrawer-CartItems',
-  '.drawer__contents',
-  '#main-cart-items',
-  '.cart-items',
-];
 
 // Cart writer for applyCartPlan: POSTs JSON to an AJAX cart path and returns the raw Response (ok +
 // status + text), so add/remove failures (e.g. a 422 for an unpublished gift product) are surfaced.
@@ -147,6 +148,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
   // (the loop already re-reads the live cart each pass), while a user's add that lands mid-loop is
   // still picked up by the next pass's read + re-validate. getCart / /validate are not cart writes.
   selfMutating = true;
+  beginGiftPending(); // INSTANT feedback the moment the reconcile begins (held >= PENDING_MIN_MS)
   try {
     const outcome = await reconcileGiftCart(
       {
@@ -181,8 +183,6 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
         setDiscount: (code) => postJson('cart/update.js', { discount: code ?? '' }),
         // Nudge the theme to re-render its cart UI; tagged with our source so we ignore the echo.
         nudge: () => w.publish?.(CART_UPDATE_EVENT, { source: SOURCE }),
-        // Real gift work is starting → maybe show the pending indicator (gated by the flicker delay).
-        onGiftMutationStart: () => beginGiftPending(),
       },
       { initialCode: lastDiscount },
     );
@@ -192,53 +192,71 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     for (const variantId of failedAddVariantIds(outcome.failures)) {
       unavailableVariantIds.add(variantId);
     }
-    endGiftPending(); // gift confirmed (or terminal) → clear pending BEFORE the final render
+    markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
   } finally {
-    endGiftPending(); // safety: also clear on error/throw — Checkout must never stay locked
+    markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
     selfMutating = false;
   }
 }
 
-// Engage the pending indicator only if the in-progress work outlasts the flicker threshold. Called
-// when a reconcile is about to do real gift work (onGiftMutationStart); the engage timer is cancelled
-// by endGiftPending if the work finishes first, so fast reconciles show nothing.
+// Engage the pending indicator IMMEDIATELY (instant feedback), then hold for at least PENDING_MIN_MS so
+// a fast same-tier/code-only reconcile shows a brief, clean state instead of flickering. No-op when
+// there's no active campaign (don't lock Checkout when there's no gift to wait for). Re-entrant: a
+// chained reconcile just resets workDone so pending stays open until the new work finishes.
 function beginGiftPending(): void {
-  if (giftPendingActive || giftPendingEngageTimer !== undefined) {
+  giftPendingWorkDone = false;
+  if (giftPendingActive || campaignConfig === null || sections.length === 0) {
     return;
   }
-  giftPendingEngageTimer = setTimeout(() => {
-    giftPendingEngageTimer = undefined;
-    giftPendingActive = true;
-    setCheckoutLocked(true); // dim + lock + spinner/message overlay (CSS)
-    applyCartRowDim(true); // dim the in-cart gift line(s)
-    startCartDimObserver(); // re-apply that dim across the theme's list re-renders
-    if (perceptionConfig !== null) {
-      renderPerception(perceptionConfig); // dim chooser cards + heading spinner
-    }
-  }, PENDING_DELAY_MS);
-  giftPendingSafetyTimer = setTimeout(() => endGiftPending(), PENDING_MAX_MS);
+  giftPendingActive = true;
+  giftPendingMinElapsed = false;
+  setCheckoutLocked(true); // dim + lock + spinner/message overlay (CSS)
+  applyCartRowDim(true); // dim the in-cart gift line(s)
+  startCartDimObserver(); // re-apply that dim across the theme's list re-renders
+  if (perceptionConfig !== null) {
+    renderPerception(perceptionConfig); // dim chooser cards + heading spinner
+  }
+  giftPendingMinTimer = setTimeout(() => {
+    giftPendingMinElapsed = true;
+    giftPendingMinTimer = undefined;
+    maybeClearGiftPending();
+  }, PENDING_MIN_MS);
+  giftPendingSafetyTimer = setTimeout(() => clearGiftPending(), PENDING_MAX_MS);
 }
 
-// Clear pending on EVERY terminal outcome (success, removal, error/422) and on the safety timeout, so
-// Checkout is never left stuck. Idempotent.
-function endGiftPending(): void {
-  if (giftPendingEngageTimer !== undefined) {
-    clearTimeout(giftPendingEngageTimer);
-    giftPendingEngageTimer = undefined;
+// The reconcile finished (success, removal, error/422). Clear once the min-duration has also elapsed.
+function markGiftWorkDone(): void {
+  giftPendingWorkDone = true;
+  maybeClearGiftPending();
+}
+
+function maybeClearGiftPending(): void {
+  if (giftPendingActive && pendingShouldClear(giftPendingWorkDone, giftPendingMinElapsed)) {
+    clearGiftPending();
+  }
+}
+
+// Tear down the pending state — restores Checkout + the gift rows + the chooser. Called when work is
+// done AND the min-duration elapsed, and unconditionally by the safety timeout. Idempotent.
+function clearGiftPending(): void {
+  if (!giftPendingActive) {
+    return;
+  }
+  giftPendingActive = false;
+  if (giftPendingMinTimer !== undefined) {
+    clearTimeout(giftPendingMinTimer);
+    giftPendingMinTimer = undefined;
   }
   if (giftPendingSafetyTimer !== undefined) {
     clearTimeout(giftPendingSafetyTimer);
     giftPendingSafetyTimer = undefined;
   }
-  if (giftPendingActive) {
-    giftPendingActive = false;
-    stopCartDimObserver();
-    applyCartRowDim(false); // restore in-cart gift rows
-    setCheckoutLocked(false); // restore "Check out" label + unlock
-    if (perceptionConfig !== null) {
-      renderPerception(perceptionConfig); // restore chooser opacity + drop the spinner
-    }
+  stopCartDimObserver();
+  applyCartRowDim(false); // restore in-cart gift rows
+  setCheckoutLocked(false); // restore "Check out" label + unlock
+  if (perceptionConfig !== null) {
+    renderPerception(perceptionConfig); // restore chooser opacity + drop the spinner
   }
 }
 
@@ -254,6 +272,24 @@ function applyCartRowDim(active: boolean): void {
   dimGiftRows(active ? giftRowNumericIds() : [], active);
 }
 
+// STABLE re-render roots (the drawer element and the cart-items section wrapper) — they persist when the
+// theme replaces the list's inner HTML, so an observer on them keeps firing on every re-render (observing
+// the inner list element would go stale the moment it's replaced, which is why the dim was being lost).
+function cartDimRoots(): HTMLElement[] {
+  const roots: HTMLElement[] = [];
+  const drawer = document.querySelector<HTMLElement>('cart-drawer, #CartDrawer, .cart-drawer');
+  if (drawer !== null) {
+    roots.push(drawer);
+  }
+  const pageSection = document
+    .querySelector('#main-cart-items, .cart-items')
+    ?.closest('.shopify-section');
+  if (pageSection instanceof HTMLElement) {
+    roots.push(pageSection);
+  }
+  return roots;
+}
+
 function startCartDimObserver(): void {
   if (cartDimObserver !== null || typeof MutationObserver === 'undefined') {
     return;
@@ -261,10 +297,8 @@ function startCartDimObserver(): void {
   // Re-apply the row dim when the theme re-renders the cart list. We only toggle CLASSES (attribute
   // mutations), and observe childList only, so our own dim never retriggers this observer.
   cartDimObserver = new MutationObserver(() => applyCartRowDim(true));
-  for (const sel of CART_DIM_CONTAINERS) {
-    for (const el of Array.from(document.querySelectorAll(sel))) {
-      cartDimObserver.observe(el, { childList: true, subtree: true });
-    }
+  for (const root of cartDimRoots()) {
+    cartDimObserver.observe(root, { childList: true, subtree: true });
   }
 }
 

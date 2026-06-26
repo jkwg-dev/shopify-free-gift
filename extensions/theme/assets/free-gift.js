@@ -599,8 +599,11 @@
   }
 
   // src/pending.ts
-  var PENDING_DELAY_MS = 350;
+  var PENDING_MIN_MS = 500;
   var PENDING_MAX_MS = 8e3;
+  function pendingShouldClear(workDone, minElapsed) {
+    return workDone && minElapsed;
+  }
   var CHECKOUT_SELECTORS = [
     "#CartDrawer-Checkout",
     "#checkout",
@@ -662,7 +665,7 @@
     }
     for (const r of rows) {
       if (confident.has((_a2 = r.getAttribute("data-quantity-variant-id")) != null ? _a2 : "")) {
-        ((_b2 = r.closest(".cart-item")) != null ? _b2 : r).classList.add(ROW_DIM_CLASS);
+        ((_b2 = r.closest(".cart-item, tr, li")) != null ? _b2 : r).classList.add(ROW_DIM_CLASS);
       }
     }
   }
@@ -870,7 +873,7 @@
     return applied.failed === 0 && applied.added === expected.adds && applied.removed === expected.removes && applied.adjusted === expected.adjusts;
   }
   async function reconcileGiftCart(io, opts = {}) {
-    var _a2, _b2, _c2, _d;
+    var _a2, _b2, _c2;
     const maxPasses = (_a2 = opts.maxPasses) != null ? _a2 : 4;
     let appliedCode = (_b2 = opts.initialCode) != null ? _b2 : null;
     const addAttempted = /* @__PURE__ */ new Set();
@@ -888,7 +891,6 @@
       if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
         return { passes: pass, converged: true, appliedCode, failures };
       }
-      (_c2 = io.onGiftMutationStart) == null ? void 0 : _c2.call(io);
       const removed = [];
       const adjusted = [];
       const added = [];
@@ -912,7 +914,7 @@
         passFailures.push(...res.failures);
       }
       failures.push(...passFailures);
-      (_d = io.nudge) == null ? void 0 : _d.call(io);
+      (_c2 = io.nudge) == null ? void 0 : _c2.call(io);
       const settled = reconcileSettled(
         { adds: add.length, removes: plan.remove.length, adjusts: plan.adjust.length },
         {
@@ -1050,13 +1052,16 @@ cart-drawer .title--primary,
 .fge-gift.is-pending .fge-card,
 .fge-gift.is-pending .fge-variants{ opacity:.5; transition:opacity .2s ease; }
 
-/* Small neutral spinner (chooser heading + the Checkout button overlay reuse the same keyframes). */
+/* Small neutral spinner (chooser heading + the Checkout button overlay reuse the same keyframes). The
+   visible arc (border-top-color != the ring) is what makes the rotation readable. Centering uses layout
+   (inline-block / position), NEVER transform \u2014 so fge-spin owns transform purely for rotation and the
+   spinner rotates IN PLACE instead of bobbing. */
 .fge-spinner{
   display:inline-block; width:13px; height:13px; margin-left:8px; vertical-align:-2px;
   border:2px solid var(--fge-line); border-top-color:var(--fge-ink); border-radius:50%;
   animation:fge-spin .7s linear infinite;
 }
-@keyframes fge-spin{ to{ transform:rotate(360deg); } }
+@keyframes fge-spin{ from{ transform:rotate(0deg); } to{ transform:rotate(360deg); } }
 
 /* Dim the in-cart gift line(s) during pending (applied by JS to confidently-identified gift rows
    only \u2014 never the qualifying/paid rows). Visual only; cleared when pending ends. */
@@ -1085,9 +1090,9 @@ body.fge-checkout-pending #CartDrawer-Checkout::before,
 body.fge-checkout-pending #checkout::before,
 body.fge-checkout-pending [name="checkout"]::before,
 body.fge-checkout-pending .cart__checkout-button::before{
-  content:""; position:absolute; top:50%; left:18px; width:15px; height:15px;
-  border:2px solid rgba(255,255,255,.45); border-top-color:#fff; border-radius:50%;
-  transform:translateY(-50%); animation:fge-spin .7s linear infinite;
+  content:""; box-sizing:border-box; position:absolute; top:calc(50% - 7.5px); left:18px;
+  width:15px; height:15px; border:2px solid rgba(255,255,255,.45); border-top-color:#fff;
+  border-radius:50%; animation:fge-spin .7s linear infinite;
 }
 body.fge-checkout-pending #CartDrawer-Checkout::after,
 body.fge-checkout-pending #checkout::after,
@@ -1102,6 +1107,9 @@ body.fge-checkout-pending .cart__checkout-button::after{
   .fge-stepper__fill, .fge-step, .fge-step__dot, .fge-gift.is-pending .fge-card,
   .fge-gift.is-pending .fge-variants, .fge-gift-row-dim{ transition:none; }
   .fge-spinner,
+  body.fge-checkout-pending #CartDrawer-Checkout::before,
+  body.fge-checkout-pending #checkout::before,
+  body.fge-checkout-pending [name="checkout"]::before,
   body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
 `;
@@ -1175,17 +1183,12 @@ body.fge-checkout-pending .cart__checkout-button::after{
   var unavailableVariantIds = /* @__PURE__ */ new Set();
   var sections = [];
   var giftPendingActive = false;
-  var giftPendingEngageTimer;
+  var giftPendingWorkDone = false;
+  var giftPendingMinElapsed = false;
+  var giftPendingMinTimer;
   var giftPendingSafetyTimer;
   var perceptionConfig = null;
   var cartDimObserver = null;
-  var CART_DIM_CONTAINERS = [
-    "cart-drawer-items",
-    "#CartDrawer-CartItems",
-    ".drawer__contents",
-    "#main-cart-items",
-    ".cart-items"
-  ];
   var cartPost = (path, body) => fetch(`${root}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -1206,6 +1209,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
   }
   async function reconcileOnce(config) {
     selfMutating = true;
+    beginGiftPending();
     try {
       const outcome = await reconcileGiftCart(
         {
@@ -1238,9 +1242,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
           nudge: () => {
             var _a2;
             return (_a2 = w.publish) == null ? void 0 : _a2.call(w, CART_UPDATE_EVENT, { source: SOURCE });
-          },
-          // Real gift work is starting → maybe show the pending indicator (gated by the flicker delay).
-          onGiftMutationStart: () => beginGiftPending()
+          }
         },
         { initialCode: lastDiscount }
       );
@@ -1248,46 +1250,60 @@ body.fge-checkout-pending .cart__checkout-button::after{
       for (const variantId of failedAddVariantIds(outcome.failures)) {
         unavailableVariantIds.add(variantId);
       }
-      endGiftPending();
+      markGiftWorkDone();
       renderPerception(config);
     } finally {
-      endGiftPending();
+      markGiftWorkDone();
       selfMutating = false;
     }
   }
   function beginGiftPending() {
-    if (giftPendingActive || giftPendingEngageTimer !== void 0) {
+    giftPendingWorkDone = false;
+    if (giftPendingActive || campaignConfig === null || sections.length === 0) {
       return;
     }
-    giftPendingEngageTimer = setTimeout(() => {
-      giftPendingEngageTimer = void 0;
-      giftPendingActive = true;
-      setCheckoutLocked(true);
-      applyCartRowDim(true);
-      startCartDimObserver();
-      if (perceptionConfig !== null) {
-        renderPerception(perceptionConfig);
-      }
-    }, PENDING_DELAY_MS);
-    giftPendingSafetyTimer = setTimeout(() => endGiftPending(), PENDING_MAX_MS);
+    giftPendingActive = true;
+    giftPendingMinElapsed = false;
+    setCheckoutLocked(true);
+    applyCartRowDim(true);
+    startCartDimObserver();
+    if (perceptionConfig !== null) {
+      renderPerception(perceptionConfig);
+    }
+    giftPendingMinTimer = setTimeout(() => {
+      giftPendingMinElapsed = true;
+      giftPendingMinTimer = void 0;
+      maybeClearGiftPending();
+    }, PENDING_MIN_MS);
+    giftPendingSafetyTimer = setTimeout(() => clearGiftPending(), PENDING_MAX_MS);
   }
-  function endGiftPending() {
-    if (giftPendingEngageTimer !== void 0) {
-      clearTimeout(giftPendingEngageTimer);
-      giftPendingEngageTimer = void 0;
+  function markGiftWorkDone() {
+    giftPendingWorkDone = true;
+    maybeClearGiftPending();
+  }
+  function maybeClearGiftPending() {
+    if (giftPendingActive && pendingShouldClear(giftPendingWorkDone, giftPendingMinElapsed)) {
+      clearGiftPending();
+    }
+  }
+  function clearGiftPending() {
+    if (!giftPendingActive) {
+      return;
+    }
+    giftPendingActive = false;
+    if (giftPendingMinTimer !== void 0) {
+      clearTimeout(giftPendingMinTimer);
+      giftPendingMinTimer = void 0;
     }
     if (giftPendingSafetyTimer !== void 0) {
       clearTimeout(giftPendingSafetyTimer);
       giftPendingSafetyTimer = void 0;
     }
-    if (giftPendingActive) {
-      giftPendingActive = false;
-      stopCartDimObserver();
-      applyCartRowDim(false);
-      setCheckoutLocked(false);
-      if (perceptionConfig !== null) {
-        renderPerception(perceptionConfig);
-      }
+    stopCartDimObserver();
+    applyCartRowDim(false);
+    setCheckoutLocked(false);
+    if (perceptionConfig !== null) {
+      renderPerception(perceptionConfig);
     }
   }
   function giftRowNumericIds() {
@@ -1302,15 +1318,26 @@ body.fge-checkout-pending .cart__checkout-button::after{
   function applyCartRowDim(active) {
     dimGiftRows(active ? giftRowNumericIds() : [], active);
   }
+  function cartDimRoots() {
+    var _a2;
+    const roots = [];
+    const drawer = document.querySelector("cart-drawer, #CartDrawer, .cart-drawer");
+    if (drawer !== null) {
+      roots.push(drawer);
+    }
+    const pageSection = (_a2 = document.querySelector("#main-cart-items, .cart-items")) == null ? void 0 : _a2.closest(".shopify-section");
+    if (pageSection instanceof HTMLElement) {
+      roots.push(pageSection);
+    }
+    return roots;
+  }
   function startCartDimObserver() {
     if (cartDimObserver !== null || typeof MutationObserver === "undefined") {
       return;
     }
     cartDimObserver = new MutationObserver(() => applyCartRowDim(true));
-    for (const sel of CART_DIM_CONTAINERS) {
-      for (const el of Array.from(document.querySelectorAll(sel))) {
-        cartDimObserver.observe(el, { childList: true, subtree: true });
-      }
+    for (const root2 of cartDimRoots()) {
+      cartDimObserver.observe(root2, { childList: true, subtree: true });
     }
   }
   function stopCartDimObserver() {

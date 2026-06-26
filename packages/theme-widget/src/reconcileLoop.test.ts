@@ -369,27 +369,6 @@ describe('reconcileGiftCart — round-trip reduction (step 3a)', () => {
   });
 });
 
-describe('reconcileGiftCart — onGiftMutationStart (pending signal)', () => {
-  it('fires when there is real gift work, and NOT on a converged no-op', async () => {
-    const cart = new FakeCart();
-    cart.seedPaid(PAID, 5);
-    let starts = 0;
-    const io: GiftCartIo = {
-      ...makeIo(cart, () => giftResult([ICE], 'CODE-ICE')),
-      onGiftMutationStart: () => {
-        starts += 1;
-      },
-    };
-
-    await reconcileGiftCart(io); // adds ICE -> real work
-    expect(starts).toBe(1);
-
-    // ICE already present AND its code already applied (initialCode) -> a true no-op, no signal.
-    await reconcileGiftCart(io, { initialCode: 'CODE-ICE' });
-    expect(starts).toBe(1);
-  });
-});
-
 describe('reconcileGiftCart — safety', () => {
   it('a gift that always 422s on add is NOT retried in a loop (bounded, failure recorded)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);

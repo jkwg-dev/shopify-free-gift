@@ -66,8 +66,9 @@ export { injectStyles, FGE_CSS, FGE_STYLE_ID } from './styles.js';
 export {
   dimGiftRows,
   confidentDimVariants,
+  pendingShouldClear,
   setCheckoutLocked,
-  PENDING_DELAY_MS,
+  PENDING_MIN_MS,
   PENDING_MAX_MS,
 } from './pending.js';
 

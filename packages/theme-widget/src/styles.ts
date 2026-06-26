@@ -125,13 +125,16 @@ cart-drawer .title--primary,
 .fge-gift.is-pending .fge-card,
 .fge-gift.is-pending .fge-variants{ opacity:.5; transition:opacity .2s ease; }
 
-/* Small neutral spinner (chooser heading + the Checkout button overlay reuse the same keyframes). */
+/* Small neutral spinner (chooser heading + the Checkout button overlay reuse the same keyframes). The
+   visible arc (border-top-color != the ring) is what makes the rotation readable. Centering uses layout
+   (inline-block / position), NEVER transform — so fge-spin owns transform purely for rotation and the
+   spinner rotates IN PLACE instead of bobbing. */
 .fge-spinner{
   display:inline-block; width:13px; height:13px; margin-left:8px; vertical-align:-2px;
   border:2px solid var(--fge-line); border-top-color:var(--fge-ink); border-radius:50%;
   animation:fge-spin .7s linear infinite;
 }
-@keyframes fge-spin{ to{ transform:rotate(360deg); } }
+@keyframes fge-spin{ from{ transform:rotate(0deg); } to{ transform:rotate(360deg); } }
 
 /* Dim the in-cart gift line(s) during pending (applied by JS to confidently-identified gift rows
    only — never the qualifying/paid rows). Visual only; cleared when pending ends. */
@@ -160,9 +163,9 @@ body.fge-checkout-pending #CartDrawer-Checkout::before,
 body.fge-checkout-pending #checkout::before,
 body.fge-checkout-pending [name="checkout"]::before,
 body.fge-checkout-pending .cart__checkout-button::before{
-  content:""; position:absolute; top:50%; left:18px; width:15px; height:15px;
-  border:2px solid rgba(255,255,255,.45); border-top-color:#fff; border-radius:50%;
-  transform:translateY(-50%); animation:fge-spin .7s linear infinite;
+  content:""; box-sizing:border-box; position:absolute; top:calc(50% - 7.5px); left:18px;
+  width:15px; height:15px; border:2px solid rgba(255,255,255,.45); border-top-color:#fff;
+  border-radius:50%; animation:fge-spin .7s linear infinite;
 }
 body.fge-checkout-pending #CartDrawer-Checkout::after,
 body.fge-checkout-pending #checkout::after,
@@ -177,6 +180,9 @@ body.fge-checkout-pending .cart__checkout-button::after{
   .fge-stepper__fill, .fge-step, .fge-step__dot, .fge-gift.is-pending .fge-card,
   .fge-gift.is-pending .fge-variants, .fge-gift-row-dim{ transition:none; }
   .fge-spinner,
+  body.fge-checkout-pending #CartDrawer-Checkout::before,
+  body.fge-checkout-pending #checkout::before,
+  body.fge-checkout-pending [name="checkout"]::before,
   body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
 `;

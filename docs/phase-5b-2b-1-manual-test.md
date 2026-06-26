@@ -312,3 +312,21 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 | Q10 | No flicker                 | Fast same-tier/code-only changes don't flash any of the spinner/dim/button states (~350ms threshold)                           |
 | Q11 | Both surfaces              | All of the above work in BOTH the drawer and the /cart page                                                                    |
 | Q12 | Resilient                  | If no Checkout button is found, no error; heading spinner + dims still work                                                    |
+
+## Round 16 checks (immediate pending + min-hold; spinner fix; in-cart dim)
+
+> Display only; reconcile/BXGY/leak/tiers/step-2/step-3a untouched. Redeploy the theme widget.
+
+| #   | Check                  | Expected                                                                                                                   |
+| --- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| T1  | Instant feedback       | The moment the shopper changes the cart, pending appears immediately (no ~2s wait): spinners + dims + locked Checkout      |
+| T2  | Min hold               | Pending stays visible at least ~0.5s, then clears when the gift is confirmed (whichever is later)                          |
+| T3  | No flicker (fast)      | A fast same-tier/code-only change shows a brief, clean pending (~0.5s) — not an on/off flash                               |
+| T4  | Spinner rotates        | Both spinners (chooser heading + Checkout button) ROTATE in place — no up/down bobbing; the arc/gap makes the spin visible |
+| T5  | In-cart gift dim       | The $0 gift line(s) in the cart list visibly dim to ~0.5 during pending, in sync with the chooser                          |
+| T6  | Dim survives re-render | The in-cart gift-row dim re-applies after the list re-renders mid-pending (observer on the stable section/drawer root)     |
+| T7  | Paid rows safe         | Qualifying/paid rows never dim; a gift variant also bought paid (2 rows) is skipped                                        |
+| T8  | Restore                | On completion: spinners gone, all dims cleared, Checkout unlocked with "Check out" restored                                |
+| T9  | Never stuck            | Restores on error/422 and the ~8s safety timeout too                                                                       |
+| T10 | Both surfaces          | All of the above work in BOTH the drawer and /cart                                                                         |
+| T11 | No campaign            | With no active campaign, a cart change does NOT lock Checkout / show pending                                               |
