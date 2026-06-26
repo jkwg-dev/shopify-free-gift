@@ -19,7 +19,7 @@ import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
-import { PENDING_DELAY_MS, PENDING_MAX_MS, pendingHint, setCheckoutLocked } from './pending.js';
+import { PENDING_DELAY_MS, PENDING_MAX_MS, dimGiftRows, setCheckoutLocked } from './pending.js';
 import { buildProgressModel, renderProgress } from './progressGraph.js';
 import { reconcileGiftCart } from './reconcileLoop.js';
 import { injectStyles } from './styles.js';
@@ -107,6 +107,15 @@ let giftPendingActive = false;
 let giftPendingEngageTimer: ReturnType<typeof setTimeout> | undefined;
 let giftPendingSafetyTimer: ReturnType<typeof setTimeout> | undefined;
 let perceptionConfig: WidgetConfig | null = null;
+// Re-applies the in-cart gift-row dim across the theme's Sections-API re-renders while pending.
+let cartDimObserver: MutationObserver | null = null;
+const CART_DIM_CONTAINERS = [
+  'cart-drawer-items',
+  '#CartDrawer-CartItems',
+  '.drawer__contents',
+  '#main-cart-items',
+  '.cart-items',
+];
 
 // Cart writer for applyCartPlan: POSTs JSON to an AJAX cart path and returns the raw Response (ok +
 // status + text), so add/remove failures (e.g. a 422 for an unpublished gift product) are surfaced.
@@ -201,9 +210,11 @@ function beginGiftPending(): void {
   giftPendingEngageTimer = setTimeout(() => {
     giftPendingEngageTimer = undefined;
     giftPendingActive = true;
-    setCheckoutLocked(true);
+    setCheckoutLocked(true); // dim + lock + spinner/message overlay (CSS)
+    applyCartRowDim(true); // dim the in-cart gift line(s)
+    startCartDimObserver(); // re-apply that dim across the theme's list re-renders
     if (perceptionConfig !== null) {
-      renderPerception(perceptionConfig); // dim chooser + show the hint
+      renderPerception(perceptionConfig); // dim chooser cards + heading spinner
     }
   }, PENDING_DELAY_MS);
   giftPendingSafetyTimer = setTimeout(() => endGiftPending(), PENDING_MAX_MS);
@@ -222,11 +233,44 @@ function endGiftPending(): void {
   }
   if (giftPendingActive) {
     giftPendingActive = false;
-    setCheckoutLocked(false);
+    stopCartDimObserver();
+    applyCartRowDim(false); // restore in-cart gift rows
+    setCheckoutLocked(false); // restore "Check out" label + unlock
     if (perceptionConfig !== null) {
-      renderPerception(perceptionConfig); // restore full opacity + drop the hint
+      renderPerception(perceptionConfig); // restore chooser opacity + drop the spinner
     }
   }
+}
+
+// The gift variant ids (numeric) currently resolved by the server — the rows to dim.
+function giftRowNumericIds(): string[] {
+  if (lastResult?.status !== 'gift') {
+    return [];
+  }
+  return lastResult.giftVariantIds.map((g) => g.split('/').pop() ?? '').filter((s) => s.length > 0);
+}
+
+function applyCartRowDim(active: boolean): void {
+  dimGiftRows(active ? giftRowNumericIds() : [], active);
+}
+
+function startCartDimObserver(): void {
+  if (cartDimObserver !== null || typeof MutationObserver === 'undefined') {
+    return;
+  }
+  // Re-apply the row dim when the theme re-renders the cart list. We only toggle CLASSES (attribute
+  // mutations), and observe childList only, so our own dim never retriggers this observer.
+  cartDimObserver = new MutationObserver(() => applyCartRowDim(true));
+  for (const sel of CART_DIM_CONTAINERS) {
+    for (const el of Array.from(document.querySelectorAll(sel))) {
+      cartDimObserver.observe(el, { childList: true, subtree: true });
+    }
+  }
+}
+
+function stopCartDimObserver(): void {
+  cartDimObserver?.disconnect();
+  cartDimObserver = null;
 }
 
 // Render ONLY the stepper (authoritative progress) into every cart surface from the latest /validate
@@ -255,9 +299,6 @@ function renderPerception(config: WidgetConfig): void {
   // The CURRENT (highest reached) tier is the gift the shopper receives — the chooser shows ONLY it.
   const currentTierId = lastResult?.status === 'gift' ? lastResult.tierId : null;
   const model = buildProgressModel(campaignConfig, lastResult);
-  const pending = giftPendingActive
-    ? { active: true, message: pendingHint(lastResult !== null) }
-    : undefined;
   const handlers = {
     onChoose: (tierId: string, optionId: string) => {
       choiceState = { ...choiceState, [tierId]: optionId };
@@ -278,7 +319,7 @@ function renderPerception(config: WidgetConfig): void {
       { choices: choiceState, declined, unavailableVariantIds },
       handlers,
       currentTierId,
-      pending,
+      giftPendingActive,
     );
     section.attach(); // ensure both sections are in the cart flow after rendering
   }

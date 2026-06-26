@@ -1,19 +1,14 @@
 // Pending indicator for the residual gift-reconcile latency (Phase 5b-2b). After steps 1-3a the
 // STEPPER is fast + authoritative, but the gift may not be visibly in the cart at $0 for up to ~1.5s
 // while it is added / swapped / re-added and its code applied. We mask that window as intentional UX:
-// a small "Updating…" hint + a dimmed chooser + a temporarily-locked Checkout button — engaged ONLY if
-// the work outlasts a flicker threshold, and ALWAYS cleared on every terminal outcome (plus a safety
-// timeout) so Checkout can never get stuck. Authoritative: pending only means "work in progress"; the
-// real gift/price always comes from the confirmed cart/validate, never a fake.
+// a spinner by the chooser heading, the chooser cards AND the in-cart gift line(s) dimmed, and the
+// theme Checkout button dimmed + locked + showing a spinner + "Updating…". Engaged ONLY if the work
+// outlasts a flicker threshold, and ALWAYS cleared on every terminal outcome (plus a safety timeout)
+// so Checkout can never get stuck. Authoritative: pending only means "work in progress"; the real
+// gift/price always comes from the confirmed cart/validate, never a fake.
 
 export const PENDING_DELAY_MS = 350; // don't engage for fast reconciles (anti-flicker)
 export const PENDING_MAX_MS = 8000; // safety: never trap the shopper from paying
-
-// Chooser hint copy. First load (no confirmed /validate result yet) reads "Loading…"; an update to an
-// already-known state reads "Updating…". Pure + unit-tested.
-export function pendingHint(hasConfirmedResult: boolean): string {
-  return hasConfirmedResult ? 'Updating your free gift…' : 'Loading your free gift…';
-}
 
 // Theme Checkout buttons (drawer + /cart), resilient across Dawn-like themes.
 const CHECKOUT_SELECTORS = [
@@ -24,13 +19,13 @@ const CHECKOUT_SELECTORS = [
   '.cart__checkout-button',
 ];
 const CHECKOUT_LOCK_CLASS = 'fge-checkout-pending';
+const ROW_DIM_CLASS = 'fge-gift-row-dim';
 
-// Lock/unlock Checkout while a gift reconcile is in progress, covering BOTH the drawer and /cart.
-// The body class is the DURABLE lock (CSS pointer-events:none + dim) — it survives the theme
-// re-rendering its footer; setting disabled/aria-disabled on the found buttons is a best-effort
-// keyboard block. Degrades safely: if no Checkout button exists (other theme) the body class is a
-// harmless no-op. Never throws. The realistic bypass (a keyboard activation between footer re-renders)
-// is non-critical — it can only mean "no gift yet", never a wrong charge or a leak.
+// Lock/unlock Checkout while a gift reconcile is in progress, covering BOTH the drawer and /cart. The
+// body class is the DURABLE lock + spinner/label overlay (all CSS — see styles.ts), so it survives the
+// theme re-rendering its footer AND restores the original "Check out" label exactly when removed (no
+// innerHTML save/restore to get wrong). Setting disabled/aria-disabled is a best-effort keyboard block.
+// Degrades safely: no Checkout button -> the body class is a harmless no-op. Never throws.
 export function setCheckoutLocked(locked: boolean): void {
   const doc = (globalThis as { document?: Document }).document;
   if (doc === undefined) {
@@ -44,6 +39,52 @@ export function setCheckoutLocked(locked: boolean): void {
     } else {
       el.removeAttribute('aria-disabled');
       (el as { disabled?: boolean }).disabled = false;
+    }
+  }
+}
+
+// Pure: of the WANTED gift variant ids, which can we CONFIDENTLY map to a single cart row? A variant
+// that appears on exactly one row is unambiguous; a variant with 0 rows (not in cart yet) or >1 rows
+// (e.g. a paid duplicate alongside the gift) is skipped, so we never dim a qualifying/paid row.
+export function confidentDimVariants(
+  rowVariantIds: readonly string[],
+  wanted: readonly string[],
+): string[] {
+  const counts = new Map<string, number>();
+  for (const id of rowVariantIds) {
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return wanted.filter((id) => counts.get(id) === 1);
+}
+
+// Dim ONLY the in-cart gift line(s) for the given gift variant ids (numeric, matching the row's
+// data-quantity-variant-id), in both the drawer and /cart. Visual only — toggles a class, never mutates
+// cart data. Clears any prior dim first (idempotent / re-applyable on re-render). Confident rows only
+// (see confidentDimVariants); a row we can't confidently identify is left untouched. Never throws.
+export function dimGiftRows(wantedNumericIds: readonly string[], dim: boolean): void {
+  const doc = (globalThis as { document?: Document }).document;
+  if (doc === undefined) {
+    return;
+  }
+  for (const el of Array.from(doc.querySelectorAll('.' + ROW_DIM_CLASS))) {
+    el.classList.remove(ROW_DIM_CLASS);
+  }
+  if (!dim || wantedNumericIds.length === 0) {
+    return;
+  }
+  const rows = Array.from(doc.querySelectorAll('[data-quantity-variant-id]'));
+  const confident = new Set(
+    confidentDimVariants(
+      rows.map((r) => r.getAttribute('data-quantity-variant-id') ?? ''),
+      wantedNumericIds,
+    ),
+  );
+  if (confident.size === 0) {
+    return;
+  }
+  for (const r of rows) {
+    if (confident.has(r.getAttribute('data-quantity-variant-id') ?? '')) {
+      (r.closest('.cart-item') ?? r).classList.add(ROW_DIM_CLASS);
     }
   }
 }

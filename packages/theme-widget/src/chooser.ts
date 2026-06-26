@@ -115,7 +115,7 @@ export function renderChooser(
   state: ChooserState,
   handlers: ChooserHandlers,
   currentTierId: string | null,
-  pending?: { readonly active: boolean; readonly message: string },
+  pending = false,
 ): void {
   mount.textContent = '';
   const model = buildChooserModel(config, state);
@@ -125,18 +125,20 @@ export function renderChooser(
   const root = document.createElement('div');
   root.className = 'fge-gift';
 
-  // Pending (a gift reconcile is in progress): dim the cards (CSS .is-pending) and show a small hint,
-  // so the current selection reads as "in progress", not final. Authoritative — this is only a
-  // work-in-progress signal; the real gift state still comes from the confirmed cart/validate.
-  if (pending?.active) {
+  // Pending (a gift reconcile is in progress): dim the cards/chips (CSS .is-pending) and show a small
+  // spinner next to the heading, so the current selection reads as "in progress", not final. No text
+  // line in the body — the message lives on the Checkout button. Authoritative: only a work-in-progress
+  // signal; the real gift state still comes from the confirmed cart/validate.
+  if (pending) {
     root.classList.add('is-pending');
-    const note = document.createElement('p');
-    note.className = 'fge-gift__pending';
-    note.textContent = pending.message;
-    root.append(note);
   }
 
   renderGiftSection(root, model, currentTierId, handlers);
+
+  if (pending) {
+    const title = root.querySelector('.fge-gift__title');
+    title?.append(spinner()); // spinner beside "Your free gift" / "Choose your free gift"
+  }
 
   // The decline checkbox is PERSISTENT: it renders in EVERY state (declined, below-threshold, or a
   // gift shown) so the shopper can always re-add a gift they removed. Only the gift section above
@@ -145,6 +147,14 @@ export function renderChooser(
     root.append(renderDecline(model.declined, handlers));
   }
   mount.append(root);
+}
+
+// A small neutral loading spinner (CSS-animated) for the chooser heading during pending.
+function spinner(): HTMLElement {
+  const s = document.createElement('span');
+  s.className = 'fge-spinner';
+  s.setAttribute('aria-hidden', 'true');
+  return s;
 }
 
 // The state-reflecting gift section (above the persistent decline checkbox).

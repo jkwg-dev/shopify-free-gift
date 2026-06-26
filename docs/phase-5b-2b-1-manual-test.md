@@ -293,3 +293,22 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 | P9  | Authoritative           | Pending never shows a fake gift/price — the real gift/price always comes from the confirmed cart                                         |
 | P10 | Both surfaces           | Pending hint + dim + Checkout lock work in BOTH the drawer and the /cart page                                                            |
 | P11 | Resilient               | On a theme with no findable Checkout button, pending still shows hint/dim and does NOT error (Checkout just isn't locked)                |
+
+## Round 15 checks (pending UX rework) — heading spinner, in-cart dim, button loader
+
+> Display only; reconcile/BXGY/leak guards/tiers/step-2/step-3a unchanged. Redeploy the theme widget.
+
+| #   | Check                      | Expected                                                                                                                       |
+| --- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Q1  | Heading spinner            | During pending, a small neutral spinner shows next to "Your free gift" / "Choose your free gift"                               |
+| Q2  | No body text line          | The old "Updating your free gift…" text line is GONE from the chooser body                                                     |
+| Q3  | Chooser cards dim          | The chooser cards/chips dim to ~0.5; decline checkbox stays full opacity/usable                                                |
+| Q4  | In-cart gift row dim       | The $0 gift line(s) in the cart list also dim to ~0.5                                                                          |
+| Q5  | Paid rows untouched        | Qualifying/paid cart rows are NEVER dimmed; a gift variant also bought paid (2 rows) is skipped, not mis-dimmed                |
+| Q6  | Row dim survives re-render | The in-cart gift-row dim re-applies after the list re-renders mid-pending                                                      |
+| Q7  | Button loader              | The Checkout button (drawer + /cart) is dimmed + locked and shows a spinner + "Updating your free gift…" in place of its label |
+| Q8  | Reliable restore           | On completion the "Check out" label returns exactly; spinner/text/dim/lock all clear (success)                                 |
+| Q9  | Never stuck                | Restore also happens on error/422 and the ~8s safety timeout — button never stuck on "Updating…"                               |
+| Q10 | No flicker                 | Fast same-tier/code-only changes don't flash any of the spinner/dim/button states (~350ms threshold)                           |
+| Q11 | Both surfaces              | All of the above work in BOTH the drawer and the /cart page                                                                    |
+| Q12 | Resilient                  | If no Checkout button is found, no error; heading spinner + dims still work                                                    |

@@ -362,7 +362,7 @@
     });
     return { declineEnabled: config.declineEnabled, declined: state.declined, tiers };
   }
-  function renderChooser(mount, config, state, handlers, currentTierId, pending2) {
+  function renderChooser(mount, config, state, handlers, currentTierId, pending2 = false) {
     mount.textContent = "";
     const model = buildChooserModel(config, state);
     if (model === null) {
@@ -370,18 +370,24 @@
     }
     const root2 = document.createElement("div");
     root2.className = "fge-gift";
-    if (pending2 == null ? void 0 : pending2.active) {
+    if (pending2) {
       root2.classList.add("is-pending");
-      const note = document.createElement("p");
-      note.className = "fge-gift__pending";
-      note.textContent = pending2.message;
-      root2.append(note);
     }
     renderGiftSection(root2, model, currentTierId, handlers);
+    if (pending2) {
+      const title = root2.querySelector(".fge-gift__title");
+      title == null ? void 0 : title.append(spinner());
+    }
     if (model.declineEnabled) {
       root2.append(renderDecline(model.declined, handlers));
     }
     mount.append(root2);
+  }
+  function spinner() {
+    const s = document.createElement("span");
+    s.className = "fge-spinner";
+    s.setAttribute("aria-hidden", "true");
+    return s;
   }
   function renderGiftSection(root2, model, currentTierId, handlers) {
     if (model.declined) {
@@ -595,9 +601,6 @@
   // src/pending.ts
   var PENDING_DELAY_MS = 350;
   var PENDING_MAX_MS = 8e3;
-  function pendingHint(hasConfirmedResult) {
-    return hasConfirmedResult ? "Updating your free gift\u2026" : "Loading your free gift\u2026";
-  }
   var CHECKOUT_SELECTORS = [
     "#CartDrawer-Checkout",
     "#checkout",
@@ -606,6 +609,7 @@
     ".cart__checkout-button"
   ];
   var CHECKOUT_LOCK_CLASS = "fge-checkout-pending";
+  var ROW_DIM_CLASS = "fge-gift-row-dim";
   function setCheckoutLocked(locked) {
     var _a2;
     const doc = globalThis.document;
@@ -620,6 +624,45 @@
       } else {
         el.removeAttribute("aria-disabled");
         el.disabled = false;
+      }
+    }
+  }
+  function confidentDimVariants(rowVariantIds, wanted) {
+    var _a2;
+    const counts = /* @__PURE__ */ new Map();
+    for (const id of rowVariantIds) {
+      counts.set(id, ((_a2 = counts.get(id)) != null ? _a2 : 0) + 1);
+    }
+    return wanted.filter((id) => counts.get(id) === 1);
+  }
+  function dimGiftRows(wantedNumericIds, dim) {
+    var _a2, _b2;
+    const doc = globalThis.document;
+    if (doc === void 0) {
+      return;
+    }
+    for (const el of Array.from(doc.querySelectorAll("." + ROW_DIM_CLASS))) {
+      el.classList.remove(ROW_DIM_CLASS);
+    }
+    if (!dim || wantedNumericIds.length === 0) {
+      return;
+    }
+    const rows = Array.from(doc.querySelectorAll("[data-quantity-variant-id]"));
+    const confident = new Set(
+      confidentDimVariants(
+        rows.map((r) => {
+          var _a3;
+          return (_a3 = r.getAttribute("data-quantity-variant-id")) != null ? _a3 : "";
+        }),
+        wantedNumericIds
+      )
+    );
+    if (confident.size === 0) {
+      return;
+    }
+    for (const r of rows) {
+      if (confident.has((_a2 = r.getAttribute("data-quantity-variant-id")) != null ? _a2 : "")) {
+        ((_b2 = r.closest(".cart-item")) != null ? _b2 : r).classList.add(ROW_DIM_CLASS);
       }
     }
   }
@@ -1001,11 +1044,23 @@ cart-drawer .title--primary,
 
 .fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#8a8a8a; }
 
-/* Pending (a gift reconcile is in progress): a small hint + dimmed cards/chips. The hint and the
-   decline control stay full-opacity (the decline is still usable); only the gift selection dims. */
-.fge-gift__pending{ margin:0 0 10px; font-size:12px; color:var(--fge-muted); }
+/* Pending (a gift reconcile is in progress): dim the cards/chips; the decline control stays
+   full-opacity (still usable). The message lives on the Checkout button; the chooser shows a spinner
+   next to its heading instead of a text line. */
 .fge-gift.is-pending .fge-card,
 .fge-gift.is-pending .fge-variants{ opacity:.5; transition:opacity .2s ease; }
+
+/* Small neutral spinner (chooser heading + the Checkout button overlay reuse the same keyframes). */
+.fge-spinner{
+  display:inline-block; width:13px; height:13px; margin-left:8px; vertical-align:-2px;
+  border:2px solid var(--fge-line); border-top-color:var(--fge-ink); border-radius:50%;
+  animation:fge-spin .7s linear infinite;
+}
+@keyframes fge-spin{ to{ transform:rotate(360deg); } }
+
+/* Dim the in-cart gift line(s) during pending (applied by JS to confidently-identified gift rows
+   only \u2014 never the qualifying/paid rows). Visual only; cleared when pending ends. */
+.fge-gift-row-dim{ opacity:.5 !important; transition:opacity .2s ease; }
 
 .fge-decline{
   display:flex; align-items:center; gap:8px; margin:12px 0 0; padding-top:11px;
@@ -1013,20 +1068,41 @@ cart-drawer .title--primary,
 }
 .fge-decline input{ accent-color:var(--fge-brand); width:16px; height:16px; }
 
-/* THEME-OVERRIDE: lock the theme's Checkout button (drawer + /cart) while a gift reconcile is in
-   progress, so the shopper can't pay before the gift is confirmed at $0. Body-class scoped so it
-   survives the theme re-rendering its footer; pointer-events:none blocks the (mouse) click vector.
+/* THEME-OVERRIDE: lock + load the theme's Checkout button (drawer + /cart) while a gift reconcile is
+   in progress, so the shopper can't pay before the gift is confirmed at $0, and the button itself
+   explains why. ALL via the body class (no innerHTML swap), so it survives the theme re-rendering its
+   footer AND restores the original "Check out" label exactly when the class is removed. The original
+   label is hidden (color:transparent) and a spinner (::before) + message (::after) overlay it.
    Cleared on every terminal outcome + a safety timeout, so Checkout can never get stuck. */
 body.fge-checkout-pending #CartDrawer-Checkout,
 body.fge-checkout-pending #checkout,
 body.fge-checkout-pending [name="checkout"],
 body.fge-checkout-pending .cart__checkout-button{
-  pointer-events:none !important; opacity:.55 !important; cursor:not-allowed !important;
+  pointer-events:none !important; cursor:not-allowed !important; opacity:.7 !important;
+  position:relative !important; color:transparent !important;
+}
+body.fge-checkout-pending #CartDrawer-Checkout::before,
+body.fge-checkout-pending #checkout::before,
+body.fge-checkout-pending [name="checkout"]::before,
+body.fge-checkout-pending .cart__checkout-button::before{
+  content:""; position:absolute; top:50%; left:18px; width:15px; height:15px;
+  border:2px solid rgba(255,255,255,.45); border-top-color:#fff; border-radius:50%;
+  transform:translateY(-50%); animation:fge-spin .7s linear infinite;
+}
+body.fge-checkout-pending #CartDrawer-Checkout::after,
+body.fge-checkout-pending #checkout::after,
+body.fge-checkout-pending [name="checkout"]::after,
+body.fge-checkout-pending .cart__checkout-button::after{
+  content:"Updating your free gift\u2026"; position:absolute; inset:0; display:flex;
+  align-items:center; justify-content:center; color:#fff; font-size:13px;
+  letter-spacing:normal; text-transform:none;
 }
 
 @media (prefers-reduced-motion: reduce){
   .fge-stepper__fill, .fge-step, .fge-step__dot, .fge-gift.is-pending .fge-card,
-  .fge-gift.is-pending .fge-variants{ transition:none; }
+  .fge-gift.is-pending .fge-variants, .fge-gift-row-dim{ transition:none; }
+  .fge-spinner,
+  body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
 `;
   function injectStyles() {
@@ -1102,6 +1178,14 @@ body.fge-checkout-pending .cart__checkout-button{
   var giftPendingEngageTimer;
   var giftPendingSafetyTimer;
   var perceptionConfig = null;
+  var cartDimObserver = null;
+  var CART_DIM_CONTAINERS = [
+    "cart-drawer-items",
+    "#CartDrawer-CartItems",
+    ".drawer__contents",
+    "#main-cart-items",
+    ".cart-items"
+  ];
   var cartPost = (path, body) => fetch(`${root}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -1179,6 +1263,8 @@ body.fge-checkout-pending .cart__checkout-button{
       giftPendingEngageTimer = void 0;
       giftPendingActive = true;
       setCheckoutLocked(true);
+      applyCartRowDim(true);
+      startCartDimObserver();
       if (perceptionConfig !== null) {
         renderPerception(perceptionConfig);
       }
@@ -1196,11 +1282,40 @@ body.fge-checkout-pending .cart__checkout-button{
     }
     if (giftPendingActive) {
       giftPendingActive = false;
+      stopCartDimObserver();
+      applyCartRowDim(false);
       setCheckoutLocked(false);
       if (perceptionConfig !== null) {
         renderPerception(perceptionConfig);
       }
     }
+  }
+  function giftRowNumericIds() {
+    if ((lastResult == null ? void 0 : lastResult.status) !== "gift") {
+      return [];
+    }
+    return lastResult.giftVariantIds.map((g) => {
+      var _a2;
+      return (_a2 = g.split("/").pop()) != null ? _a2 : "";
+    }).filter((s) => s.length > 0);
+  }
+  function applyCartRowDim(active) {
+    dimGiftRows(active ? giftRowNumericIds() : [], active);
+  }
+  function startCartDimObserver() {
+    if (cartDimObserver !== null || typeof MutationObserver === "undefined") {
+      return;
+    }
+    cartDimObserver = new MutationObserver(() => applyCartRowDim(true));
+    for (const sel of CART_DIM_CONTAINERS) {
+      for (const el of Array.from(document.querySelectorAll(sel))) {
+        cartDimObserver.observe(el, { childList: true, subtree: true });
+      }
+    }
+  }
+  function stopCartDimObserver() {
+    cartDimObserver == null ? void 0 : cartDimObserver.disconnect();
+    cartDimObserver = null;
   }
   function renderSteppers() {
     if (campaignConfig === null || sections.length === 0) {
@@ -1218,7 +1333,6 @@ body.fge-checkout-pending .cart__checkout-button{
     }
     const currentTierId = (lastResult == null ? void 0 : lastResult.status) === "gift" ? lastResult.tierId : null;
     const model = buildProgressModel(campaignConfig, lastResult);
-    const pending2 = giftPendingActive ? { active: true, message: pendingHint(lastResult !== null) } : void 0;
     const handlers = {
       onChoose: (tierId, optionId) => {
         choiceState = { ...choiceState, [tierId]: optionId };
@@ -1239,7 +1353,7 @@ body.fge-checkout-pending .cart__checkout-button{
         { choices: choiceState, declined, unavailableVariantIds },
         handlers,
         currentTierId,
-        pending2
+        giftPendingActive
       );
       section.attach();
     }
