@@ -1,17 +1,21 @@
-// Cart-drawer overlay mount (Phase 5b-2b-1). The perception UI (graph + chooser) is mounted on
-// document.body — OUTSIDE the drawer's re-rendered subtree — so it SURVIVES the theme replacing the
-// drawer's inner HTML on every cart change (Dawn's Sections-API render wipes `.drawer__inner`). It is
-// positioned over the open drawer and shown/hidden with it, above the backdrop (clickable).
+// Cart-drawer overlay mount + gift-line hiding (Phase 5b-2b-1). The perception UI (graph + chooser)
+// is mounted on document.body — OUTSIDE the drawer's re-rendered subtree — so it SURVIVES the theme
+// replacing the drawer's inner HTML on every cart change (Dawn's Sections-API render wipes
+// `.drawer__inner`). It is positioned over the open drawer (opaque card), above the backdrop.
 //
-// PORTABLE: the drawer element + its "open" signal are detected with resilient defaults and can be
-// overridden per theme via data attributes (no dependency on inner markup). Dawn assumption: the
-// `<cart-drawer>` element toggles the `active` class on open/close.
+// It also HIDES the app-added gift line(s) from the drawer's product list (visual only — the line
+// still EXISTS in the cart so the gift ships at $0): the gift appears only in our panel. Re-applied on
+// every drawer re-render. The hiding logic is resilient (match per-line by index+variant, else a
+// unique variant row, else DON'T hide) so it can't hide the wrong row on a different theme.
 //
-// Pure DOM glue — manual-tested. No business logic here.
+// PORTABLE: drawer element + open signal are detected with resilient defaults and overridable via data
+// attributes. Dawn assumption: <cart-drawer> toggles `active`; rows are `#CartDrawer-Item-{index}`
+// with a `[data-quantity-variant-id]`.
+import { GIFT_LINE_PROPERTY } from '@free-gift-engine/core';
 
-const OVERLAY_Z = 2147482000; // above the drawer + its backdrop, below nothing that matters
+const OVERLAY_Z = 2147482000; // above the drawer + its backdrop
+const GUTTER = 10;
 
-// Resilient drawer-element candidates (most specific first). Override with data-drawer-selector.
 const DRAWER_SELECTORS = [
   'cart-drawer',
   '#CartDrawer',
@@ -20,24 +24,45 @@ const DRAWER_SELECTORS = [
   '.drawer--cart',
   'cart-notification',
 ];
-
-// Panel (the visible card) within the drawer, to align the overlay to. Falls back to the drawer.
 const PANEL_SELECTORS = ['.drawer__inner', '.cart-drawer__inner', '[role="dialog"]'];
-
-// NOTE: Dawn's close() removes only `active` (it leaves `animate` on), so `animate` is NOT an
-// open signal — using it would keep the overlay visible after close. The open signal is `active`.
+const ROW_SELECTORS = 'tr, li, .cart-item, [class*="cart-item" i]';
+// Dawn's close() removes only `active` (leaves `animate`), so `animate` is NOT an open signal.
 const OPEN_CLASSES = ['active', 'is-open', 'open', 'drawer--active'];
+
+// --- pure: which cart lines are app-added gift lines (1-based index + variant id), for hiding -----
+
+export type CartItemLike = {
+  readonly variant_id: number;
+  readonly properties: Readonly<Record<string, unknown>> | null;
+};
+export type GiftRowTarget = { readonly index1: number; readonly variantId: number };
+
+// The gift lines to hide: each carries its 1-based position (the drawer renders rows in cart order)
+// and its variant id, so the DOM can target the exact row (not every row of that variant — a paid
+// duplicate of a gift variant stays visible).
+export function giftRowTargets(items: readonly CartItemLike[]): GiftRowTarget[] {
+  const targets: GiftRowTarget[] = [];
+  items.forEach((item, i) => {
+    if (item.properties != null && item.properties[GIFT_LINE_PROPERTY] != null) {
+      targets.push({ index1: i + 1, variantId: item.variant_id });
+    }
+  });
+  return targets;
+}
+
+// --- DOM ----------------------------------------------------------------------------------------
 
 export type DrawerMountOptions = {
   readonly drawerSelector?: string | undefined;
   readonly openClass?: string | undefined;
+  // Called after the drawer opens or re-renders (rows changed) — the storefront re-hides gift rows.
+  readonly onRender?: (() => void) | undefined;
 };
 
 export type DrawerMount = {
-  // Render the perception UI into this element.
-  readonly container: HTMLElement;
-  // Re-evaluate open state + re-position (call after a cart change / our reconcile).
-  refresh(): void;
+  readonly container: HTMLElement; // render the perception UI here
+  readonly drawerEl: HTMLElement | null; // the detected drawer (for row hiding); null if none
+  refresh(): void; // reposition + show/hide (call after a render)
 };
 
 function findDrawer(selectorOverride?: string): HTMLElement | null {
@@ -61,8 +86,42 @@ function isOpen(drawer: HTMLElement, openClassOverride?: string): boolean {
   if (drawer.getAttribute('aria-hidden') === 'false') {
     return true;
   }
-  // Last resort: visible + on-screen (has layout box).
   return drawer.offsetParent !== null && drawer.getBoundingClientRect().width > 0;
+}
+
+function rowHasVariant(row: HTMLElement, variantId: number): boolean {
+  return (
+    row.querySelector(`[data-quantity-variant-id="${variantId}"]`) !== null ||
+    row.getAttribute('data-variant-id') === String(variantId)
+  );
+}
+
+// Visually hide the gift line rows (display:none). VISUAL ONLY — never mutates cart data, never
+// touches non-gift rows. Per-line precise (index + variant); falls back to a uniquely-identified
+// variant row; otherwise leaves the row visible (safe on unknown themes).
+export function hideGiftLineRows(drawer: HTMLElement, targets: readonly GiftRowTarget[]): void {
+  for (const t of targets) {
+    const byIndex =
+      drawer.querySelector<HTMLElement>(`#CartDrawer-Item-${t.index1}`) ??
+      drawer
+        .querySelector<HTMLElement>(`[data-index="${t.index1}"]`)
+        ?.closest<HTMLElement>(ROW_SELECTORS) ??
+      null;
+    if (byIndex !== null && rowHasVariant(byIndex, t.variantId)) {
+      byIndex.style.display = 'none';
+      continue;
+    }
+    const byVariant = Array.from(
+      drawer.querySelectorAll<HTMLElement>(`[data-quantity-variant-id="${t.variantId}"]`),
+    );
+    if (byVariant.length === 1) {
+      const row = byVariant[0]!.closest<HTMLElement>(ROW_SELECTORS);
+      if (row !== null) {
+        row.style.display = 'none';
+      }
+    }
+    // else: cannot confidently identify the single gift row -> do NOT hide (safe)
+  }
 }
 
 export function mountDrawerOverlay(opts: DrawerMountOptions = {}): DrawerMount {
@@ -70,61 +129,76 @@ export function mountDrawerOverlay(opts: DrawerMountOptions = {}): DrawerMount {
   overlay.setAttribute('data-fge-overlay', '');
   overlay.style.cssText = `position:fixed;z-index:${OVERLAY_Z};display:none;box-sizing:border-box;`;
   const container = document.createElement('div');
-  container.setAttribute('data-fge-chooser', ''); // perception UI mounts here
+  container.setAttribute('data-fge-chooser', '');
   overlay.append(container);
   document.body.append(overlay);
 
   const drawer = findDrawer(opts.drawerSelector);
 
+  const panelOf = (): HTMLElement | null =>
+    drawer === null
+      ? null
+      : (PANEL_SELECTORS.map((s) => drawer.querySelector<HTMLElement>(s)).find(
+          (el) => el !== null,
+        ) ?? drawer);
+
   const position = (): void => {
     if (drawer === null) {
-      // Fallback (no drawer found — e.g. cart page or an unknown theme): show as a fixed bottom
-      // panel so it's at least visible/clickable. Set data-drawer-selector for proper placement.
       overlay.style.cssText =
         `position:fixed;z-index:${OVERLAY_Z};left:0;right:0;bottom:0;display:block;` +
         `box-sizing:border-box;max-height:50vh;overflow:auto;`;
       return;
     }
-    const panel = (PANEL_SELECTORS.map((s) => drawer.querySelector<HTMLElement>(s)).find(
-      (el) => el !== null,
-    ) ?? drawer) as HTMLElement;
+    const panel = panelOf() as HTMLElement;
     const r = panel.getBoundingClientRect();
-    const gutter = 10;
-    // A contained card pinned to the TOP of the drawer panel: opaque (CSS), inset by a gutter, and
-    // capped at ~70% of the panel height (scrolls internally) so the cart items + checkout below stay
-    // visible and usable — never covers the whole drawer (no trap), never bleeds through (opaque bg).
+    // Contained opaque card at the TOP of the drawer panel, capped so the cart stays usable below.
     overlay.style.display = 'block';
-    overlay.style.left = `${r.left + gutter}px`;
-    overlay.style.top = `${r.top + gutter}px`;
-    overlay.style.width = `${Math.max(0, r.width - gutter * 2)}px`;
-    overlay.style.maxHeight = `${Math.max(160, Math.round(r.height * 0.7))}px`;
+    overlay.style.left = `${r.left + GUTTER}px`;
+    overlay.style.top = `${r.top + GUTTER}px`;
+    overlay.style.width = `${Math.max(0, r.width - GUTTER * 2)}px`;
+    overlay.style.maxHeight = `${Math.max(160, Math.round(r.height * 0.62))}px`;
     overlay.style.overflow = 'auto';
+    // RESERVE space so the cart content flows BELOW the card (no overlap/bleed at the card's edge).
+    // padding-top on the panel = the card's height + gutters; recomputed each position().
+    panel.style.paddingTop = `${overlay.offsetHeight + GUTTER * 2}px`;
   };
 
   const refresh = (): void => {
     if (drawer === null) {
-      position(); // fallback panel is always shown
+      position();
       return;
     }
     if (isOpen(drawer, opts.openClass)) {
-      overlay.style.display = 'block';
       position();
     } else {
       overlay.style.display = 'none';
     }
   };
 
+  // refresh + notify the storefront to re-hide gift rows (rows changed). Debounced — a re-render emits
+  // many mutations.
+  let tick: ReturnType<typeof setTimeout> | undefined;
+  const renderTick = (): void => {
+    if (tick !== undefined) clearTimeout(tick);
+    tick = setTimeout(() => {
+      refresh();
+      opts.onRender?.();
+    }, 40);
+  };
+
   if (drawer !== null) {
-    // React to the theme toggling the open class / aria on the drawer element (it persists across
-    // the inner re-render, so this observer keeps working).
-    new MutationObserver(refresh).observe(drawer, {
+    // Open/close: the <cart-drawer> element's own class/aria (it persists across inner re-render).
+    new MutationObserver(renderTick).observe(drawer, {
       attributes: true,
-      attributeFilter: ['class', 'style', 'aria-hidden'],
+      attributeFilter: ['class', 'aria-hidden'],
     });
+    // Inner re-render: the theme replaces row HTML (childList in the subtree). NOT attributes, so our
+    // own display:none / padding writes don't retrigger it (no loop).
+    new MutationObserver(renderTick).observe(drawer, { childList: true, subtree: true });
   }
   window.addEventListener('resize', refresh, { passive: true });
   window.addEventListener('scroll', refresh, { passive: true });
-  refresh();
+  renderTick();
 
-  return { container, refresh };
+  return { container, drawerEl: drawer, refresh };
 }

@@ -14,7 +14,12 @@ import {
   type ValidateRequest,
   type ValidateResult,
 } from '@free-gift-engine/core';
-import { mountDrawerOverlay, type DrawerMount } from './cartDrawer.js';
+import {
+  mountDrawerOverlay,
+  hideGiftLineRows,
+  giftRowTargets,
+  type DrawerMount,
+} from './cartDrawer.js';
 import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
@@ -220,6 +225,18 @@ function schedule(config: WidgetConfig): void {
     });
 }
 
+// Hide the app-added gift line(s) from the drawer's product list so the gift shows ONLY in our panel.
+// VISUAL ONLY — the gift line stays in the cart (it carries the BXGY code → $0 and must ship). Re-reads
+// the live cart to know WHICH lines are gifts (the _fge_gift property isn't in the rendered markup),
+// then hides those rows precisely (cartDrawer falls back to NOT hiding if it can't identify them).
+async function hideGiftLinesInDrawer(): Promise<void> {
+  if (drawer?.drawerEl == null) {
+    return;
+  }
+  const cart = await getCart();
+  hideGiftLineRows(drawer.drawerEl, giftRowTargets(cart.items));
+}
+
 // Mount the drawer overlay (graph + chooser), fetch the campaign structure, and render. Best-effort:
 // if config is unavailable/inactive, the engine still reconciles (AND tiers need no choice).
 async function initPerception(config: WidgetConfig): Promise<void> {
@@ -229,6 +246,7 @@ async function initPerception(config: WidgetConfig): Promise<void> {
   drawer = mountDrawerOverlay({
     drawerSelector: config.drawerSelector,
     openClass: config.drawerOpenClass,
+    onRender: () => void hideGiftLinesInDrawer(),
   });
   graphEl = document.createElement('div');
   chooserEl = document.createElement('div');

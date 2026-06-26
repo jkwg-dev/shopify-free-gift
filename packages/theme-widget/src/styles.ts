@@ -1,21 +1,20 @@
-// Design tokens + component CSS for the free-gift drawer panel (Phase 5b-2b-1 polish). Injected once.
-// Direction: a calm, "evergreen reward" identity for a snowboard store's gift-with-purchase — green
-// progress (the trail to your gift) with a single muted-gold "reward" accent for the unlocked gift.
-// Restraint: inherit the theme's font (don't fight the storefront); carry hierarchy with weight,
-// letter-spacing and an uppercase eyebrow. Signature: the horizontal "trail" stepper. Quality floor:
-// opaque surfaces (no bleed-through), visible keyboard focus, reduced-motion respected.
+// Design tokens + component CSS for the free-gift drawer panel. Injected once.
+// Direction: a quiet MONOCHROME identity matching the theme's black/neutral look — black progress and
+// accents, no color. Restraint: inherit the theme's font (don't fight the storefront); carry hierarchy
+// with weight, letter-spacing and an uppercase eyebrow. Signature: the horizontal progress stepper.
+// Quality floor: opaque surfaces (no bleed-through), visible keyboard focus, reduced-motion respected.
 export const FGE_STYLE_ID = 'fge-styles';
 
 export const FGE_CSS = `
 [data-fge-overlay]{
-  --fge-ink:#16271d; --fge-muted:#5d6f63; --fge-surface:#ffffff; --fge-subtle:#f4f8f5;
-  --fge-line:#d8e3da; --fge-brand:#1f7a4d; --fge-brand-strong:#155f3a; --fge-gift:#b8862f;
+  --fge-ink:#111111; --fge-muted:#707070; --fge-surface:#ffffff; --fge-subtle:#f5f5f5;
+  --fge-line:#e3e3e3; --fge-brand:#111111; --fge-brand-strong:#000000;
   --fge-radius:14px; --fge-card-radius:10px;
   box-sizing:border-box; color:var(--fge-ink);
   font-family:inherit; line-height:1.35; -webkit-font-smoothing:antialiased;
   background:var(--fge-surface);
   border:1px solid var(--fge-line); border-radius:var(--fge-radius);
-  box-shadow:0 14px 38px rgba(20,39,30,.20);
+  box-shadow:0 14px 38px rgba(0,0,0,.18);
   padding:16px 16px 14px;
 }
 [data-fge-overlay] *{ box-sizing:border-box; }
@@ -25,10 +24,10 @@ export const FGE_CSS = `
   color:var(--fge-brand-strong);
 }
 .fge-headline{ margin:0 0 12px; font-size:15px; font-weight:650; color:var(--fge-ink); }
-.fge-headline .fge-amt{ color:var(--fge-brand-strong); }
+.fge-headline .fge-amt{ color:var(--fge-brand-strong); font-weight:750; }
 .fge-subnote{ margin:6px 0 0; font-size:11.5px; color:var(--fge-muted); }
 
-/* --- the trail stepper (signature) --- */
+/* --- the progress stepper (signature) --- */
 .fge-stepper{ position:relative; margin:14px 6px 30px; height:6px; }
 .fge-stepper__track{ position:absolute; inset:0; background:var(--fge-line); border-radius:999px; }
 .fge-stepper__fill{
@@ -42,8 +41,8 @@ export const FGE_CSS = `
 }
 .fge-step.is-reached .fge-step__dot{ background:var(--fge-brand); border-color:var(--fge-brand); }
 .fge-step.is-current .fge-step__dot{
-  background:var(--fge-gift); border-color:var(--fge-gift);
-  box-shadow:0 0 0 4px rgba(184,134,47,.22);
+  background:var(--fge-brand); border-color:var(--fge-brand);
+  box-shadow:0 0 0 4px rgba(17,17,17,.16);
 }
 .fge-step__label{
   position:absolute; top:16px; left:50%; transform:translateX(-50%);
@@ -62,23 +61,20 @@ export const FGE_CSS = `
   border-radius:var(--fge-card-radius); padding:8px 10px; margin:0 0 8px; cursor:pointer;
 }
 .fge-card:focus-within{ outline:2px solid var(--fge-brand); outline-offset:2px; }
-.fge-card.is-selected{ border-color:var(--fge-brand); background:#eef5f0; }
-.fge-card.is-unavailable{ opacity:.6; cursor:not-allowed; }
+.fge-card.is-selected{ border-color:var(--fge-brand); background:#f0f0f0; }
+.fge-card.is-unavailable{ opacity:.55; cursor:not-allowed; }
 .fge-card__radio{ accent-color:var(--fge-brand); width:16px; height:16px; flex:0 0 auto; }
 .fge-card__img{
   width:46px; height:46px; flex:0 0 auto; border-radius:8px; object-fit:cover;
-  background:#e7eee9; border:1px solid var(--fge-line);
+  background:#ececec; border:1px solid var(--fge-line);
 }
 .fge-card__body{ flex:1 1 auto; min-width:0; }
 .fge-card__name{ font-size:13px; font-weight:600; color:var(--fge-ink); }
 .fge-card__status{ font-size:11.5px; color:var(--fge-muted); margin-top:1px; }
-.fge-card__status.is-unlocked{ color:var(--fge-gift); font-weight:700; }
-.fge-card__status.is-unavailable{ color:#9a6a00; }
+.fge-card__status.is-unlocked{ color:var(--fge-ink); font-weight:700; }
+.fge-card__status.is-unavailable{ color:#8a8a8a; }
 
-.fge-bundle{ display:flex; align-items:center; gap:10px; }
-.fge-bundle .fge-plus{ color:var(--fge-muted); font-weight:700; }
-
-.fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#9a6a00; }
+.fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#8a8a8a; }
 
 .fge-decline{
   display:flex; align-items:center; gap:8px; margin:12px 0 0; padding-top:11px;

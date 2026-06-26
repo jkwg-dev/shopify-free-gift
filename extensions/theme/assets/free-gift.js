@@ -48,6 +48,7 @@
 
   // src/cartDrawer.ts
   var OVERLAY_Z = 2147482e3;
+  var GUTTER = 10;
   var DRAWER_SELECTORS = [
     "cart-drawer",
     "#CartDrawer",
@@ -57,7 +58,17 @@
     "cart-notification"
   ];
   var PANEL_SELECTORS = [".drawer__inner", ".cart-drawer__inner", '[role="dialog"]'];
+  var ROW_SELECTORS = 'tr, li, .cart-item, [class*="cart-item" i]';
   var OPEN_CLASSES = ["active", "is-open", "open", "drawer--active"];
+  function giftRowTargets(items) {
+    const targets = [];
+    items.forEach((item, i) => {
+      if (item.properties != null && item.properties[GIFT_LINE_PROPERTY] != null) {
+        targets.push({ index1: i + 1, variantId: item.variant_id });
+      }
+    });
+    return targets;
+  }
   function findDrawer(selectorOverride) {
     const selectors = selectorOverride ? [selectorOverride, ...DRAWER_SELECTORS] : DRAWER_SELECTORS;
     for (const sel of selectors) {
@@ -80,6 +91,28 @@
     }
     return drawer2.offsetParent !== null && drawer2.getBoundingClientRect().width > 0;
   }
+  function rowHasVariant(row, variantId) {
+    return row.querySelector(`[data-quantity-variant-id="${variantId}"]`) !== null || row.getAttribute("data-variant-id") === String(variantId);
+  }
+  function hideGiftLineRows(drawer2, targets) {
+    var _a2, _b2, _c2;
+    for (const t of targets) {
+      const byIndex = (_c2 = (_b2 = drawer2.querySelector(`#CartDrawer-Item-${t.index1}`)) != null ? _b2 : (_a2 = drawer2.querySelector(`[data-index="${t.index1}"]`)) == null ? void 0 : _a2.closest(ROW_SELECTORS)) != null ? _c2 : null;
+      if (byIndex !== null && rowHasVariant(byIndex, t.variantId)) {
+        byIndex.style.display = "none";
+        continue;
+      }
+      const byVariant = Array.from(
+        drawer2.querySelectorAll(`[data-quantity-variant-id="${t.variantId}"]`)
+      );
+      if (byVariant.length === 1) {
+        const row = byVariant[0].closest(ROW_SELECTORS);
+        if (row !== null) {
+          row.style.display = "none";
+        }
+      }
+    }
+  }
   function mountDrawerOverlay(opts = {}) {
     const overlay = document.createElement("div");
     overlay.setAttribute("data-fge-overlay", "");
@@ -89,23 +122,26 @@
     overlay.append(container);
     document.body.append(overlay);
     const drawer2 = findDrawer(opts.drawerSelector);
-    const position = () => {
+    const panelOf = () => {
       var _a2;
+      return drawer2 === null ? null : (_a2 = PANEL_SELECTORS.map((s) => drawer2.querySelector(s)).find(
+        (el) => el !== null
+      )) != null ? _a2 : drawer2;
+    };
+    const position = () => {
       if (drawer2 === null) {
         overlay.style.cssText = `position:fixed;z-index:${OVERLAY_Z};left:0;right:0;bottom:0;display:block;box-sizing:border-box;max-height:50vh;overflow:auto;`;
         return;
       }
-      const panel = (_a2 = PANEL_SELECTORS.map((s) => drawer2.querySelector(s)).find(
-        (el) => el !== null
-      )) != null ? _a2 : drawer2;
+      const panel = panelOf();
       const r = panel.getBoundingClientRect();
-      const gutter = 10;
       overlay.style.display = "block";
-      overlay.style.left = `${r.left + gutter}px`;
-      overlay.style.top = `${r.top + gutter}px`;
-      overlay.style.width = `${Math.max(0, r.width - gutter * 2)}px`;
-      overlay.style.maxHeight = `${Math.max(160, Math.round(r.height * 0.7))}px`;
+      overlay.style.left = `${r.left + GUTTER}px`;
+      overlay.style.top = `${r.top + GUTTER}px`;
+      overlay.style.width = `${Math.max(0, r.width - GUTTER * 2)}px`;
+      overlay.style.maxHeight = `${Math.max(160, Math.round(r.height * 0.62))}px`;
       overlay.style.overflow = "auto";
+      panel.style.paddingTop = `${overlay.offsetHeight + GUTTER * 2}px`;
     };
     const refresh = () => {
       if (drawer2 === null) {
@@ -113,22 +149,31 @@
         return;
       }
       if (isOpen(drawer2, opts.openClass)) {
-        overlay.style.display = "block";
         position();
       } else {
         overlay.style.display = "none";
       }
     };
+    let tick;
+    const renderTick = () => {
+      if (tick !== void 0) clearTimeout(tick);
+      tick = setTimeout(() => {
+        var _a2;
+        refresh();
+        (_a2 = opts.onRender) == null ? void 0 : _a2.call(opts);
+      }, 40);
+    };
     if (drawer2 !== null) {
-      new MutationObserver(refresh).observe(drawer2, {
+      new MutationObserver(renderTick).observe(drawer2, {
         attributes: true,
-        attributeFilter: ["class", "style", "aria-hidden"]
+        attributeFilter: ["class", "aria-hidden"]
       });
+      new MutationObserver(renderTick).observe(drawer2, { childList: true, subtree: true });
     }
     window.addEventListener("resize", refresh, { passive: true });
     window.addEventListener("scroll", refresh, { passive: true });
-    refresh();
-    return { container, refresh };
+    renderTick();
+    return { container, drawerEl: drawer2, refresh };
   }
 
   // src/cartMutations.ts
@@ -576,14 +621,14 @@
   var FGE_STYLE_ID = "fge-styles";
   var FGE_CSS = `
 [data-fge-overlay]{
-  --fge-ink:#16271d; --fge-muted:#5d6f63; --fge-surface:#ffffff; --fge-subtle:#f4f8f5;
-  --fge-line:#d8e3da; --fge-brand:#1f7a4d; --fge-brand-strong:#155f3a; --fge-gift:#b8862f;
+  --fge-ink:#111111; --fge-muted:#707070; --fge-surface:#ffffff; --fge-subtle:#f5f5f5;
+  --fge-line:#e3e3e3; --fge-brand:#111111; --fge-brand-strong:#000000;
   --fge-radius:14px; --fge-card-radius:10px;
   box-sizing:border-box; color:var(--fge-ink);
   font-family:inherit; line-height:1.35; -webkit-font-smoothing:antialiased;
   background:var(--fge-surface);
   border:1px solid var(--fge-line); border-radius:var(--fge-radius);
-  box-shadow:0 14px 38px rgba(20,39,30,.20);
+  box-shadow:0 14px 38px rgba(0,0,0,.18);
   padding:16px 16px 14px;
 }
 [data-fge-overlay] *{ box-sizing:border-box; }
@@ -593,10 +638,10 @@
   color:var(--fge-brand-strong);
 }
 .fge-headline{ margin:0 0 12px; font-size:15px; font-weight:650; color:var(--fge-ink); }
-.fge-headline .fge-amt{ color:var(--fge-brand-strong); }
+.fge-headline .fge-amt{ color:var(--fge-brand-strong); font-weight:750; }
 .fge-subnote{ margin:6px 0 0; font-size:11.5px; color:var(--fge-muted); }
 
-/* --- the trail stepper (signature) --- */
+/* --- the progress stepper (signature) --- */
 .fge-stepper{ position:relative; margin:14px 6px 30px; height:6px; }
 .fge-stepper__track{ position:absolute; inset:0; background:var(--fge-line); border-radius:999px; }
 .fge-stepper__fill{
@@ -610,8 +655,8 @@
 }
 .fge-step.is-reached .fge-step__dot{ background:var(--fge-brand); border-color:var(--fge-brand); }
 .fge-step.is-current .fge-step__dot{
-  background:var(--fge-gift); border-color:var(--fge-gift);
-  box-shadow:0 0 0 4px rgba(184,134,47,.22);
+  background:var(--fge-brand); border-color:var(--fge-brand);
+  box-shadow:0 0 0 4px rgba(17,17,17,.16);
 }
 .fge-step__label{
   position:absolute; top:16px; left:50%; transform:translateX(-50%);
@@ -630,23 +675,20 @@
   border-radius:var(--fge-card-radius); padding:8px 10px; margin:0 0 8px; cursor:pointer;
 }
 .fge-card:focus-within{ outline:2px solid var(--fge-brand); outline-offset:2px; }
-.fge-card.is-selected{ border-color:var(--fge-brand); background:#eef5f0; }
-.fge-card.is-unavailable{ opacity:.6; cursor:not-allowed; }
+.fge-card.is-selected{ border-color:var(--fge-brand); background:#f0f0f0; }
+.fge-card.is-unavailable{ opacity:.55; cursor:not-allowed; }
 .fge-card__radio{ accent-color:var(--fge-brand); width:16px; height:16px; flex:0 0 auto; }
 .fge-card__img{
   width:46px; height:46px; flex:0 0 auto; border-radius:8px; object-fit:cover;
-  background:#e7eee9; border:1px solid var(--fge-line);
+  background:#ececec; border:1px solid var(--fge-line);
 }
 .fge-card__body{ flex:1 1 auto; min-width:0; }
 .fge-card__name{ font-size:13px; font-weight:600; color:var(--fge-ink); }
 .fge-card__status{ font-size:11.5px; color:var(--fge-muted); margin-top:1px; }
-.fge-card__status.is-unlocked{ color:var(--fge-gift); font-weight:700; }
-.fge-card__status.is-unavailable{ color:#9a6a00; }
+.fge-card__status.is-unlocked{ color:var(--fge-ink); font-weight:700; }
+.fge-card__status.is-unavailable{ color:#8a8a8a; }
 
-.fge-bundle{ display:flex; align-items:center; gap:10px; }
-.fge-bundle .fge-plus{ color:var(--fge-muted); font-weight:700; }
-
-.fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#9a6a00; }
+.fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#8a8a8a; }
 
 .fge-decline{
   display:flex; align-items:center; gap:8px; margin:12px 0 0; padding-top:11px;
@@ -834,11 +876,19 @@
       }
     });
   }
+  async function hideGiftLinesInDrawer() {
+    if ((drawer == null ? void 0 : drawer.drawerEl) == null) {
+      return;
+    }
+    const cart = await getCart();
+    hideGiftLineRows(drawer.drawerEl, giftRowTargets(cart.items));
+  }
   async function initPerception(config) {
     injectStyles();
     drawer = mountDrawerOverlay({
       drawerSelector: config.drawerSelector,
-      openClass: config.drawerOpenClass
+      openClass: config.drawerOpenClass,
+      onRender: () => void hideGiftLinesInDrawer()
     });
     graphEl = document.createElement("div");
     chooserEl = document.createElement("div");

@@ -67,3 +67,18 @@ is acceptable to defer). Then proceed to 5b-2b-2 (pending hint + delay + polish)
 If the panel's vertical placement needs tuning on the production theme, set `data-drawer-selector` /
 `data-drawer-open-class` on the app embed (no code change). The model-C question (gift also sold at
 full price) is recorded for a later task — see `docs/phase-5b-2b-plan.md`.
+
+## Round 2 checks (black palette + hide gift line + layout)
+
+| #   | Check               | Expected                                                                                                                                                                 |
+| --- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| R1  | Color               | Panel accents are **black/neutral** (progress fill, current-tier node, selected card, checkbox) — no green/gold                                                          |
+| R2  | Gift not duplicated | The gift appears **only in our panel**. The drawer's product list shows **only the qualifying/paid items** — the "$699.95 → $0.00" gift line is **hidden** from the list |
+| R3  | Gift still real     | Despite being hidden from the list, the gift line still EXISTS (carries the code → $0): **subtotal unchanged, $0 gift at checkout, order includes the gift**             |
+| R4  | Non-gift untouched  | Paid/qualifying lines are never hidden or altered; quantities preserved                                                                                                  |
+| R5  | Layout              | The panel is a clean opaque card; the cart items read as a **separate section below it** (no overlap/bleed at the card's lower edge); close + checkout usable            |
+| R6  | Survives re-render  | After add/remove/qty change, the gift line stays hidden and the panel stays correct (re-applied on re-render)                                                            |
+| R7  | Fallback safety     | If a gift row can't be confidently identified (other theme), it is **left visible** rather than hiding the wrong row                                                     |
+
+Hiding is VISUAL only (display:none on the gift row) — cart data, the BXGY code, subtotal and checkout
+are never touched. Model-C question remains recorded, not solved.
