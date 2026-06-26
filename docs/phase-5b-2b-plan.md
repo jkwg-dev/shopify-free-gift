@@ -56,6 +56,18 @@ Drawer re-render nudge (`publish('cart-update')`), flicker/race handling, mobile
 at `body` end under the backdrop — z-index/placement is 5b-2b), and **fresh-load stale-discount
 auto-clear** (seed `lastDiscount` from the cart's applied discount so a stale code is auto-cleared).
 
+> **Cosmetic: the qualifying line can SPLIT into two lines (accepted, not a bug — 5b-2a diagnosis).**
+> BXGY associates the code with the `customerBuys` (qualifying) units as a **zero-amount**
+> `discount_allocation` (prerequisite bookkeeping). `cart.js` groups line items by their full
+> attribute set incl. discount allocations, so when quantity changes Shopify re-allocates and the
+> qualifying line renders as units-with-allocation vs units-without (e.g. qty 4 → 1 + 3; qty 5 →
+> merged). It is purely DISPLAY: quantity is preserved (sum correct), the allocation amount is **0**
+> so the qualifying units stay **full price**, the gift line is unaffected, and the checkout total is
+> correct. It is **Shopify platform allocation**, not our widget — we apply the code only when it
+> CHANGES (never per qty edit; `reconcileLoop.ts` `codeNeedsChange`) and never touch the qualifying
+> line. Do NOT try to "fix" it by mutating the qualifying line. If the cart-drawer UI wants a tidy
+> view, it MAY visually group same-variant non-gift lines — presentation only.
+
 ## D. Latency reduction (assess, then optimize vs. mask)
 
 One Ice→Dawn switch is **5 serialized round-trips**: `GET cart.js` → `POST /validate` → `cart/change.js`
