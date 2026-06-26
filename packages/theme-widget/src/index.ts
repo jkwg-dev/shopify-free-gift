@@ -23,6 +23,13 @@ export {
   type GetConfigOptions,
 } from './configClient.js';
 export {
+  applyCartPlan,
+  type CartPost,
+  type PostResponse,
+  type CartMutationResult,
+  type CartMutationFailure,
+} from './cartMutations.js';
+export {
   renderChooser,
   buildChooserModel,
   type ChooserState,

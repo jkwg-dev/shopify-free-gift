@@ -14,6 +14,7 @@ import {
   type CartLineView,
   type ValidateRequest,
 } from '@free-gift-engine/core';
+import { applyCartPlan } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
@@ -47,7 +48,6 @@ const w = window as ThemeWindow;
 const root = w.Shopify?.routes?.root ?? '/';
 
 const toGid = (variantId: number): string => `gid://shopify/ProductVariant/${variantId}`;
-const toNumericId = (gid: string): number => Number(gid.split('/').pop());
 const isGiftLine = (item: AjaxCartItem): boolean =>
   item.properties != null && item.properties[GIFT_LINE_PROPERTY] != null;
 
@@ -82,12 +82,17 @@ let lastDiscount: string | null = null;
 let choiceState: Record<string, string> = {};
 let declined = false;
 
-async function postJson(path: string, body: unknown): Promise<void> {
-  await fetch(`${root}${path}`, {
+// Cart writer for applyCartPlan: POSTs JSON to an AJAX cart path and returns the raw Response (ok +
+// status + text), so add/remove failures (e.g. a 422 for an unpublished gift product) are surfaced.
+const cartPost = (path: string, body: unknown): Promise<Response> =>
+  fetch(`${root}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
   });
+
+async function postJson(path: string, body: unknown): Promise<void> {
+  await cartPost(path, body);
 }
 
 async function reconcileOnce(config: WidgetConfig): Promise<void> {
@@ -130,21 +135,9 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
 
   selfMutating = true;
   try {
-    // Remove stale app-added gift lines first (quantity 0 by line key), then add the resolved gifts.
-    for (const removal of plan.remove) {
-      await postJson('cart/change.js', { id: removal.id, quantity: 0 });
-    }
-    for (const addition of plan.add) {
-      await postJson('cart/add.js', {
-        items: [
-          {
-            id: toNumericId(addition.variantId),
-            quantity: addition.quantity,
-            properties: addition.properties,
-          },
-        ],
-      });
-    }
+    // Remove ALL undesired gift lines, then add ALL desired gifts in one cart/add.js (an AND tier
+    // adds both atomically; on a 422 it falls back per-item and surfaces the failure — fail-soft).
+    await applyCartPlan(plan, cartPost);
     // Apply or clear the discount via the Cart AJAX API (empty string clears).
     if (discountChanged) {
       await postJson('cart/update.js', { discount: plan.applyCode ?? '' });

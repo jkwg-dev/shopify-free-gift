@@ -148,6 +148,22 @@ On success it returns `{ collectionId, taggedProductIds, qualifyingProductCount,
 > (`gid://shopify/ProductVariant/44289298235501`) — a different product from every gift, so it stays
 > in scope. Verify this holds before minting.
 
+> **⚠️ Gift products MUST be published to the Online Store sales channel** (provisioning requirement
+> — confirmed live 5b-2a). The storefront `cart/add.js` rejects an unpublished product with **422**
+> even when inventory is fine (in stock, ACTIVE, `availableForSale: true`). This bit the AND tier:
+> The Hidden / Multi-location Snowboards were not channel-published, so adding them 422'd, while the
+> OR tier-1 product (Complete Snowboard) added fine because it was published. So every gift product
+> (OR **and** AND) must be channel-published to be cart-addable.
+>
+> - **Manual for now**; **when 3b wires `provisionGifts`, it must also ensure each gift product is
+>   published to the Online Store channel** (via `publishablePublish`), alongside tag + collection
+>   exclusion — else cart/add 422s on the storefront.
+> - **Tension to resolve in 3b:** channel-publishing a gift-only product makes it directly
+>   browsable/purchasable. Decide how real gift products stay hidden from search/collections (e.g. no
+>   collections, SEO/sitemap suppression, a "hidden" template) while remaining channel-published so
+>   cart/add works. (The widget is fail-soft as of 5b-2a: a 422 on one gift is surfaced + retried
+>   per-item so the publishable gifts still add — but the unpublished one won't appear until fixed.)
+
 ## Step 3 — verify, then PRINT (collection id + membership + tagged products)
 
 Before any mint, confirm and record all three:

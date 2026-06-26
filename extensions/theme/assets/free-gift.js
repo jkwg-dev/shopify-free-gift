@@ -21,6 +21,57 @@
     };
   }
 
+  // src/cartMutations.ts
+  var toNumericId = (gid) => Number(gid.split("/").pop());
+  var addItem = (a) => ({
+    id: toNumericId(a.variantId),
+    quantity: a.quantity,
+    properties: a.properties
+  });
+  async function applyCartPlan(plan, post) {
+    const removed = [];
+    const added = [];
+    const failures = [];
+    for (const r of plan.remove) {
+      const res = await post("cart/change.js", { id: r.id, quantity: 0 });
+      if (res.ok) {
+        removed.push(r.id);
+      } else {
+        failures.push({
+          kind: "remove",
+          variantId: r.variantId,
+          status: res.status,
+          body: await res.text()
+        });
+      }
+    }
+    if (plan.add.length > 0) {
+      const res = await post("cart/add.js", { items: plan.add.map(addItem) });
+      if (res.ok) {
+        added.push(...plan.add.map((a) => a.variantId));
+      } else {
+        const body = await res.text();
+        logFailure(`batched cart/add.js failed (${res.status}); retrying per item`, body);
+        for (const a of plan.add) {
+          const one = await post("cart/add.js", { items: [addItem(a)] });
+          if (one.ok) {
+            added.push(a.variantId);
+          } else {
+            const oneBody = await one.text();
+            failures.push({ kind: "add", variantId: a.variantId, status: one.status, body: oneBody });
+            logFailure(`cart/add.js failed for ${a.variantId} (${one.status})`, oneBody);
+          }
+        }
+      }
+    }
+    return { added, removed, failures };
+  }
+  function logFailure(message, body) {
+    var _a2;
+    const c = globalThis.console;
+    (_a2 = c == null ? void 0 : c.warn) == null ? void 0 : _a2.call(c, `[free-gift] ${message}`, body.slice(0, 300));
+  }
+
   // src/choices.ts
   function groupGiftOptionsByProduct(options) {
     const order = [];
@@ -221,7 +272,6 @@
   var _a, _b, _c;
   var root = (_c = (_b = (_a = w.Shopify) == null ? void 0 : _a.routes) == null ? void 0 : _b.root) != null ? _c : "/";
   var toGid = (variantId) => `gid://shopify/ProductVariant/${variantId}`;
-  var toNumericId = (gid) => Number(gid.split("/").pop());
   var isGiftLine = (item) => item.properties != null && item.properties[GIFT_LINE_PROPERTY] != null;
   function readConfig() {
     var _a2, _b2, _c2;
@@ -245,12 +295,13 @@
   var lastDiscount = null;
   var choiceState = {};
   var declined = false;
+  var cartPost = (path, body) => fetch(`${root}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body)
+  });
   async function postJson(path, body) {
-    await fetch(`${root}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(body)
-    });
+    await cartPost(path, body);
   }
   async function reconcileOnce(config) {
     var _a2, _b2;
@@ -284,20 +335,7 @@
     }
     selfMutating = true;
     try {
-      for (const removal of plan.remove) {
-        await postJson("cart/change.js", { id: removal.id, quantity: 0 });
-      }
-      for (const addition of plan.add) {
-        await postJson("cart/add.js", {
-          items: [
-            {
-              id: toNumericId(addition.variantId),
-              quantity: addition.quantity,
-              properties: addition.properties
-            }
-          ]
-        });
-      }
+      await applyCartPlan(plan, cartPost);
       if (discountChanged) {
         await postJson("cart/update.js", { discount: (_a2 = plan.applyCode) != null ? _a2 : "" });
         lastDiscount = plan.applyCode;
