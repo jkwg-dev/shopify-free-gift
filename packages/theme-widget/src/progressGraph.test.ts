@@ -1,6 +1,6 @@
 import { money, type CampaignConfigResponse, type ValidateResult } from '@free-gift-engine/core';
 import { describe, expect, it } from 'vitest';
-import { buildProgressModel, giftLabelFor } from './progressGraph.js';
+import { buildProgressModel, giftLabelFor, stepperLayout } from './progressGraph.js';
 
 const ICE = 'gid://shopify/ProductVariant/Ice';
 const DAWN = 'gid://shopify/ProductVariant/Dawn';
@@ -139,5 +139,27 @@ describe('buildProgressModel', () => {
     expect(m.subtotal).toBeNull();
     expect(m.next?.tierId).toBe('t1');
     expect(m.allUnlocked).toBe(false);
+  });
+});
+
+describe('stepperLayout (visual geometry, pure)', () => {
+  it('positions nodes by threshold/top, fills from the confirmed subtotal, end-aligns the last label', () => {
+    const m = buildProgressModel(config, gift('t1', 60000))!; // subtotal CA$600, top CA$1500
+    const { fillPct, nodes } = stepperLayout(m);
+    expect(Math.round(fillPct)).toBe(40); // 600/1500
+    expect(nodes.map((n) => Math.round(n.posPct))).toEqual([33, 67, 100]);
+    // first/middle centered, the 100% node end-aligned so its label can't clip off the right edge
+    expect(nodes.map((n) => n.align)).toEqual(['center', 'center', 'end']);
+    expect(nodes.map((n) => n.reached)).toEqual([true, false, false]);
+  });
+
+  it('fill is 0 when the server has not confirmed a subtotal (no-gift)', () => {
+    const m = buildProgressModel(config, { status: 'no-gift', reason: 'below-threshold' })!;
+    expect(stepperLayout(m).fillPct).toBe(0);
+  });
+
+  it('fill caps at 100 at/above the top tier', () => {
+    const m = buildProgressModel(config, gift('t3', 200000))!;
+    expect(stepperLayout(m).fillPct).toBe(100);
   });
 });

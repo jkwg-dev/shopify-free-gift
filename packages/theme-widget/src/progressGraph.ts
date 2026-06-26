@@ -124,6 +124,32 @@ function fmt(m: Money, compact = false): string {
   }
 }
 
+export type StepAlign = 'start' | 'center' | 'end';
+export type StepNode = {
+  readonly tierId: string;
+  readonly posPct: number; // node position along the track (threshold / top threshold)
+  readonly align: StepAlign; // label alignment so edge labels don't clip off the track
+  readonly reached: boolean;
+  readonly isCurrent: boolean;
+};
+
+// Pure stepper geometry (unit-tested). fillPct = confirmed subtotal / top threshold (0 when unknown —
+// never optimistic). Each node sits at threshold/top; its label aligns start/center/end so the first
+// and last labels stay inside the track instead of overflowing the drawer edge (the clipping bug).
+export function stepperLayout(model: ProgressModel): { fillPct: number; nodes: StepNode[] } {
+  const top = Math.max(...model.tiers.map((t) => t.threshold.amountMinor), 1);
+  const fillPct =
+    model.subtotal === null
+      ? 0
+      : Math.max(0, Math.min(100, (model.subtotal.amountMinor / top) * 100));
+  const nodes = model.tiers.map((t): StepNode => {
+    const posPct = (t.threshold.amountMinor / top) * 100;
+    const align: StepAlign = posPct <= 8 ? 'start' : posPct >= 92 ? 'end' : 'center';
+    return { tierId: t.tierId, posPct, align, reached: t.reached, isCurrent: t.isCurrent };
+  });
+  return { fillPct, nodes };
+}
+
 // Visual horizontal "trail" stepper: track + filled portion (server subtotal) + a node per tier at
 // its threshold; the current (highest reached) tier is marked. Authoritative-only — the fill reflects
 // the confirmed subtotal, never an optimistic guess. Highest-tier-only is stated in the subnote.
@@ -155,10 +181,8 @@ export function renderProgress(mount: HTMLElement, model: ProgressModel | null):
   }
   mount.append(headline);
 
-  // Node positions are threshold / topThreshold; the fill is subtotal / topThreshold (0 when unknown).
-  const top = Math.max(...model.tiers.map((t) => t.threshold.amountMinor), 1);
-  const ratio =
-    model.subtotal === null ? 0 : Math.max(0, Math.min(1, model.subtotal.amountMinor / top));
+  const { fillPct, nodes } = stepperLayout(model);
+  const byTier = new Map(model.tiers.map((t) => [t.tierId, t]));
 
   const stepper = document.createElement('div');
   stepper.className = 'fge-stepper';
@@ -166,19 +190,19 @@ export function renderProgress(mount: HTMLElement, model: ProgressModel | null):
   track.className = 'fge-stepper__track';
   const fill = document.createElement('div');
   fill.className = 'fge-stepper__fill';
-  fill.style.width = `${ratio * 100}%`;
+  fill.style.width = `${fillPct}%`;
   stepper.append(track, fill);
-  for (const tier of model.tiers) {
+  for (const node of nodes) {
     const step = document.createElement('div');
-    step.className = 'fge-step';
-    if (tier.reached) step.classList.add('is-reached');
-    if (tier.isCurrent) step.classList.add('is-current');
-    step.style.left = `${(tier.threshold.amountMinor / top) * 100}%`;
+    step.className = `fge-step fge-step--${node.align}`;
+    if (node.reached) step.classList.add('is-reached');
+    if (node.isCurrent) step.classList.add('is-current');
+    step.style.left = `${node.posPct}%`;
     const dot = document.createElement('div');
     dot.className = 'fge-step__dot';
     const label = document.createElement('div');
     label.className = 'fge-step__label';
-    label.textContent = fmt(tier.threshold, true);
+    label.textContent = fmt(byTier.get(node.tierId)!.threshold, true);
     step.append(dot, label);
     stepper.append(step);
   }

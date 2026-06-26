@@ -46,9 +46,12 @@ export {
   buildProgressModel,
   renderProgress,
   giftLabelFor,
+  stepperLayout,
   type ProgressModel,
   type ProgressTierView,
   type ProgressNext,
+  type StepNode,
+  type StepAlign,
 } from './progressGraph.js';
 export {
   mountDrawerSections,

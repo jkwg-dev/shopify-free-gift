@@ -44,12 +44,18 @@ export const FGE_CSS = `
 }
 .fge-step__label{
   position:absolute; top:16px; left:50%; transform:translateX(-50%);
-  white-space:nowrap; font-size:11px; font-weight:600; color:var(--fge-muted);
+  white-space:nowrap; font-size:10.5px; font-weight:600; color:var(--fge-muted);
 }
+/* Edge-aware label alignment so the first/last labels stay inside the track (no right-edge clip). */
+.fge-step--start .fge-step__label{ left:0; transform:none; text-align:left; }
+.fge-step--end .fge-step__label{ left:auto; right:0; transform:none; text-align:right; }
 .fge-step.is-reached .fge-step__label{ color:var(--fge-brand-strong); }
 
-/* --- gift panel --- */
-.fge-gift{ border-top:1px solid var(--fge-line); padding-top:12px; }
+/* --- gift panel (below the cart items; capped so a tall OR tier doesn't push checkout off-screen) --- */
+.fge-gift{
+  border-top:1px solid var(--fge-line); padding-top:12px; margin-top:4px;
+  max-height:42vh; overflow:auto;
+}
 .fge-gift__title{ margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.01em; }
 .fge-gift__hint{ margin:0; font-size:13px; color:var(--fge-muted); }
 

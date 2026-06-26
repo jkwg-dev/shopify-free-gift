@@ -481,6 +481,16 @@
       return `${m.amountMinor} ${m.currency}`;
     }
   }
+  function stepperLayout(model) {
+    const top = Math.max(...model.tiers.map((t) => t.threshold.amountMinor), 1);
+    const fillPct = model.subtotal === null ? 0 : Math.max(0, Math.min(100, model.subtotal.amountMinor / top * 100));
+    const nodes = model.tiers.map((t) => {
+      const posPct = t.threshold.amountMinor / top * 100;
+      const align = posPct <= 8 ? "start" : posPct >= 92 ? "end" : "center";
+      return { tierId: t.tierId, posPct, align, reached: t.reached, isCurrent: t.isCurrent };
+    });
+    return { fillPct, nodes };
+  }
   function renderProgress(mount, model) {
     var _a2;
     mount.textContent = "";
@@ -504,27 +514,27 @@
       headline.append(document.createTextNode(verb), amt, document.createTextNode(tail));
     }
     mount.append(headline);
-    const top = Math.max(...model.tiers.map((t) => t.threshold.amountMinor), 1);
-    const ratio = model.subtotal === null ? 0 : Math.max(0, Math.min(1, model.subtotal.amountMinor / top));
+    const { fillPct, nodes } = stepperLayout(model);
+    const byTier = new Map(model.tiers.map((t) => [t.tierId, t]));
     const stepper = document.createElement("div");
     stepper.className = "fge-stepper";
     const track = document.createElement("div");
     track.className = "fge-stepper__track";
     const fill = document.createElement("div");
     fill.className = "fge-stepper__fill";
-    fill.style.width = `${ratio * 100}%`;
+    fill.style.width = `${fillPct}%`;
     stepper.append(track, fill);
-    for (const tier of model.tiers) {
+    for (const node of nodes) {
       const step = document.createElement("div");
-      step.className = "fge-step";
-      if (tier.reached) step.classList.add("is-reached");
-      if (tier.isCurrent) step.classList.add("is-current");
-      step.style.left = `${tier.threshold.amountMinor / top * 100}%`;
+      step.className = `fge-step fge-step--${node.align}`;
+      if (node.reached) step.classList.add("is-reached");
+      if (node.isCurrent) step.classList.add("is-current");
+      step.style.left = `${node.posPct}%`;
       const dot = document.createElement("div");
       dot.className = "fge-step__dot";
       const label = document.createElement("div");
       label.className = "fge-step__label";
-      label.textContent = fmt(tier.threshold, true);
+      label.textContent = fmt(byTier.get(node.tierId).threshold, true);
       step.append(dot, label);
       stepper.append(step);
     }
@@ -611,12 +621,18 @@
 }
 .fge-step__label{
   position:absolute; top:16px; left:50%; transform:translateX(-50%);
-  white-space:nowrap; font-size:11px; font-weight:600; color:var(--fge-muted);
+  white-space:nowrap; font-size:10.5px; font-weight:600; color:var(--fge-muted);
 }
+/* Edge-aware label alignment so the first/last labels stay inside the track (no right-edge clip). */
+.fge-step--start .fge-step__label{ left:0; transform:none; text-align:left; }
+.fge-step--end .fge-step__label{ left:auto; right:0; transform:none; text-align:right; }
 .fge-step.is-reached .fge-step__label{ color:var(--fge-brand-strong); }
 
-/* --- gift panel --- */
-.fge-gift{ border-top:1px solid var(--fge-line); padding-top:12px; }
+/* --- gift panel (below the cart items; capped so a tall OR tier doesn't push checkout off-screen) --- */
+.fge-gift{
+  border-top:1px solid var(--fge-line); padding-top:12px; margin-top:4px;
+  max-height:42vh; overflow:auto;
+}
 .fge-gift__title{ margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.01em; }
 .fge-gift__hint{ margin:0; font-size:13px; color:var(--fge-muted); }
 

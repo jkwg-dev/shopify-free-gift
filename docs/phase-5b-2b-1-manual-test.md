@@ -99,3 +99,19 @@ split into two parts, and the gift line is **no longer hidden** from the cart li
 | T7  | Cards                   | Gift cards show images; OR selectable (radio + auto-add); AND bundle shows both; OOS (Liquid L) disabled                                                                                                             |
 | T8  | Fallback                | If the header/items anchors aren't found (other theme), both sections fall back to a single safe mount in the drawer panel (no wrong-place injection, no hard-fail) — override the drawer via `data-drawer-selector` |
 | T9  | Correctness             | Subtotal, the $0 gift at checkout, and the order contents are unchanged                                                                                                                                              |
+
+## Round 4 checks (visual stepper fits; chooser capped; cart stays usable)
+
+> DEPLOY FIRST: `pnpm --filter @free-gift-engine/theme-widget build` then `shopify app deploy`. The
+> "overlay fills the drawer / stepper is just text labels" state is a **pre-injection build** — the
+> injected sections + visual stepper land only with the freshly deployed `free-gift.js`.
+
+| #   | Check               | Expected                                                                                                                                                                   |
+| --- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1  | Cart visible        | Cart line items, subtotal, and checkout are visible/usable — the widget does NOT cover them                                                                                |
+| V2  | Stepper is visual   | Under "Your cart": a slim horizontal **track** with a **node per tier**, the reached portion **filled**, the current tier marked — not just a row of price text            |
+| V3  | Labels fit          | CA$500 / CA$1,000 / CA$1,500 labels **fit within the track** — the last label is right-aligned and does NOT clip ("CA$1,50…")                                              |
+| V4  | Chooser below items | "Choose your free gift" is **below the cart line items** (scroll to reach); for the 8-option tier it **scrolls internally** (capped ~42vh) so the checkout stays on screen |
+| V5  | Gift in cart at $0  | The free gift shows normally in the cart list at $0 (not hidden); the chooser is choice/progress, not a duplicate                                                          |
+| V6  | Survives re-render  | Both sections re-inject on cart change; selection preserved                                                                                                                |
+| V7  | Black + cards       | Black/neutral palette; image cards; OR selectable / AND bundle / OOS ("Currently unavailable")                                                                             |
