@@ -1,34 +1,32 @@
-// Design tokens + component CSS for the free-gift drawer panel. Injected once.
-// Direction: a quiet MONOCHROME identity matching the theme's black/neutral look — black progress and
-// accents, no color. Restraint: inherit the theme's font (don't fight the storefront); carry hierarchy
-// with weight, letter-spacing and an uppercase eyebrow. Signature: the horizontal progress stepper.
-// Quality floor: opaque surfaces (no bleed-through), visible keyboard focus, reduced-motion respected.
+// Design tokens + component CSS for the in-flow free-gift sections (injected into the cart drawer).
+// Direction: a quiet MONOCHROME identity matching the theme's black/neutral look, and BLENDED INTO the
+// drawer — no floating card, no shadow, transparent/inherited background; the stepper reads as a slim
+// progress row, the chooser as a section below the items with a light divider. Restraint: inherit the
+// theme's font; carry hierarchy with weight, letter-spacing, an uppercase eyebrow. Quality floor:
+// visible keyboard focus, reduced-motion respected.
 export const FGE_STYLE_ID = 'fge-styles';
 
 export const FGE_CSS = `
-[data-fge-overlay]{
-  --fge-ink:#111111; --fge-muted:#707070; --fge-surface:#ffffff; --fge-subtle:#f5f5f5;
-  --fge-line:#e3e3e3; --fge-brand:#111111; --fge-brand-strong:#000000;
-  --fge-radius:14px; --fge-card-radius:10px;
-  box-sizing:border-box; color:var(--fge-ink);
-  font-family:inherit; line-height:1.35; -webkit-font-smoothing:antialiased;
-  background:var(--fge-surface);
-  border:1px solid var(--fge-line); border-radius:var(--fge-radius);
-  box-shadow:0 14px 38px rgba(0,0,0,.18);
-  padding:16px 16px 14px;
+.fge{
+  --fge-ink:#111111; --fge-muted:#707070; --fge-subtle:#f5f5f5;
+  --fge-line:#e3e3e3; --fge-brand:#111111; --fge-brand-strong:#000000; --fge-card-radius:10px;
+  box-sizing:border-box; font-family:inherit; line-height:1.35;
 }
-[data-fge-overlay] *{ box-sizing:border-box; }
+.fge *{ box-sizing:border-box; }
+
+/* --- top: slim progress row (blended, no box/shadow) --- */
+.fge-stepper-wrap{ padding:8px 2px 6px; color:var(--fge-ink); }
 
 .fge-eyebrow{
-  margin:0 0 2px; font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
-  color:var(--fge-brand-strong);
+  margin:0 0 2px; font-size:10.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--fge-muted);
 }
-.fge-headline{ margin:0 0 12px; font-size:15px; font-weight:650; color:var(--fge-ink); }
+.fge-headline{ margin:0 0 10px; font-size:13.5px; font-weight:650; color:var(--fge-ink); }
 .fge-headline .fge-amt{ color:var(--fge-brand-strong); font-weight:750; }
-.fge-subnote{ margin:6px 0 0; font-size:11.5px; color:var(--fge-muted); }
+.fge-subnote{ margin:6px 0 0; font-size:11px; color:var(--fge-muted); }
 
-/* --- the progress stepper (signature) --- */
-.fge-stepper{ position:relative; margin:14px 6px 30px; height:6px; }
+/* --- the progress stepper --- */
+.fge-stepper{ position:relative; margin:12px 6px 28px; height:6px; }
 .fge-stepper__track{ position:absolute; inset:0; background:var(--fge-line); border-radius:999px; }
 .fge-stepper__fill{
   position:absolute; left:0; top:0; bottom:0; background:var(--fge-brand);

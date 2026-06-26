@@ -47,8 +47,6 @@
   }
 
   // src/cartDrawer.ts
-  var OVERLAY_Z = 2147482e3;
-  var GUTTER = 10;
   var DRAWER_SELECTORS = [
     "cart-drawer",
     "#CartDrawer",
@@ -58,122 +56,78 @@
     "cart-notification"
   ];
   var PANEL_SELECTORS = [".drawer__inner", ".cart-drawer__inner", '[role="dialog"]'];
-  var ROW_SELECTORS = 'tr, li, .cart-item, [class*="cart-item" i]';
-  var OPEN_CLASSES = ["active", "is-open", "open", "drawer--active"];
-  function giftRowTargets(items) {
-    const targets = [];
-    items.forEach((item, i) => {
-      if (item.properties != null && item.properties[GIFT_LINE_PROPERTY] != null) {
-        targets.push({ index1: i + 1, variantId: item.variant_id });
-      }
-    });
-    return targets;
-  }
-  function findDrawer(selectorOverride) {
-    const selectors = selectorOverride ? [selectorOverride, ...DRAWER_SELECTORS] : DRAWER_SELECTORS;
+  var HEADER_SELECTORS = [".drawer__header", ".cart-drawer__header", '[class*="drawer__header" i]'];
+  var ITEMS_SELECTORS = [
+    "#CartDrawer-CartItems",
+    ".drawer__contents",
+    ".js-contents",
+    ".cart-items",
+    '[class*="cart-items" i]'
+  ];
+  var FOOTER_SELECTORS = [".drawer__footer", ".cart-drawer__footer", '[class*="drawer__footer" i]'];
+  function findFirst(root2, selectors) {
     for (const sel of selectors) {
-      const el = document.querySelector(sel);
+      const el = root2.querySelector(sel);
       if (el !== null) {
         return el;
       }
     }
     return null;
   }
-  function isOpen(drawer2, openClassOverride) {
-    if (openClassOverride) {
-      return drawer2.classList.contains(openClassOverride);
-    }
-    if (OPEN_CLASSES.some((c) => drawer2.classList.contains(c))) {
-      return true;
-    }
-    if (drawer2.getAttribute("aria-hidden") === "false") {
-      return true;
-    }
-    return drawer2.offsetParent !== null && drawer2.getBoundingClientRect().width > 0;
+  function findDrawer(selectorOverride) {
+    const selectors = selectorOverride ? [selectorOverride, ...DRAWER_SELECTORS] : DRAWER_SELECTORS;
+    return findFirst(document, selectors);
   }
-  function rowHasVariant(row, variantId) {
-    return row.querySelector(`[data-quantity-variant-id="${variantId}"]`) !== null || row.getAttribute("data-variant-id") === String(variantId);
-  }
-  function hideGiftLineRows(drawer2, targets) {
-    var _a2, _b2, _c2;
-    for (const t of targets) {
-      const byIndex = (_c2 = (_b2 = drawer2.querySelector(`#CartDrawer-Item-${t.index1}`)) != null ? _b2 : (_a2 = drawer2.querySelector(`[data-index="${t.index1}"]`)) == null ? void 0 : _a2.closest(ROW_SELECTORS)) != null ? _c2 : null;
-      if (byIndex !== null && rowHasVariant(byIndex, t.variantId)) {
-        byIndex.style.display = "none";
-        continue;
+  function mountDrawerSections(opts = {}) {
+    const stepperEl = document.createElement("div");
+    stepperEl.className = "fge fge-stepper-wrap";
+    stepperEl.setAttribute("data-fge-stepper", "");
+    const chooserEl2 = document.createElement("div");
+    chooserEl2.className = "fge";
+    chooserEl2.setAttribute("data-fge-chooser", "");
+    const drawer2 = findDrawer(opts.drawerSelector);
+    const doAttach = () => {
+      var _a2, _b2;
+      if (drawer2 === null) {
+        if (stepperEl.parentNode === null) document.body.append(stepperEl, chooserEl2);
+        return;
       }
-      const byVariant = Array.from(
-        drawer2.querySelectorAll(`[data-quantity-variant-id="${t.variantId}"]`)
-      );
-      if (byVariant.length === 1) {
-        const row = byVariant[0].closest(ROW_SELECTORS);
-        if (row !== null) {
-          row.style.display = "none";
+      const panel = (_a2 = findFirst(drawer2, PANEL_SELECTORS)) != null ? _a2 : drawer2;
+      const header = findFirst(panel, HEADER_SELECTORS);
+      const itemsEnd = (_b2 = findFirst(panel, FOOTER_SELECTORS)) != null ? _b2 : findFirst(panel, ITEMS_SELECTORS);
+      if (header !== null) {
+        header.insertAdjacentElement("afterend", stepperEl);
+      } else if (stepperEl.parentNode === null) {
+        panel.prepend(stepperEl);
+      }
+      if (itemsEnd !== null) {
+        if (FOOTER_SELECTORS.some((s) => itemsEnd.matches(s))) {
+          itemsEnd.insertAdjacentElement("beforebegin", chooserEl2);
+        } else {
+          itemsEnd.insertAdjacentElement("afterend", chooserEl2);
+        }
+      } else if (chooserEl2.parentNode === null) {
+        panel.append(chooserEl2);
+      }
+    };
+    let observer = null;
+    const attach = () => {
+      observer == null ? void 0 : observer.disconnect();
+      try {
+        doAttach();
+      } finally {
+        if (observer !== null && drawer2 !== null) {
+          observer.takeRecords();
+          observer.observe(drawer2, { childList: true, subtree: true });
         }
       }
-    }
-  }
-  function mountDrawerOverlay(opts = {}) {
-    const overlay = document.createElement("div");
-    overlay.setAttribute("data-fge-overlay", "");
-    overlay.style.cssText = `position:fixed;z-index:${OVERLAY_Z};display:none;box-sizing:border-box;`;
-    const container = document.createElement("div");
-    container.setAttribute("data-fge-chooser", "");
-    overlay.append(container);
-    document.body.append(overlay);
-    const drawer2 = findDrawer(opts.drawerSelector);
-    const panelOf = () => {
-      var _a2;
-      return drawer2 === null ? null : (_a2 = PANEL_SELECTORS.map((s) => drawer2.querySelector(s)).find(
-        (el) => el !== null
-      )) != null ? _a2 : drawer2;
-    };
-    const position = () => {
-      if (drawer2 === null) {
-        overlay.style.cssText = `position:fixed;z-index:${OVERLAY_Z};left:0;right:0;bottom:0;display:block;box-sizing:border-box;max-height:50vh;overflow:auto;`;
-        return;
-      }
-      const panel = panelOf();
-      const r = panel.getBoundingClientRect();
-      overlay.style.display = "block";
-      overlay.style.left = `${r.left + GUTTER}px`;
-      overlay.style.top = `${r.top + GUTTER}px`;
-      overlay.style.width = `${Math.max(0, r.width - GUTTER * 2)}px`;
-      overlay.style.maxHeight = `${Math.max(160, Math.round(r.height * 0.62))}px`;
-      overlay.style.overflow = "auto";
-      panel.style.paddingTop = `${overlay.offsetHeight + GUTTER * 2}px`;
-    };
-    const refresh = () => {
-      if (drawer2 === null) {
-        position();
-        return;
-      }
-      if (isOpen(drawer2, opts.openClass)) {
-        position();
-      } else {
-        overlay.style.display = "none";
-      }
-    };
-    let tick;
-    const renderTick = () => {
-      if (tick !== void 0) clearTimeout(tick);
-      tick = setTimeout(() => {
-        var _a2;
-        refresh();
-        (_a2 = opts.onRender) == null ? void 0 : _a2.call(opts);
-      }, 40);
     };
     if (drawer2 !== null) {
-      new MutationObserver(renderTick).observe(drawer2, {
-        attributes: true,
-        attributeFilter: ["class", "aria-hidden"]
-      });
-      new MutationObserver(renderTick).observe(drawer2, { childList: true, subtree: true });
+      observer = new MutationObserver(() => attach());
+      observer.observe(drawer2, { childList: true, subtree: true });
     }
-    window.addEventListener("resize", refresh, { passive: true });
-    window.addEventListener("scroll", refresh, { passive: true });
-    renderTick();
-    return { container, drawerEl: drawer2, refresh };
+    attach();
+    return { stepperEl, chooserEl: chooserEl2, attach };
   }
 
   // src/cartMutations.ts
@@ -620,29 +574,26 @@
   // src/styles.ts
   var FGE_STYLE_ID = "fge-styles";
   var FGE_CSS = `
-[data-fge-overlay]{
-  --fge-ink:#111111; --fge-muted:#707070; --fge-surface:#ffffff; --fge-subtle:#f5f5f5;
-  --fge-line:#e3e3e3; --fge-brand:#111111; --fge-brand-strong:#000000;
-  --fge-radius:14px; --fge-card-radius:10px;
-  box-sizing:border-box; color:var(--fge-ink);
-  font-family:inherit; line-height:1.35; -webkit-font-smoothing:antialiased;
-  background:var(--fge-surface);
-  border:1px solid var(--fge-line); border-radius:var(--fge-radius);
-  box-shadow:0 14px 38px rgba(0,0,0,.18);
-  padding:16px 16px 14px;
+.fge{
+  --fge-ink:#111111; --fge-muted:#707070; --fge-subtle:#f5f5f5;
+  --fge-line:#e3e3e3; --fge-brand:#111111; --fge-brand-strong:#000000; --fge-card-radius:10px;
+  box-sizing:border-box; font-family:inherit; line-height:1.35;
 }
-[data-fge-overlay] *{ box-sizing:border-box; }
+.fge *{ box-sizing:border-box; }
+
+/* --- top: slim progress row (blended, no box/shadow) --- */
+.fge-stepper-wrap{ padding:8px 2px 6px; color:var(--fge-ink); }
 
 .fge-eyebrow{
-  margin:0 0 2px; font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
-  color:var(--fge-brand-strong);
+  margin:0 0 2px; font-size:10.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--fge-muted);
 }
-.fge-headline{ margin:0 0 12px; font-size:15px; font-weight:650; color:var(--fge-ink); }
+.fge-headline{ margin:0 0 10px; font-size:13.5px; font-weight:650; color:var(--fge-ink); }
 .fge-headline .fge-amt{ color:var(--fge-brand-strong); font-weight:750; }
-.fge-subnote{ margin:6px 0 0; font-size:11.5px; color:var(--fge-muted); }
+.fge-subnote{ margin:6px 0 0; font-size:11px; color:var(--fge-muted); }
 
-/* --- the progress stepper (signature) --- */
-.fge-stepper{ position:relative; margin:14px 6px 30px; height:6px; }
+/* --- the progress stepper --- */
+.fge-stepper{ position:relative; margin:12px 6px 28px; height:6px; }
 .fge-stepper__track{ position:absolute; inset:0; background:var(--fge-line); border-radius:999px; }
 .fge-stepper__fill{
   position:absolute; left:0; top:0; bottom:0; background:var(--fge-brand);
@@ -752,8 +703,7 @@
       proxyPath: (_a2 = el.dataset["proxyPath"]) != null ? _a2 : "/apps/free-gift/validate",
       country: (_b2 = el.dataset["country"]) != null ? _b2 : "",
       presentmentCurrency: (_c2 = el.dataset["presentmentCurrency"]) != null ? _c2 : "",
-      drawerSelector: el.dataset["drawerSelector"],
-      drawerOpenClass: el.dataset["drawerOpenClass"]
+      drawerSelector: el.dataset["drawerSelector"]
     };
   }
   async function getCart() {
@@ -860,7 +810,7 @@
       },
       currentTierId
     );
-    drawer == null ? void 0 : drawer.refresh();
+    drawer == null ? void 0 : drawer.attach();
   }
   function schedule(config) {
     if (running) {
@@ -876,23 +826,11 @@
       }
     });
   }
-  async function hideGiftLinesInDrawer() {
-    if ((drawer == null ? void 0 : drawer.drawerEl) == null) {
-      return;
-    }
-    const cart = await getCart();
-    hideGiftLineRows(drawer.drawerEl, giftRowTargets(cart.items));
-  }
   async function initPerception(config) {
     injectStyles();
-    drawer = mountDrawerOverlay({
-      drawerSelector: config.drawerSelector,
-      openClass: config.drawerOpenClass,
-      onRender: () => void hideGiftLinesInDrawer()
-    });
-    graphEl = document.createElement("div");
-    chooserEl = document.createElement("div");
-    drawer.container.append(graphEl, chooserEl);
+    drawer = mountDrawerSections({ drawerSelector: config.drawerSelector });
+    graphEl = drawer.stepperEl;
+    chooserEl = drawer.chooserEl;
     const result = await getConfig({
       presentmentCurrency: config.presentmentCurrency,
       countryCode: config.country

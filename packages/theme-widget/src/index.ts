@@ -51,13 +51,9 @@ export {
   type ProgressNext,
 } from './progressGraph.js';
 export {
-  mountDrawerOverlay,
-  giftRowTargets,
-  hideGiftLineRows,
-  type DrawerMount,
-  type DrawerMountOptions,
-  type CartItemLike,
-  type GiftRowTarget,
+  mountDrawerSections,
+  type DrawerSections,
+  type DrawerSectionsOptions,
 } from './cartDrawer.js';
 export { injectStyles, FGE_CSS, FGE_STYLE_ID } from './styles.js';
 

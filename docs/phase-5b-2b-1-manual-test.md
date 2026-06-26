@@ -82,3 +82,20 @@ full price) is recorded for a later task — see `docs/phase-5b-2b-plan.md`.
 
 Hiding is VISUAL only (display:none on the gift row) — cart data, the BXGY code, subtotal and checkout
 are never touched. Model-C question remains recorded, not solved.
+
+## Round 3 checks (injected sections; gift line NOT hidden)
+
+Layout reworked: the perception UI is now **injected into the drawer flow** (no floating overlay),
+split into two parts, and the gift line is **no longer hidden** from the cart list.
+
+| #   | Check                   | Expected                                                                                                                                                                                                             |
+| --- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T1  | Stepper placement       | A **slim progress row** appears right under the "Your cart" header — blended in (no shadow, no boxed/floating card, transparent background)                                                                          |
+| T2  | Chooser placement       | The "Choose your free gift" section appears **below the cart line items** (scroll down to reach it), above the subtotal/checkout; reads as part of the drawer (light divider, not a floating card)                   |
+| T3  | Gift shown in cart list | The free gift renders **normally in the cart product list at $0** ("$699.95 → $0.00") — NOT hidden. The chooser (choice/progress) and the cart line ($0 receipt) are complementary, not duplicated                   |
+| T4  | Survives re-render      | After add/remove/qty change (drawer re-renders), BOTH injected sections are **re-injected** (not lost); selection preserved; no flicker loop                                                                         |
+| T5  | No overlap              | No overlap with "Your cart" or the cart items; close + checkout usable                                                                                                                                               |
+| T6  | Black/neutral           | Stepper fill, current node, selected card, checkbox are black/neutral                                                                                                                                                |
+| T7  | Cards                   | Gift cards show images; OR selectable (radio + auto-add); AND bundle shows both; OOS (Liquid L) disabled                                                                                                             |
+| T8  | Fallback                | If the header/items anchors aren't found (other theme), both sections fall back to a single safe mount in the drawer panel (no wrong-place injection, no hard-fail) — override the drawer via `data-drawer-selector` |
+| T9  | Correctness             | Subtotal, the $0 gift at checkout, and the order contents are unchanged                                                                                                                                              |

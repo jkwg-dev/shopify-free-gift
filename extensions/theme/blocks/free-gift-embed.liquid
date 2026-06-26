@@ -5,16 +5,16 @@
 
   Enable it in the theme editor under: Theme settings (gear) -> App embeds -> "Free Gift Engine".
 
-  Phase 5b-2b-1: the perception UI (tier progress graph + OR/variant chooser + decline) is mounted by
-  JS as an OVERLAY on <body>, positioned over the cart drawer and shown/hidden with it — so it sits
-  ABOVE the backdrop (clickable) and SURVIVES the drawer's inner re-render on every cart change. No
-  static mount node is needed (the old [data-fge-chooser] band that sat at the bottom of the page is
-  gone). Choices come from the shopper's selection (the `default_choices` seam was retired in 5b-2a).
+  Phase 5b-2b-1: the perception UI is INJECTED into the cart-drawer flow (blended, not a floating
+  overlay) — a slim progress stepper under the "Your cart" header and the "Choose your free gift"
+  chooser below the line items. Both are re-injected on every drawer re-render. The free gift renders
+  normally in the cart list at $0 (we don't hide it). Choices come from the shopper's selection (the
+  `default_choices` seam was retired in 5b-2a).
 
-  PORTABILITY: the controller auto-detects the cart drawer (e.g. Dawn's <cart-drawer>, open class
-  `active`). If a production theme differs, override without code via the optional attributes below:
+  PORTABILITY: the controller auto-detects the cart drawer + its anchors (Dawn's <cart-drawer>,
+  `.drawer__header`, `#CartDrawer-CartItems`, `.drawer__footer`), with a safe fallback if anchors
+  aren't found. If a production theme differs, override the drawer element without code:
     data-drawer-selector="<css selector for the drawer element>"
-    data-drawer-open-class="<class the theme toggles when the drawer opens>"
 {% endcomment %}
 
 <div

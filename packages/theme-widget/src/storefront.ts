@@ -14,12 +14,7 @@ import {
   type ValidateRequest,
   type ValidateResult,
 } from '@free-gift-engine/core';
-import {
-  mountDrawerOverlay,
-  hideGiftLineRows,
-  giftRowTargets,
-  type DrawerMount,
-} from './cartDrawer.js';
+import { mountDrawerSections, type DrawerSections } from './cartDrawer.js';
 import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
@@ -51,9 +46,8 @@ type WidgetConfig = {
   readonly proxyPath: string;
   readonly country: string;
   readonly presentmentCurrency: string;
-  // Optional per-theme overrides for portability (production theme ≠ dev snowboard theme).
+  // Optional per-theme override for portability (production theme ≠ dev snowboard theme).
   readonly drawerSelector?: string | undefined;
-  readonly drawerOpenClass?: string | undefined;
 };
 
 const w = window as ThemeWindow;
@@ -73,7 +67,6 @@ function readConfig(): WidgetConfig | null {
     country: el.dataset['country'] ?? '',
     presentmentCurrency: el.dataset['presentmentCurrency'] ?? '',
     drawerSelector: el.dataset['drawerSelector'],
-    drawerOpenClass: el.dataset['drawerOpenClass'],
   };
 }
 
@@ -101,7 +94,7 @@ let declined = false;
 let campaignConfig: CampaignConfigResponse | null = null;
 let lastResult: ValidateResult | null = null;
 const unavailableVariantIds = new Set<string>();
-let drawer: DrawerMount | null = null;
+let drawer: DrawerSections | null = null;
 let graphEl: HTMLElement | null = null;
 let chooserEl: HTMLElement | null = null;
 
@@ -205,7 +198,7 @@ function renderPerception(config: WidgetConfig): void {
     },
     currentTierId,
   );
-  drawer?.refresh();
+  drawer?.attach(); // ensure both sections are in the drawer flow after rendering
 }
 
 function schedule(config: WidgetConfig): void {
@@ -225,32 +218,17 @@ function schedule(config: WidgetConfig): void {
     });
 }
 
-// Hide the app-added gift line(s) from the drawer's product list so the gift shows ONLY in our panel.
-// VISUAL ONLY — the gift line stays in the cart (it carries the BXGY code → $0 and must ship). Re-reads
-// the live cart to know WHICH lines are gifts (the _fge_gift property isn't in the rendered markup),
-// then hides those rows precisely (cartDrawer falls back to NOT hiding if it can't identify them).
-async function hideGiftLinesInDrawer(): Promise<void> {
-  if (drawer?.drawerEl == null) {
-    return;
-  }
-  const cart = await getCart();
-  hideGiftLineRows(drawer.drawerEl, giftRowTargets(cart.items));
-}
-
-// Mount the drawer overlay (graph + chooser), fetch the campaign structure, and render. Best-effort:
-// if config is unavailable/inactive, the engine still reconciles (AND tiers need no choice).
+// Inject the two perception sections into the drawer flow (stepper under the header, chooser below
+// the items), fetch the campaign structure, and render. Best-effort: if config is unavailable/inactive,
+// the engine still reconciles (AND tiers need no choice). The free gift renders normally in the cart
+// list at $0 — we no longer hide it (role separation: the cart line confirms receipt, our chooser is
+// progress + choice).
 async function initPerception(config: WidgetConfig): Promise<void> {
   injectStyles(); // design tokens + component CSS (once)
-  // Overlay lives on document.body so it SURVIVES the drawer's inner re-render on every cart change,
-  // and sits above the backdrop (clickable). Shown/hidden with the drawer (resilient + overridable).
-  drawer = mountDrawerOverlay({
-    drawerSelector: config.drawerSelector,
-    openClass: config.drawerOpenClass,
-    onRender: () => void hideGiftLinesInDrawer(),
-  });
-  graphEl = document.createElement('div');
-  chooserEl = document.createElement('div');
-  drawer.container.append(graphEl, chooserEl);
+  // Sections are injected INTO the drawer (blended, in-flow) and re-attached on every re-render.
+  drawer = mountDrawerSections({ drawerSelector: config.drawerSelector });
+  graphEl = drawer.stepperEl;
+  chooserEl = drawer.chooserEl;
 
   const result = await getConfig({
     presentmentCurrency: config.presentmentCurrency,
