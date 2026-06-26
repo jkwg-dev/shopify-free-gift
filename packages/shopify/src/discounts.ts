@@ -36,6 +36,11 @@ export type ScopedGiftDiscountInput = {
   // ISO 8601 activation instant. Supplied by the caller — this package keeps no clock.
   readonly startsAt: string;
   readonly combinesWith: DiscountCombinesWith;
+  // Model-C flip (default false = today's behavior): when true, gift products are INTENTIONALLY
+  // members of the qualifying collection (BXGY's buys/gets split keeps the $0 gift from
+  // self-qualifying), so the "gifts must be excluded" mint guard is skipped. The empty-scope guard
+  // still applies. Set by the composition root from the FGE_GIFTS_INCLUDED flag.
+  readonly giftsIncluded?: boolean;
 };
 
 export type CreatedDiscount = {
@@ -133,17 +138,22 @@ export async function createScopedGiftDiscount(
   if (qualifyingCount === 0) {
     throw new EmptyQualifyingScopeError(input.qualifyingCollectionId, 'empty');
   }
-  // Precondition: the gift products MUST be excluded from the qualifying scope, else the gift counts
-  // toward its own spend (self-qualify leak). Membership is authoritative — an untagged gift product
-  // necessarily matches the NOT_EQUALS rule, so it shows as a member. Refuse to mint if any remain.
-  const giftProductIds = await giftProductIdsForVariants(client, input.giftVariantIds);
-  const stillMembers = await giftProductsStillInCollection(
-    client,
-    input.qualifyingCollectionId,
-    giftProductIds,
-  );
-  if (stillMembers.length > 0) {
-    throw new GiftNotExcludedError(input.qualifyingCollectionId, stillMembers);
+  // Precondition (EXCLUSION model only): the gift products MUST be excluded from the qualifying scope,
+  // else the gift counts toward its own spend (self-qualify leak). Membership is authoritative — an
+  // untagged gift product necessarily matches the NOT_EQUALS rule, so it shows as a member. Refuse to
+  // mint if any remain. SKIPPED under the inclusion model (giftsIncluded): there gifts are MEANT to be
+  // members and Shopify's buys/gets split prevents self-qualification (validated). The empty-scope
+  // guard above still applies in both models.
+  if (input.giftsIncluded !== true) {
+    const giftProductIds = await giftProductIdsForVariants(client, input.giftVariantIds);
+    const stillMembers = await giftProductsStillInCollection(
+      client,
+      input.qualifyingCollectionId,
+      giftProductIds,
+    );
+    if (stillMembers.length > 0) {
+      throw new GiftNotExcludedError(input.qualifyingCollectionId, stillMembers);
+    }
   }
   const data = await client.request<CreateResponse>(CREATE_MUTATION, {
     bxgyCodeDiscount: buildBxgyCodeDiscount(input),

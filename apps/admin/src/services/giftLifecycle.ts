@@ -20,7 +20,17 @@ export interface GiftTagGateway {
     collectionId: string,
     productIds: readonly string[],
   ): Promise<boolean>;
+  // Inclusion counterpart (model-C flip): poll until the gift products are INCLUDED in the collection.
+  waitForGiftProductsIncluded(
+    collectionId: string,
+    productIds: readonly string[],
+  ): Promise<boolean>;
 }
+
+// Model-C flip option. Default (omitted/false) = today's EXCLUSION provisioning. When true, gift
+// products are provisioned to be INCLUDED in the qualifying collection (un-tag + wait-for-inclusion);
+// the collection's rule is flipped to ALL_PRODUCTS by the gateway's ensureQualifyingCollection.
+export type ProvisionOptions = { readonly giftsIncluded?: boolean };
 
 // Provisioning failed in a way that would let a gift self-qualify ($0 leak) if we minted anyway.
 // Thrown by provisionGifts — the caller MUST NOT mint/activate any BXGY code when this is raised.
@@ -63,7 +73,10 @@ export type ProvisionResult = {
 export async function provisionGifts(
   gateway: GiftTagGateway,
   activeGiftVariantIds: readonly string[],
+  options: ProvisionOptions = {},
 ): Promise<ProvisionResult> {
+  // The gateway's ensureQualifyingCollection applies the rule for the active model (exclude vs all) and
+  // reconciles an existing collection's rule when flipping — wired at the composition root.
   const collection = await gateway.ensureQualifyingCollection();
 
   const productIds = await gateway.resolveGiftProductIds(activeGiftVariantIds);
@@ -75,23 +88,37 @@ export async function provisionGifts(
     );
   }
 
-  await gateway.tagProductsAsGift(productIds);
-  const missingTag = await gateway.verifyGiftProductsTagged(productIds);
-  if (missingTag.length > 0) {
-    throw new GiftProvisioningError(
-      'tag-not-applied',
-      `Gift tag did not persist on ${missingTag.length} product(s): ${missingTag.join(', ')} — ` +
-        `write_products likely not granted; reinstall required. Refusing to mint.`,
-    );
-  }
-
-  const ready = await gateway.waitForGiftProductsExcluded(collection.id, productIds);
-  if (!ready) {
-    throw new GiftProvisioningError(
-      'membership-not-confirmed',
-      `Gift products are not yet excluded from collection ${collection.id} — membership did not ` +
-        `settle in time. Refusing to mint (a gift could self-qualify).`,
-    );
+  if (options.giftsIncluded === true) {
+    // INCLUSION model: gifts must be MEMBERS. Remove the exclusion tag (migration) and wait until the
+    // (now all-products) rule includes them. No tag-persist check — we are removing the tag.
+    await gateway.untagProductsAsGift(productIds);
+    const included = await gateway.waitForGiftProductsIncluded(collection.id, productIds);
+    if (!included) {
+      throw new GiftProvisioningError(
+        'membership-not-confirmed',
+        `Gift products are not yet included in collection ${collection.id} — membership did not ` +
+          `settle in time. Refusing to mint (a full-price gift purchase would not yet qualify).`,
+      );
+    }
+  } else {
+    // EXCLUSION model (today): tag gifts out of the collection and wait until they're excluded.
+    await gateway.tagProductsAsGift(productIds);
+    const missingTag = await gateway.verifyGiftProductsTagged(productIds);
+    if (missingTag.length > 0) {
+      throw new GiftProvisioningError(
+        'tag-not-applied',
+        `Gift tag did not persist on ${missingTag.length} product(s): ${missingTag.join(', ')} — ` +
+          `write_products likely not granted; reinstall required. Refusing to mint.`,
+      );
+    }
+    const ready = await gateway.waitForGiftProductsExcluded(collection.id, productIds);
+    if (!ready) {
+      throw new GiftProvisioningError(
+        'membership-not-confirmed',
+        `Gift products are not yet excluded from collection ${collection.id} — membership did not ` +
+          `settle in time. Refusing to mint (a gift could self-qualify).`,
+      );
+    }
   }
 
   const qualifyingProductCount = await gateway.collectionProductCount(collection.id);
@@ -114,7 +141,7 @@ export async function provisionGifts(
     collectionId: collection.id,
     taggedProductIds: productIds,
     qualifyingProductCount,
-    ready,
+    ready: true,
   };
 }
 
@@ -126,7 +153,12 @@ export async function reconcileGiftTagsOnTeardown(
   gateway: GiftTagGateway,
   removedGiftVariantIds: readonly string[],
   remainingActiveGiftVariantIds: readonly string[],
+  options: ProvisionOptions = {},
 ): Promise<readonly string[]> {
+  // INCLUSION model: there is no exclusion tag to reconcile (gifts are members on purpose) — no-op.
+  if (options.giftsIncluded === true) {
+    return [];
+  }
   const removedProducts = await gateway.resolveGiftProductIds(removedGiftVariantIds);
   const stillUsed = new Set(await gateway.resolveGiftProductIds(remainingActiveGiftVariantIds));
   const toUntag = removedProducts.filter((productId) => !stillUsed.has(productId));

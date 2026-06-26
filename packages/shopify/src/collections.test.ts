@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { AdminGraphqlClient } from './client.js';
 import {
+  ALL_PRODUCTS_RULE,
   collectionProductCount,
   ensureQualifyingCollection,
   QUALIFYING_COLLECTION_HANDLE,
+  QUALIFYING_SENTINEL_TAG,
   waitForGiftProductsExcluded,
+  waitForGiftProductsIncluded,
 } from './collections.js';
 import { ShopifyUserError } from './errors.js';
 import { mockFetch, parseBody, testConfig } from './test-helpers.js';
@@ -62,6 +65,87 @@ describe('ensureQualifyingCollection', () => {
     expect(input.ruleSet.rules).toEqual([
       { column: 'TAG', relation: 'NOT_EQUALS', condition: 'app:fge_gift' },
     ]);
+  });
+
+  it('creates with the ALL_PRODUCTS rule when given the inclusion rule (model-C flip)', async () => {
+    const { fetch, calls } = mockFetch([
+      { body: { data: { collectionByIdentifier: null } } },
+      {
+        body: {
+          data: {
+            collectionCreate: {
+              collection: { id: COLLECTION_GID, handle: QUALIFYING_COLLECTION_HANDLE },
+              userErrors: [],
+            },
+          },
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    await ensureQualifyingCollection(client, { rule: ALL_PRODUCTS_RULE });
+
+    const input = parseBody(calls[1]!).variables['input'] as {
+      ruleSet: { rules: { column: string; relation: string; condition: string }[] };
+    };
+    expect(input.ruleSet.rules).toEqual([
+      { column: 'TAG', relation: 'NOT_EQUALS', condition: QUALIFYING_SENTINEL_TAG },
+    ]);
+  });
+
+  it('reconciles an EXISTING collection rule IN PLACE via collectionUpdate when asked (no recreate)', async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        body: {
+          data: {
+            collectionByIdentifier: { id: COLLECTION_GID, handle: QUALIFYING_COLLECTION_HANDLE },
+          },
+        },
+      },
+      {
+        body: {
+          data: {
+            collectionUpdate: {
+              collection: { id: COLLECTION_GID, handle: QUALIFYING_COLLECTION_HANDLE },
+              userErrors: [],
+            },
+          },
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    const result = await ensureQualifyingCollection(client, {
+      rule: ALL_PRODUCTS_RULE,
+      reconcileExisting: true,
+    });
+
+    expect(result.id).toBe(COLLECTION_GID); // same collection (id/handle preserved)
+    expect(calls).toHaveLength(2); // lookup + update (NOT create)
+    const input = parseBody(calls[1]!).variables['input'] as {
+      id: string;
+      ruleSet: { rules: { column: string; relation: string; condition: string }[] };
+    };
+    expect(input.id).toBe(COLLECTION_GID);
+    expect(input.ruleSet.rules).toEqual([
+      { column: 'TAG', relation: 'NOT_EQUALS', condition: QUALIFYING_SENTINEL_TAG },
+    ]);
+  });
+
+  it('does NOT update an existing collection when reconcileExisting is not set (inert/default)', async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        body: {
+          data: {
+            collectionByIdentifier: { id: COLLECTION_GID, handle: QUALIFYING_COLLECTION_HANDLE },
+          },
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    await ensureQualifyingCollection(client, { rule: ALL_PRODUCTS_RULE });
+    expect(calls).toHaveLength(1); // only the lookup; no collectionUpdate
   });
 
   it('throws on collectionCreate userErrors', async () => {
@@ -122,6 +206,36 @@ describe('waitForGiftProductsExcluded', () => {
       sleep: noSleep,
     });
     expect(ok).toBe(false);
+  });
+});
+
+describe('waitForGiftProductsIncluded', () => {
+  const P1 = 'gid://shopify/Product/1';
+  const noSleep = () => Promise.resolve();
+
+  it('returns true once all gift products are included (hasProduct=true)', async () => {
+    const { fetch } = mockFetch([
+      { body: { data: { collection: { hasProduct: false } } } }, // attempt 1: not yet
+      { body: { data: { collection: { hasProduct: true } } } }, // attempt 2: included
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    expect(
+      await waitForGiftProductsIncluded(client, COLLECTION_GID, [P1], { sleep: noSleep }),
+    ).toBe(true);
+  });
+
+  it('returns false on timeout (caller must not mint)', async () => {
+    const { fetch } = mockFetch([
+      { body: { data: { collection: { hasProduct: false } } } },
+      { body: { data: { collection: { hasProduct: false } } } },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    expect(
+      await waitForGiftProductsIncluded(client, COLLECTION_GID, [P1], {
+        attempts: 2,
+        sleep: noSleep,
+      }),
+    ).toBe(false);
   });
 });
 

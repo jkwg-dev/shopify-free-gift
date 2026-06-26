@@ -11,6 +11,8 @@ type FakeOptions = {
   readonly tagMissing?: readonly string[];
   // membership-exclusion result
   readonly excluded?: boolean;
+  // membership-INCLUSION result (model-C flip)
+  readonly included?: boolean;
   // collection product count: number, or null to simulate a missing collection
   readonly productCount?: number | null;
 };
@@ -22,6 +24,7 @@ class FakeGiftTagGateway implements GiftTagGateway {
   readonly untagged: string[][] = [];
   private readonly tagMissing: readonly string[];
   private readonly excluded: boolean;
+  private readonly included: boolean;
   private readonly productCount: number | null;
 
   constructor(
@@ -30,6 +33,7 @@ class FakeGiftTagGateway implements GiftTagGateway {
   ) {
     this.tagMissing = options.tagMissing ?? [];
     this.excluded = options.excluded ?? true;
+    this.included = options.included ?? true;
     // NOTE: 'productCount' in options, NOT ??, so an explicit null (missing collection) survives.
     this.productCount = 'productCount' in options ? (options.productCount ?? null) : 16;
   }
@@ -74,6 +78,11 @@ class FakeGiftTagGateway implements GiftTagGateway {
   waitForGiftProductsExcluded(): Promise<boolean> {
     this.calls.push('wait');
     return Promise.resolve(this.excluded);
+  }
+
+  waitForGiftProductsIncluded(): Promise<boolean> {
+    this.calls.push('wait-incl');
+    return Promise.resolve(this.included);
   }
 }
 
@@ -129,6 +138,32 @@ describe('provisionGifts — activation ordering + hard-fail gating', () => {
   });
 });
 
+describe('provisionGifts — INCLUSION model (giftsIncluded, model-C flip)', () => {
+  it('UN-tags gifts and waits for INCLUSION (no tag/verify), then confirms the scope', async () => {
+    const gw = new FakeGiftTagGateway({ vA: 'pA', vB: 'pB' });
+    const result = await provisionGifts(gw, ['vA', 'vB'], { giftsIncluded: true });
+
+    expect(gw.calls).toEqual(['ensure', 'resolve', 'untag', 'wait-incl', 'count']);
+    expect(gw.calls).not.toContain('tag');
+    expect(gw.calls).not.toContain('wait'); // not the exclusion wait
+    expect(gw.untagged).toEqual([['pA', 'pB']]);
+    expect(result).toEqual({
+      collectionId: 'gid://shopify/Collection/shared',
+      taggedProductIds: ['pA', 'pB'],
+      qualifyingProductCount: 16,
+      ready: true,
+    });
+  });
+
+  it('HARD-FAILS (does not mint) when inclusion membership has not caught up', async () => {
+    const gw = new FakeGiftTagGateway({ vA: 'pA' }, { included: false });
+    await expect(provisionGifts(gw, ['vA'], { giftsIncluded: true })).rejects.toMatchObject({
+      reason: 'membership-not-confirmed',
+    });
+    expect(gw.calls).not.toContain('count'); // aborted before confirming the scope
+  });
+});
+
 describe('reconcileGiftTagsOnTeardown — guard', () => {
   it('untags a product only when NO other active campaign still uses it', async () => {
     // pShared is used by both the removed campaign and a remaining active one -> keep tagged.
@@ -161,5 +196,13 @@ describe('reconcileGiftTagsOnTeardown — guard', () => {
     const gw = new FakeGiftTagGateway({ r1: 'p1', r2: 'p2' });
     const untagged = await reconcileGiftTagsOnTeardown(gw, ['r1', 'r2'], []);
     expect(new Set(untagged)).toEqual(new Set(['p1', 'p2']));
+  });
+
+  it('is a NO-OP under the inclusion model (no exclusion tag to reconcile)', async () => {
+    const gw = new FakeGiftTagGateway({ r1: 'p1' });
+    const untagged = await reconcileGiftTagsOnTeardown(gw, ['r1'], [], { giftsIncluded: true });
+    expect(untagged).toEqual([]);
+    expect(gw.calls).not.toContain('untag');
+    expect(gw.calls).not.toContain('resolve');
   });
 });

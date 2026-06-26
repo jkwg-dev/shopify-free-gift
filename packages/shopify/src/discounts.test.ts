@@ -185,6 +185,29 @@ describe('createScopedGiftDiscount — BXGY payload', () => {
     }
   });
 
+  it('SKIPS the exclusion guard under giftsIncluded — mints with the gift IN the collection', async () => {
+    // Inclusion model (model-C flip): no nodes/hasProduct membership check; count -> create only.
+    const { fetch, calls } = mockFetch([countOk(5), createOk]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    const result = await createScopedGiftDiscount(client, { ...baseInput, giftsIncluded: true });
+
+    expect(result.discountId).toBe('gid://shopify/DiscountCodeNode/99');
+    expect(calls).toHaveLength(2); // count + create (NOT nodes/hasProduct)
+    expect(parseBody(calls[0]!).query).toContain('productsCount'); // the empty-scope guard still ran
+    expect(parseBody(calls[1]!).query).toContain('discountCodeBxgyCreate');
+  });
+
+  it('still REFUSES under giftsIncluded when the scope is empty (empty guard always applies)', async () => {
+    const { fetch, calls } = mockFetch([countOk(0)]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    await expect(
+      createScopedGiftDiscount(client, { ...baseInput, giftsIncluded: true }),
+    ).rejects.toBeInstanceOf(EmptyQualifyingScopeError);
+    expect(calls).toHaveLength(1);
+  });
+
   it('throws ShopifyUserError when the mutation reports userErrors', async () => {
     const { fetch } = mockFetch([
       countOk(5),

@@ -24,11 +24,20 @@ function isDuplicateCode(error: ShopifyUserError): boolean {
 }
 
 export class ShopifyDiscountGatewayAdapter implements ShopifyDiscountGateway {
-  constructor(private readonly client: AdminGraphqlClient) {}
+  // `giftsIncluded` is the model-C flag, captured at the composition root. It rides on every mint so
+  // the shopify wrapper skips the "gifts must be excluded" guard under the inclusion model. Default
+  // false = today's exclusion behavior (inert when the flag is OFF).
+  constructor(
+    private readonly client: AdminGraphqlClient,
+    private readonly giftsIncluded = false,
+  ) {}
 
   async createScopedGiftDiscount(input: ScopedGiftDiscountInput): Promise<CreatedDiscount> {
     try {
-      return await createScopedGiftDiscount(this.client, input);
+      return await createScopedGiftDiscount(this.client, {
+        ...input,
+        giftsIncluded: input.giftsIncluded ?? this.giftsIncluded,
+      });
     } catch (error) {
       if (error instanceof ShopifyUserError && isDuplicateCode(error)) {
         throw new DuplicateDiscountCodeError(input.code);

@@ -19,12 +19,45 @@ export type QualifyingCollection = { readonly id: string; readonly handle: strin
 // deterministic handle for idempotency).
 export const QUALIFYING_COLLECTION_HANDLE = 'fge-qualifying';
 
+// A reserved sentinel tag NO product carries — so `TAG NOT_EQUALS <sentinel>` matches ALL products
+// (incl. gift products). This is the "anything qualifies" scope for the model-C inclusion flip
+// (verified live: matched all products + gifts). BXGY rejects all-items customerBuys, so "anything"
+// must still go through a collection — this rule is how.
+export const QUALIFYING_SENTINEL_TAG = 'app:fge-nonqualifying';
+
+export type QualifyingRule = {
+  readonly column: string;
+  readonly relation: string;
+  readonly condition: string;
+};
+
+// EXCLUDE_GIFTS_RULE = today's behavior (gift-tagged products drop out). ALL_PRODUCTS_RULE = the
+// model-C inclusion scope (everything, incl. gifts). The composition root picks one from the flag;
+// this package stays flag-agnostic.
+export const EXCLUDE_GIFTS_RULE: QualifyingRule = {
+  column: 'TAG',
+  relation: 'NOT_EQUALS',
+  condition: GIFT_TAG,
+};
+export const ALL_PRODUCTS_RULE: QualifyingRule = {
+  column: 'TAG',
+  relation: 'NOT_EQUALS',
+  condition: QUALIFYING_SENTINEL_TAG,
+};
+
 const COLLECTION_BY_HANDLE = `query QualifyingCollectionByHandle($handle: String!) {
   collectionByIdentifier(identifier: { handle: $handle }) { id handle }
 }`;
 
 const COLLECTION_CREATE = `mutation CreateQualifyingCollection($input: CollectionInput!) {
   collectionCreate(input: $input) {
+    collection { id handle }
+    userErrors { field message }
+  }
+}`;
+
+const COLLECTION_UPDATE = `mutation UpdateQualifyingCollection($input: CollectionInput!) {
+  collectionUpdate(input: $input) {
     collection { id handle }
     userErrors { field message }
   }
@@ -37,15 +70,35 @@ type CreateResponse = {
     readonly userErrors: readonly UserErrorDetail[];
   };
 };
+type UpdateResponse = {
+  readonly collectionUpdate: {
+    readonly collection: QualifyingCollection | null;
+    readonly userErrors: readonly UserErrorDetail[];
+  };
+};
 
-// Create-or-reuse the single shared qualifying smart collection (idempotent by handle). The
-// collection auto-includes all products NOT tagged GIFT_TAG.
+export type EnsureQualifyingOptions = {
+  // Smart-collection rule to apply. Defaults to EXCLUDE_GIFTS_RULE (today's behavior).
+  readonly rule?: QualifyingRule;
+  // When true, UPDATE an existing collection's ruleSet IN PLACE (collectionUpdate, keeps id/handle so
+  // BXGY references don't break — verified live). When false (default), an existing collection is
+  // returned untouched (today's behavior). Provisioning sets this true to flip the rule.
+  readonly reconcileExisting?: boolean;
+};
+
+// Create-or-reuse the single shared qualifying smart collection (idempotent by handle). With no
+// options this is exactly today's behavior (rule = EXCLUDE_GIFTS_RULE, existing returned as-is).
 export async function ensureQualifyingCollection(
   client: AdminGraphqlClient,
+  options: EnsureQualifyingOptions = {},
 ): Promise<QualifyingCollection> {
   const handle = QUALIFYING_COLLECTION_HANDLE;
+  const rule = options.rule ?? EXCLUDE_GIFTS_RULE;
   const existing = await client.request<ByHandleResponse>(COLLECTION_BY_HANDLE, { handle });
   if (existing.collectionByIdentifier !== null) {
+    if (options.reconcileExisting === true) {
+      await updateCollectionRule(client, existing.collectionByIdentifier.id, rule);
+    }
     return existing.collectionByIdentifier;
   }
 
@@ -53,10 +106,7 @@ export async function ensureQualifyingCollection(
     input: {
       title: 'Free gift — qualifying products',
       handle,
-      ruleSet: {
-        appliedDisjunctively: false,
-        rules: [{ column: 'TAG', relation: 'NOT_EQUALS', condition: GIFT_TAG }],
-      },
+      ruleSet: { appliedDisjunctively: false, rules: [rule] },
     },
   });
   const result = data.collectionCreate;
@@ -67,6 +117,21 @@ export async function ensureQualifyingCollection(
     throw new ShopifyUserError([{ message: 'collectionCreate returned no collection' }]);
   }
   return result.collection;
+}
+
+// Update an existing smart collection's ruleSet in place (id/handle preserved). Used to FLIP the
+// qualifying rule between exclude-gifts and all-products without recreating the collection.
+async function updateCollectionRule(
+  client: AdminGraphqlClient,
+  id: string,
+  rule: QualifyingRule,
+): Promise<void> {
+  const data = await client.request<UpdateResponse>(COLLECTION_UPDATE, {
+    input: { id, ruleSet: { appliedDisjunctively: false, rules: [rule] } },
+  });
+  if (data.collectionUpdate.userErrors.length > 0) {
+    throw new ShopifyUserError(data.collectionUpdate.userErrors);
+  }
 }
 
 const COLLECTION_HAS_PRODUCT = `query QualifyingCollectionHasProduct($id: ID!, $productId: ID!) {
@@ -112,6 +177,41 @@ export async function waitForGiftProductsExcluded(
       }
     }
     if (allExcluded) {
+      return true;
+    }
+    if (attempt < attempts - 1) {
+      await sleep(intervalMs);
+    }
+  }
+  return false;
+}
+
+// Inclusion counterpart of waitForGiftProductsExcluded (model-C flip): smart-collection membership
+// settles ASYNCHRONOUSLY after the rule changes / a tag is removed, so before minting a code that
+// references the collection we wait until every gift product is INCLUDED (hasProduct=true). Returns
+// false on timeout — the caller must then NOT mint (a full-price gift purchase wouldn't yet qualify).
+export async function waitForGiftProductsIncluded(
+  client: AdminGraphqlClient,
+  collectionId: string,
+  giftProductIds: readonly string[],
+  options: WaitOptions = {},
+): Promise<boolean> {
+  const attempts = options.attempts ?? 10;
+  const intervalMs = options.intervalMs ?? 500;
+  const sleep = options.sleep ?? globalSleep;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    let allIncluded = true;
+    for (const productId of giftProductIds) {
+      const data = await client.request<HasProductResponse>(COLLECTION_HAS_PRODUCT, {
+        id: collectionId,
+        productId,
+      });
+      if (data.collection?.hasProduct !== true) {
+        allIncluded = false;
+      }
+    }
+    if (allIncluded) {
       return true;
     }
     if (attempt < attempts - 1) {

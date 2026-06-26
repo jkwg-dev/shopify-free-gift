@@ -53,11 +53,17 @@ export {
 export {
   GIFT_TAG,
   QUALIFYING_COLLECTION_HANDLE,
+  QUALIFYING_SENTINEL_TAG,
+  EXCLUDE_GIFTS_RULE,
+  ALL_PRODUCTS_RULE,
   ensureQualifyingCollection,
   waitForGiftProductsExcluded,
+  waitForGiftProductsIncluded,
   collectionProductCount,
   giftProductsStillInCollection,
   type QualifyingCollection,
+  type QualifyingRule,
+  type EnsureQualifyingOptions,
   type WaitOptions,
 } from './collections.js';
 export {

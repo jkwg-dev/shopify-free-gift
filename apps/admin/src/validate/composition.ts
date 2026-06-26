@@ -11,8 +11,10 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import {
   AdminGraphqlClient,
+  ALL_PRODUCTS_RULE,
   collectionProductCount,
   ensureQualifyingCollection,
+  EXCLUDE_GIFTS_RULE,
   exchangeAccessToken,
   fetchVariantMeta,
   fetchVariantPricing,
@@ -21,7 +23,9 @@ import {
   tagProductsAsGift,
   untagProductsAsGift,
   waitForGiftProductsExcluded,
+  waitForGiftProductsIncluded,
   type FetchLike,
+  type QualifyingRule,
 } from '@free-gift-engine/shopify';
 import { buildAuthorizeUrl, type OAuthCallbackDeps } from '../auth/oauth.js';
 import type { PrismaLike } from '../db/prismaLike.js';
@@ -60,6 +64,17 @@ function requireEnv(name: string): string {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
+}
+
+// Stage-1 model-C flag (the ONE source of truth for it). OFF (default) = today's exclusion behavior,
+// perfectly inert. ON = gift products are INCLUDED in the qualifying collection (the all-products rule
+// + the mint guard skip + un-tag provisioning). Set FGE_GIFTS_INCLUDED=true to flip; re-provision to
+// apply (see docs/model-c-include-gifts-design.md).
+export function giftsIncludedFlag(): boolean {
+  return process.env['FGE_GIFTS_INCLUDED'] === 'true';
+}
+function qualifyingRule(): QualifyingRule {
+  return giftsIncludedFlag() ? ALL_PRODUCTS_RULE : EXCLUDE_GIFTS_RULE;
 }
 
 // Adapt the platform global fetch to the package's narrow FetchLike (no DOM lib types needed).
@@ -190,11 +205,12 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
   const client = await adminClientForShop(shopDomain);
   const mappingStore = new GiftCodeMappingStore(
     mappingTable,
-    new ShopifyDiscountGatewayAdapter(client),
+    new ShopifyDiscountGatewayAdapter(client, giftsIncludedFlag()),
   );
-  // The BXGY codes reference the shared qualifying collection; ensure it exists. (Gift products are
-  // tagged + membership confirmed at campaign provisioning — see services/giftLifecycle.)
-  const qualifyingCollection = await ensureQualifyingCollection(client);
+  // The BXGY codes reference the shared qualifying collection; ensure it exists with the rule for the
+  // active model (exclude gifts vs all-products). Read-only here — the RULE FLIP is reconciled by
+  // provisioning (getGiftTagGateway), so this never mutates an existing collection.
+  const qualifyingCollection = await ensureQualifyingCollection(client, { rule: qualifyingRule() });
 
   validateDeps = {
     apiSecret: requireEnv('SHOPIFY_API_SECRET'),
@@ -238,7 +254,13 @@ export async function getConfigDeps(): Promise<ConfigHandlerDeps> {
 export async function getGiftTagGateway(): Promise<GiftTagGateway> {
   const client = await adminClientForShop(requireEnv('SHOPIFY_SHOP_DOMAIN'));
   return {
-    ensureQualifyingCollection: () => ensureQualifyingCollection(client),
+    // Provisioning is the rule authority: apply the active model's rule AND reconcile (flip) an
+    // existing collection in place when the flag is ON.
+    ensureQualifyingCollection: () =>
+      ensureQualifyingCollection(client, {
+        rule: qualifyingRule(),
+        reconcileExisting: giftsIncludedFlag(),
+      }),
     resolveGiftProductIds: (variantIds) => giftProductIdsForVariants(client, variantIds),
     tagProductsAsGift: (productIds) => tagProductsAsGift(client, productIds),
     untagProductsAsGift: (productIds) => untagProductsAsGift(client, productIds),
@@ -246,6 +268,8 @@ export async function getGiftTagGateway(): Promise<GiftTagGateway> {
     collectionProductCount: (collectionId) => collectionProductCount(client, collectionId),
     waitForGiftProductsExcluded: (collectionId, productIds) =>
       waitForGiftProductsExcluded(client, collectionId, productIds),
+    waitForGiftProductsIncluded: (collectionId, productIds) =>
+      waitForGiftProductsIncluded(client, collectionId, productIds),
   };
 }
 
@@ -291,7 +315,10 @@ export function getWebhookDeps(shopDomain: string): WebhookDeps {
   const gateway: ShopifyDiscountGateway = {
     async createScopedGiftDiscount(input) {
       const client = await adminClientForShop(shopDomain, { allowUninstalled: true });
-      return new ShopifyDiscountGatewayAdapter(client).createScopedGiftDiscount(input);
+      return new ShopifyDiscountGatewayAdapter(
+        client,
+        giftsIncludedFlag(),
+      ).createScopedGiftDiscount(input);
     },
     async deactivateDiscount(id) {
       const client = await adminClientForShop(shopDomain, { allowUninstalled: true });
