@@ -73,8 +73,13 @@ export class GiftCodeMappingStore {
         return existing; // already minted — reuse the stored code
       }
 
-      if (existing !== null && existing.code === null && !this.isAbandoned(existing)) {
-        // A fresh reservation is in progress: wait for the holder to publish (or fail).
+      if (
+        existing !== null &&
+        existing.active &&
+        existing.code === null &&
+        !this.isAbandoned(existing)
+      ) {
+        // A fresh, ACTIVE reservation is in progress: wait for the holder to publish (or fail).
         const resolved = await this.waitForHolder(key);
         if (resolved !== null) {
           return resolved;
@@ -82,8 +87,14 @@ export class GiftCodeMappingStore {
         continue; // holder released/abandoned mid-wait → re-evaluate and take over
       }
 
-      if (existing !== null && existing.code === null) {
-        // Abandoned reservation (holder died): reclaim it, then take over below. Best-effort —
+      if (existing !== null) {
+        // Any other existing row is UNUSABLE for this key and must be reclaimed before we can mint:
+        //   - an ABANDONED reservation (active, code null, holder died / went stale), or
+        //   - an INACTIVE row (active === false) — a superseded/deactivated code that still occupies
+        //     this exact key. It can never be reused (inactive) yet blocks insertPending on the
+        //     unique key, so it permanently wedged getOrCreate into the timeout below.
+        // Safe to delete: a live holder never owns these (a fresh active reservation took the wait
+        // branch above; an inactive row's discount is already deactivated in Shopify). Best-effort —
         // a concurrent reclaimer may have removed it already.
         await this.releaseReservation(existing.id);
       }

@@ -127,6 +127,27 @@ describe('GiftCodeMappingStore.getOrCreate', () => {
     expect(await table.findByKey(key)).toBeNull();
   });
 
+  it('self-heals a superseded (inactive, code-populated) row that wedged the key', async () => {
+    // Reproduces the live "a"/Ice wedge: a deactivated code row (active=false, code set) that
+    // clear:reservations (code IS NULL) and the stale self-heal (code === null) both skipped, and
+    // that blocked insertPending on the unique key -> getOrCreate timed out every call.
+    const table = new FakeMappingTable();
+    table.seedSupersededCode(key, 'OLD-DEACTIVATED-CODE');
+    const gateway = new FakeDiscountGateway();
+    const store = new GiftCodeMappingStore(table, gateway, {
+      generateCode: sequentialCodes(),
+      sleep: immediate,
+    });
+
+    const result = await store.getOrCreate(key, spec);
+
+    // Reclaimed the dead row and minted a FRESH, active code — no timeout.
+    expect(gateway.createCount).toBe(1);
+    expect(result.code).toBe('CODE-1');
+    expect(result.active).toBe(true);
+    expect(result.discountId).toBe('disc-CODE-1');
+  });
+
   it('recovers a stale/abandoned reservation instead of wedging the key forever', async () => {
     const table = new FakeMappingTable();
     // A zombie reservation whose holder died mid-flight (old createdAt, never resolved).

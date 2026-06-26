@@ -72,6 +72,23 @@ export class FakeMappingTable implements GiftCodeMappingTable {
     return row;
   }
 
+  // Inject a SUPERSEDED row: a populated, but DEACTIVATED (active=false) code occupying this exact
+  // key. It can't be reused (inactive) and blocks insertPending (unique key) — the live wedge. Recent
+  // createdAt on purpose: an inactive row must be reclaimable regardless of age.
+  seedSupersededCode(key: MintingKey, code: string): GiftCodeMapping {
+    this.seq += 1;
+    const row: GiftCodeMapping = {
+      id: `m${this.seq}`,
+      ...key,
+      code,
+      discountId: `disc-${code}`,
+      active: false,
+      createdAt: this.now(),
+    };
+    this.byKey.set(keyString(key), row);
+    return row;
+  }
+
   finalize(id: string, fields: { code: string; discountId: string }): Promise<GiftCodeMapping> {
     const row = this.rowById(id);
     const updated: GiftCodeMapping = { ...row, code: fields.code, discountId: fields.discountId };

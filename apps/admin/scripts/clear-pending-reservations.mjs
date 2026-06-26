@@ -1,16 +1,18 @@
-// Clear stale/zombie gift-code RESERVATIONS (un-minted rows: code IS NULL) for a shop.
+// Clear gift-code mapping rows that WEDGE a minting key for a shop. Two unusable states:
+//   (1) zombie RESERVATION  — code IS NULL, holder died mid-mint (killed serverless invocation);
+//   (2) superseded ROW      — active = false, a deactivated code still occupying its key. getOrCreate
+//       can't reuse it (inactive) yet insertPending hits the unique key, so it timed out every call.
 //
 //   SHOPIFY_SHOP_DOMAIN=greentee-dev.myshopify.com \
 //   DATABASE_URL=... DIRECT_URL=... \
 //   node apps/admin/scripts/clear-pending-reservations.mjs
 //
-// Why: a reservation whose holder died mid-mint (killed serverless invocation) can linger as a
-// pending row. The store now self-heals these at runtime (it reclaims a reservation older than
-// staleReservationMs) and re-seeding the campaign cascade-deletes them — but this script clears them
-// WITHOUT re-seeding, e.g. to unwedge a key on the current campaign before the staleness window.
+// The store self-heals both at runtime (reclaims a stale reservation OR an inactive row) and
+// re-seeding the campaign cascade-deletes them — this script clears them WITHOUT re-seeding.
 //
-// SAFE: only deletes rows with code IS NULL (never a finalized/active code) AND older than
-// STALE_MINUTES (default 2) so an in-flight mint is not nuked. Idempotent.
+// SAFE: deletes only (code IS NULL AND older than STALE_MINUTES — never an in-flight mint) OR
+// (active = false — a deactivated code whose Shopify discount is already off; the row is just cache).
+// A LIVE row (active = true AND code set) is never touched. Idempotent.
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -35,11 +37,17 @@ async function main() {
   }
 
   const result = await prisma.giftCodeMapping.deleteMany({
-    where: { code: null, createdAt: { lt: cutoff }, campaign: { shopId: shop.id } },
+    where: {
+      campaign: { shopId: shop.id },
+      OR: [
+        { code: null, createdAt: { lt: cutoff } }, // zombie reservations
+        { active: false }, // superseded/deactivated rows that wedge the key
+      ],
+    },
   });
   console.log(
-    `Cleared ${result.count} stale reservation(s) (code IS NULL, older than ${staleMinutes}m) ` +
-      `for ${domain}. Finalized/active codes were untouched.`,
+    `Cleared ${result.count} wedging row(s) (code IS NULL older than ${staleMinutes}m, OR ` +
+      `active=false) for ${domain}. Live codes (active=true with a code) were untouched.`,
   );
 }
 
