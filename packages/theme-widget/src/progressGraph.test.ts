@@ -125,12 +125,24 @@ describe('buildProgressModel', () => {
     expect(m.allUnlocked).toBe(true);
   });
 
-  it('no-gift / below threshold: subtotal unknown, nothing reached, next=tier1 with spendMore null', () => {
-    const m = buildProgressModel(config, { status: 'no-gift', reason: 'below-threshold' })!;
+  it('no-gift WITHOUT a subtotal (inactive): subtotal unknown, nothing reached, next=tier1', () => {
+    const m = buildProgressModel(config, { status: 'no-gift', reason: 'inactive' })!;
     expect(m.subtotal).toBeNull();
     expect(m.tiers.some((t) => t.reached)).toBe(false);
     expect(m.next?.tierId).toBe('t1');
-    expect(m.next?.spendMore).toBeNull(); // never guesses a delta without a server subtotal
+    expect(m.next?.spendMore).toBeNull();
+  });
+
+  it('no-gift WITH a subtotal (below tier 1): subtotal feeds the fill, headline stays "Reach"', () => {
+    const m = buildProgressModel(config, {
+      status: 'no-gift',
+      reason: 'below-threshold',
+      subtotal: money(25000, 'CAD'), // CA$250, below tier 1 (CA$500)
+    })!;
+    expect(m.subtotal).toEqual(money(25000, 'CAD')); // available for the fill (was null before)
+    expect(m.tiers.some((t) => t.reached)).toBe(false); // still below CA$500
+    expect(m.next?.tierId).toBe('t1');
+    expect(m.next?.spendMore).toBeNull(); // headline stays "Reach CA$500", not "Spend X more"
     expect(m.next?.threshold).toEqual(money(50000, 'CAD'));
   });
 
@@ -175,8 +187,17 @@ describe('stepperLayout (linear 0–2000 fill, pure)', () => {
     expect(stepperLayout(buildProgressModel(config, gift('t3', 250000))!).fillPct).toBe(100);
   });
 
-  it('fill is 0 when the server has not confirmed a subtotal (no-gift)', () => {
-    const m = buildProgressModel(config, { status: 'no-gift', reason: 'below-threshold' })!;
+  it('fill is 0 when the server has not confirmed a subtotal (no-gift without subtotal)', () => {
+    const m = buildProgressModel(config, { status: 'no-gift', reason: 'inactive' })!;
     expect(stepperLayout(m).fillPct).toBe(0);
+  });
+
+  it('no-gift WITH a confirmed subtotal still fills (CA$250 -> 12.5%, below tier 1)', () => {
+    const m = buildProgressModel(config, {
+      status: 'no-gift',
+      reason: 'below-threshold',
+      subtotal: money(25000, 'CAD'),
+    })!;
+    expect(stepperLayout(m).fillPct).toBe(12.5);
   });
 });

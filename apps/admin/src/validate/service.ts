@@ -192,7 +192,7 @@ export async function resolveValidate(
     return { status: 'no-gift', reason: 'inactive' };
   }
   if (resolved.status === 'no-gift') {
-    return { status: 'no-gift', reason: resolved.reason };
+    return { status: 'no-gift', reason: resolved.reason, subtotal: resolved.subtotal };
   }
 
   // Cumulative is unsupported on Advanced: multiple non-combinable codes cannot all redeem on one
@@ -200,12 +200,12 @@ export async function resolveValidate(
   // create cumulative campaigns; if one slips through and resolves more than one tier, refuse here
   // rather than hand out codes that cannot all apply.
   if (resolved.resolved.length > 1) {
-    return { status: 'no-gift', reason: 'cumulative-unsupported' };
+    return { status: 'no-gift', reason: 'cumulative-unsupported', subtotal: resolved.subtotal };
   }
 
   const winning = resolved.resolved[0];
   if (winning === undefined) {
-    return { status: 'no-gift', reason: 'below-threshold' };
+    return { status: 'no-gift', reason: 'below-threshold', subtotal: resolved.subtotal };
   }
 
   // Never promise an out-of-stock (or unresolved) gift variant.
@@ -213,7 +213,7 @@ export async function resolveValidate(
   for (const variantId of giftVariantIds) {
     const priced = pricingById.get(variantId);
     if (priced === undefined || !priced.availableForSale) {
-      return { status: 'no-gift', reason: 'gift-unavailable' };
+      return { status: 'no-gift', reason: 'gift-unavailable', subtotal: resolved.subtotal };
     }
   }
 

@@ -61,7 +61,15 @@ export function buildProgressModel(
   if (config.status !== 'active') {
     return null;
   }
-  const subtotal = lastResult?.status === 'gift' ? lastResult.subtotal : null;
+  // Authoritative subtotal from EITHER arm: the gift arm carries it, and the no-gift arm now carries it
+  // too (additive contract change) so the fill shows real progress below tier 1. `?? null` covers the
+  // one no-gift case without it ('inactive').
+  const subtotal =
+    lastResult?.status === 'gift'
+      ? lastResult.subtotal
+      : lastResult?.status === 'no-gift'
+        ? (lastResult.subtotal ?? null)
+        : null;
   const currentTierId = lastResult?.status === 'gift' ? lastResult.tierId : null;
 
   const tiers: ProgressTierView[] = config.tiers.map((tier) => ({
@@ -76,6 +84,10 @@ export function buildProgressModel(
   // Next = the lowest-threshold tier not yet reached (ascending by threshold).
   const ascending = [...tiers].sort((a, b) => a.threshold.amountMinor - b.threshold.amountMinor);
   const nextTier = ascending.find((t) => !t.reached) ?? null;
+  // spendMore (the "Spend CA$X more" delta) only once at least one tier is unlocked; below tier 1 the
+  // headline stays the absolute "Reach CA$500" goal even though the subtotal is now known (it just
+  // feeds the fill). This keeps the headline copy unchanged while fixing the fill.
+  const anyReached = tiers.some((t) => t.reached);
   const next: ProgressNext | null =
     nextTier === null
       ? null
@@ -84,7 +96,7 @@ export function buildProgressModel(
           threshold: nextTier.threshold,
           giftLabel: nextTier.giftLabel,
           spendMore:
-            subtotal === null
+            subtotal === null || !anyReached
               ? null
               : money(
                   Math.max(0, nextTier.threshold.amountMinor - subtotal.amountMinor),

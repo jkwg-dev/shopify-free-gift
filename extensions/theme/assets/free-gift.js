@@ -641,11 +641,11 @@
     return `Choose 1 of ${gift.options.length}`;
   }
   function buildProgressModel(config, lastResult2) {
-    var _a2;
+    var _a2, _b2;
     if (config.status !== "active") {
       return null;
     }
-    const subtotal = (lastResult2 == null ? void 0 : lastResult2.status) === "gift" ? lastResult2.subtotal : null;
+    const subtotal = (lastResult2 == null ? void 0 : lastResult2.status) === "gift" ? lastResult2.subtotal : (lastResult2 == null ? void 0 : lastResult2.status) === "no-gift" ? (_a2 = lastResult2.subtotal) != null ? _a2 : null : null;
     const currentTierId = (lastResult2 == null ? void 0 : lastResult2.status) === "gift" ? lastResult2.tierId : null;
     const tiers = config.tiers.map((tier) => ({
       tierId: tier.tierId,
@@ -656,12 +656,13 @@
       isCurrent: tier.tierId === currentTierId
     }));
     const ascending = [...tiers].sort((a, b) => a.threshold.amountMinor - b.threshold.amountMinor);
-    const nextTier = (_a2 = ascending.find((t) => !t.reached)) != null ? _a2 : null;
+    const nextTier = (_b2 = ascending.find((t) => !t.reached)) != null ? _b2 : null;
+    const anyReached = tiers.some((t) => t.reached);
     const next = nextTier === null ? null : {
       tierId: nextTier.tierId,
       threshold: nextTier.threshold,
       giftLabel: nextTier.giftLabel,
-      spendMore: subtotal === null ? null : money(
+      spendMore: subtotal === null || !anyReached ? null : money(
         Math.max(0, nextTier.threshold.amountMinor - subtotal.amountMinor),
         config.currency
       )

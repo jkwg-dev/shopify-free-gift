@@ -360,3 +360,20 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 | W6  | Labels fit           | CA$500 / CA$1,000 / CA$1,500 labels at 25/50/75% still fit, no overlap/clip                                  |
 | W7  | Animates             | Fill still animates smoothly on change (grow + shrink), authoritative-only, prompt (~1.8s)                   |
 | W8  | Both surfaces        | Works in drawer and /cart; :empty-immune rendering, black palette, headline + pending unchanged              |
+
+## Round 19 checks (fill uses the real subtotal below tier 1 too)
+
+> Redeploy BOTH the theme widget AND the Next app (the /validate server now returns subtotal on no-gift).
+
+| #   | Check                | Expected                                                                                                            |
+| --- | -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| X1  | Partial below tier 1 | At cart CA$249.50 (below tier 1) the fill reads ~12.5% (≈1/8), NOT 0                                                |
+| X2  | Headline unchanged   | The headline below tier 1 still reads "Reach CA$500.00 to unlock …" (not "Spend X more")                            |
+| X3  | Linear everywhere    | Fill = subtotal/2000 across all states (no-gift, gift, declined); $500→25%, $1000→50%, etc.                         |
+| X4  | Nodes consistent     | Below tier 1 all nodes are outline (none reached) and the fill (12.5%) sits left of the first node (25%)            |
+| X5  | Authoritative        | The fill uses the server-computed qualifying subtotal (gift-excluded), same source as before — never a client total |
+| X6  | Animates             | Adding items animates the fill up smoothly from the below-tier-1 value; removing animates down                      |
+| X7  | Both surfaces        | Works in drawer and /cart                                                                                           |
+
+> NOTE: the no-gift subtotal needs the SERVER redeploy. Until then the widget falls back to 0% below
+> tier 1 (the no-gift /validate response won't carry `subtotal`).

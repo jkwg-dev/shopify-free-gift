@@ -61,6 +61,11 @@ export type ValidateResult =
         | 'inactive'
         | 'gift-unavailable'
         | 'cumulative-unsupported';
+      // The server-computed qualifying subtotal (gift-excluded, presentment currency) WHEN it was
+      // computed — present for every reason except 'inactive' (no cart context). Additive: lets the
+      // stepper fill show real progress below tier 1 too; never used for eligibility (that's the gift
+      // arm + the discount's checkout minimum).
+      readonly subtotal?: Money;
     };
 
 export type ValidateNoGiftReason = Extract<ValidateResult, { status: 'no-gift' }>['reason'];

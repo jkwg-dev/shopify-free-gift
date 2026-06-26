@@ -171,7 +171,11 @@ describe('resolveValidate — suppression', () => {
       deps,
     );
 
-    expect(result).toEqual({ status: 'no-gift', reason: 'cumulative-unsupported' });
+    expect(result).toEqual({
+      status: 'no-gift',
+      reason: 'cumulative-unsupported',
+      subtotal: money(12000, 'USD'),
+    });
     expect(gateway.createCount).toBe(0); // never mint codes that cannot all redeem
   });
 });
@@ -185,7 +189,11 @@ describe('resolveValidate — server-authoritative cart', () => {
       deps,
     );
 
-    expect(result).toEqual({ status: 'no-gift', reason: 'below-threshold' });
+    expect(result).toEqual({
+      status: 'no-gift',
+      reason: 'below-threshold',
+      subtotal: money(0, 'USD'), // all lines are app-added gifts -> excluded
+    });
   });
 
   it('counts a paid duplicate of a gift-eligible product (exclusion is per-line)', async () => {
@@ -350,7 +358,11 @@ describe('resolveValidate — no-gift paths', () => {
       deps,
     );
 
-    expect(result).toEqual({ status: 'no-gift', reason: 'gift-unavailable' });
+    expect(result).toEqual({
+      status: 'no-gift',
+      reason: 'gift-unavailable',
+      subtotal: money(12000, 'USD'),
+    });
   });
 
   it('resolves to no-gift when the shopper declines', async () => {
@@ -361,7 +373,11 @@ describe('resolveValidate — no-gift paths', () => {
       deps,
     );
 
-    expect(result).toEqual({ status: 'no-gift', reason: 'declined' });
+    expect(result).toEqual({
+      status: 'no-gift',
+      reason: 'declined',
+      subtotal: money(12000, 'USD'), // declined but the subtotal is still reported for the fill
+    });
     expect(gateway.createCount).toBe(0); // declined never mints
   });
 
