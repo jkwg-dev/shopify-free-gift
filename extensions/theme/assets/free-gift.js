@@ -699,37 +699,19 @@
       return `${m.amountMinor} ${m.currency}`;
     }
   }
+  var STEPPER_FILL_MAX = 2e3;
   function stepperLayout(model) {
     const ordered = [...model.tiers].sort(
       (a, b) => a.threshold.amountMinor - b.threshold.amountMinor
     );
-    const n = ordered.length;
-    const posAt = (i) => (i + 1) / (n + 1) * 100;
-    const nodes = ordered.map((t, i) => {
-      const posPct = posAt(i);
+    const pct = (m) => Math.max(0, Math.min(100, major(m) / STEPPER_FILL_MAX * 100));
+    const fillPct = model.subtotal === null ? 0 : pct(model.subtotal);
+    const nodes = ordered.map((t) => {
+      const posPct = pct(t.threshold);
       const align = posPct <= 8 ? "start" : posPct >= 92 ? "end" : "center";
       return { tierId: t.tierId, posPct, align, reached: t.reached, isCurrent: t.isCurrent };
     });
-    return { fillPct: fillToNodes(model.subtotal, ordered, posAt), nodes };
-  }
-  function fillToNodes(subtotal, ordered, posAt) {
-    if (subtotal === null || ordered.length === 0) {
-      return 0;
-    }
-    const s = subtotal.amountMinor;
-    const t0 = ordered[0].threshold.amountMinor;
-    if (s <= t0) {
-      return t0 <= 0 ? posAt(0) : Math.max(0, s / t0 * posAt(0));
-    }
-    for (let i = 0; i < ordered.length - 1; i++) {
-      const lo = ordered[i].threshold.amountMinor;
-      const hi = ordered[i + 1].threshold.amountMinor;
-      if (s < hi) {
-        const frac = hi === lo ? 0 : (s - lo) / (hi - lo);
-        return posAt(i) + (posAt(i + 1) - posAt(i)) * frac;
-      }
-    }
-    return posAt(ordered.length - 1);
+    return { fillPct, nodes };
   }
   function ensureSkeleton(mount, nodes) {
     var _a2;

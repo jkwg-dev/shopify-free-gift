@@ -132,54 +132,34 @@ function fmt(m: Money, compact = false): string {
 export type StepAlign = 'start' | 'center' | 'end';
 export type StepNode = {
   readonly tierId: string;
-  readonly posPct: number; // node position along the track (threshold / top threshold)
+  readonly posPct: number; // node position along the track (threshold / STEPPER_FILL_MAX)
   readonly align: StepAlign; // label alignment so edge labels don't clip off the track
   readonly reached: boolean;
   readonly isCurrent: boolean;
 };
 
-// Pure stepper geometry (unit-tested). Nodes are distributed as a CENTERED group — node i (ascending
-// by threshold) sits at (i+1)/(n+1), so there is a symmetric margin on both ends and the cluster is
-// balanced rather than pinned to the right edge (intentional empty track past the last tier). The fill
-// edge tracks the dots: it reaches node i exactly when the confirmed subtotal hits tier i's threshold,
-// interpolating in POSITION space between adjacent nodes; 0 when the subtotal is unknown (never
-// optimistic). Labels align start/center/end so an edge label can't clip off the track.
+// The stepper's fill scale: a FIXED 0–STEPPER_FILL_MAX track (presentment major units, e.g. CA$2000),
+// so the bar shows absolute progress (CA$250 already reads ~1/8 full) rather than tier-relative. Single
+// constant for now; revisit if multi-currency tuning is ever needed.
+export const STEPPER_FILL_MAX = 2000;
+
+// Pure stepper geometry (unit-tested). Fill % and each node sit at amount/STEPPER_FILL_MAX (clamped
+// 0–100): the fill is the confirmed subtotal on the fixed scale (0 when unknown — never optimistic),
+// and nodes sit at their thresholds (CA$500/1000/1500 -> 25/50/75%), leaving headroom up to the cap. A
+// node reads filled when the fill reaches it (fill% >= its position% iff subtotal >= threshold, which is
+// exactly `reached`). Labels align start/center/end so an edge label can't clip off the track.
 export function stepperLayout(model: ProgressModel): { fillPct: number; nodes: StepNode[] } {
   const ordered = [...model.tiers].sort(
     (a, b) => a.threshold.amountMinor - b.threshold.amountMinor,
   );
-  const n = ordered.length;
-  const posAt = (i: number): number => ((i + 1) / (n + 1)) * 100;
-  const nodes = ordered.map((t, i): StepNode => {
-    const posPct = posAt(i);
+  const pct = (m: Money): number => Math.max(0, Math.min(100, (major(m) / STEPPER_FILL_MAX) * 100));
+  const fillPct = model.subtotal === null ? 0 : pct(model.subtotal);
+  const nodes = ordered.map((t): StepNode => {
+    const posPct = pct(t.threshold);
     const align: StepAlign = posPct <= 8 ? 'start' : posPct >= 92 ? 'end' : 'center';
     return { tierId: t.tierId, posPct, align, reached: t.reached, isCurrent: t.isCurrent };
   });
-  return { fillPct: fillToNodes(model.subtotal, ordered, posAt), nodes };
-}
-
-function fillToNodes(
-  subtotal: Money | null,
-  ordered: readonly ProgressTierView[],
-  posAt: (i: number) => number,
-): number {
-  if (subtotal === null || ordered.length === 0) {
-    return 0;
-  }
-  const s = subtotal.amountMinor;
-  const t0 = ordered[0]!.threshold.amountMinor;
-  if (s <= t0) {
-    return t0 <= 0 ? posAt(0) : Math.max(0, (s / t0) * posAt(0));
-  }
-  for (let i = 0; i < ordered.length - 1; i++) {
-    const lo = ordered[i]!.threshold.amountMinor;
-    const hi = ordered[i + 1]!.threshold.amountMinor;
-    if (s < hi) {
-      const frac = hi === lo ? 0 : (s - lo) / (hi - lo);
-      return posAt(i) + (posAt(i + 1) - posAt(i)) * frac;
-    }
-  }
-  return posAt(ordered.length - 1); // at/above the top threshold → cap at the last node
+  return { fillPct, nodes };
 }
 
 type StepperUi = {

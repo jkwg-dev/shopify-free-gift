@@ -150,34 +150,33 @@ describe('buildProgressModel', () => {
   });
 });
 
-describe('stepperLayout (visual geometry, pure)', () => {
-  it('distributes nodes as a CENTERED group at (i+1)/(n+1), not pinned to the right edge', () => {
-    const m = buildProgressModel(config, gift('t1', 60000))!;
-    const { nodes } = stepperLayout(m);
-    // 3 tiers -> 25/50/75, leaving symmetric empty track on both ends (last node NOT at 100%)
-    expect(nodes.map((n) => Math.round(n.posPct))).toEqual([25, 50, 75]);
+describe('stepperLayout (linear 0–2000 fill, pure)', () => {
+  it('nodes sit at threshold / 2000 (CA$500/1000/1500 -> 25/50/75%), labels centered', () => {
+    const { nodes } = stepperLayout(buildProgressModel(config, gift('t1', 60000))!);
+    expect(nodes.map((n) => Math.round(n.posPct))).toEqual([25, 50, 75]); // headroom past 75% to $2000
     expect(nodes.map((n) => n.align)).toEqual(['center', 'center', 'center']);
-    expect(nodes.map((n) => n.reached)).toEqual([true, false, false]);
   });
 
-  it('fill edge tracks the dots: it reaches node i exactly at tier i’s threshold', () => {
-    // subtotal CA$600 sits 20% of the way from tier1 (CA$500@25%) to tier2 (CA$1000@50%) -> 30%
-    expect(Math.round(stepperLayout(buildProgressModel(config, gift('t1', 60000))!).fillPct)).toBe(
-      30,
-    );
-    // exactly at tier1's threshold -> the first node (25%)
-    expect(Math.round(stepperLayout(buildProgressModel(config, gift('t1', 50000))!).fillPct)).toBe(
-      25,
-    );
+  it('fill is subtotal / 2000: CA$250 -> 12.5% (partially filled below tier 1)', () => {
+    expect(stepperLayout(buildProgressModel(config, gift('t1', 25000))!).fillPct).toBe(12.5);
+  });
+
+  it('CA$1000 -> 50% fill with the CA$1000 node reached', () => {
+    const { fillPct, nodes } = stepperLayout(buildProgressModel(config, gift('t2', 100000))!);
+    expect(fillPct).toBe(50);
+    expect(nodes.find((n) => n.tierId === 't2')!.reached).toBe(true);
+  });
+
+  it('fill is 75% at the top tier (CA$1500) — headroom remains up to CA$2000', () => {
+    expect(stepperLayout(buildProgressModel(config, gift('t3', 150000))!).fillPct).toBe(75);
+  });
+
+  it('fill clamps at 100% above CA$2000', () => {
+    expect(stepperLayout(buildProgressModel(config, gift('t3', 250000))!).fillPct).toBe(100);
   });
 
   it('fill is 0 when the server has not confirmed a subtotal (no-gift)', () => {
     const m = buildProgressModel(config, { status: 'no-gift', reason: 'below-threshold' })!;
     expect(stepperLayout(m).fillPct).toBe(0);
-  });
-
-  it('fill caps at the LAST node (not the track end) at/above the top tier', () => {
-    const m = buildProgressModel(config, gift('t3', 200000))!;
-    expect(Math.round(stepperLayout(m).fillPct)).toBe(75); // last of 3 nodes, leaving empty track
   });
 });

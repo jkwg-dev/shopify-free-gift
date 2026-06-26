@@ -345,3 +345,18 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 | U6  | Timing consistent     | The chooser dim + checkout state engage/clear together (no lagging element) — nothing keyed off the theme's list re-render anymore                               |
 | U7  | Min hold + no flicker | Immediate engage, ≥~0.5s hold, clears on completion/error/timeout; fast change = brief clean pending                                                             |
 | U8  | Both surfaces         | Works in drawer and /cart                                                                                                                                        |
+
+## Round 18 checks (subtotal-proportional fill, fixed 0–2000 scale)
+
+> Redeploy the theme widget. STEPPER_FILL_MAX = 2000 (presentment major units, e.g. CA$).
+
+| #   | Check                | Expected                                                                                                     |
+| --- | -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| W1  | Partial below tier 1 | At ~CA$250 the fill is ~1/8 (12.5%), NOT 0 — it's subtotal/2000, not tier-relative                           |
+| W2  | Linear growth        | Fill grows linearly with subtotal: $500→25%, $1000→50%, $1500→75%, $2000→100%                                |
+| W3  | Clamp                | Above CA$2000 the fill stays at 100%                                                                         |
+| W4  | Node positions       | Tier dots sit at 25/50/75% (CA$500/1000/1500); the right ~25% is empty headroom to $2000                     |
+| W5  | Nodes fill with bar  | A node reads filled once the fill reaches its position (= subtotal ≥ that threshold); unreached stay outline |
+| W6  | Labels fit           | CA$500 / CA$1,000 / CA$1,500 labels at 25/50/75% still fit, no overlap/clip                                  |
+| W7  | Animates             | Fill still animates smoothly on change (grow + shrink), authoritative-only, prompt (~1.8s)                   |
+| W8  | Both surfaces        | Works in drawer and /cart; :empty-immune rendering, black palette, headline + pending unchanged              |
