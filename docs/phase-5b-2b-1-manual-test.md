@@ -275,3 +275,21 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 | R4  | Convergence intact (race/422) | If a gift add fails (422) or the cart changed mid-flight, the loop STILL re-reads + re-validates and recovers (no wrong gift, no leak) |
 | R5  | Suppression intact            | Highest-tier-only / drop-below-threshold revert still work exactly as before                                                           |
 | R6  | Faster                        | Overall transition is noticeably quicker (~1.5s less from the dropped /validate + re-read)                                             |
+
+## Round 14 checks (pending indicator) — covers residual reconcile latency
+
+> Display/UX only; reconcile/BXGY/tiers/leak guards unchanged. Redeploy the theme widget.
+
+| #   | Check                   | Expected                                                                                                                                 |
+| --- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| P1  | Hint on tier change     | While the gift is being added/swapped, the chooser shows a small "Updating your free gift…" line (first load: "Loading your free gift…") |
+| P2  | Dimmed cards            | The gift card(s)/variant chips dim (~0.5 opacity) during pending; the decline checkbox + hint stay full opacity/usable                   |
+| P3  | Checkout locked         | The theme's Checkout button (drawer "Check out" AND /cart "Check out") is dimmed + unclickable while pending                             |
+| P4  | Ends on confirm         | Once the gift is confirmed at $0 in the cart, the hint clears, cards return to full opacity, Checkout re-enables                         |
+| P5  | Ends on decline-off     | Unchecking "Add my free gift": pending shows only if removal is slow, and clears once removal is confirmed                               |
+| P6  | Re-enables on error/422 | If the reconcile errors or a gift 422s, pending clears and Checkout re-enables (never stuck)                                             |
+| P7  | Safety timeout          | If a reconcile hangs, Checkout re-enables on its own within ~8s (never trapped)                                                          |
+| P8  | No flicker              | A fast same-tier / code-only change does NOT flash the hint/dim/disable (only engages past ~350ms)                                       |
+| P9  | Authoritative           | Pending never shows a fake gift/price — the real gift/price always comes from the confirmed cart                                         |
+| P10 | Both surfaces           | Pending hint + dim + Checkout lock work in BOTH the drawer and the /cart page                                                            |
+| P11 | Resilient               | On a theme with no findable Checkout button, pending still shows hint/dim and does NOT error (Checkout just isn't locked)                |

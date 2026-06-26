@@ -63,6 +63,7 @@ export {
   type MountStrategy,
 } from './cartSections.js';
 export { injectStyles, FGE_CSS, FGE_STYLE_ID } from './styles.js';
+export { pendingHint, setCheckoutLocked, PENDING_DELAY_MS, PENDING_MAX_MS } from './pending.js';
 
 // Convergent reconcile loop (re-read -> re-validate -> apply until stable) — Phase 5b-2a fix.
 export { reconcileGiftCart, type GiftCartIo, type ReconcileOutcome } from './reconcileLoop.js';

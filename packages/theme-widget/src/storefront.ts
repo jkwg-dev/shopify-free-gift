@@ -19,6 +19,7 @@ import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
+import { PENDING_DELAY_MS, PENDING_MAX_MS, pendingHint, setCheckoutLocked } from './pending.js';
 import { buildProgressModel, renderProgress } from './progressGraph.js';
 import { reconcileGiftCart } from './reconcileLoop.js';
 import { injectStyles } from './styles.js';
@@ -98,6 +99,15 @@ const unavailableVariantIds = new Set<string>();
 // into each so the widget works wherever the shopper is.
 let sections: CartSection[] = [];
 
+// Pending-indicator state (5b-2b): masks the residual gift-reconcile latency. `giftPendingActive` is
+// shown only once the in-progress work outlasts PENDING_DELAY_MS (anti-flicker), and is ALWAYS cleared
+// on a terminal outcome or the safety timeout (so Checkout never gets stuck). `perceptionConfig` lets
+// the timer callbacks re-render without threading config through them.
+let giftPendingActive = false;
+let giftPendingEngageTimer: ReturnType<typeof setTimeout> | undefined;
+let giftPendingSafetyTimer: ReturnType<typeof setTimeout> | undefined;
+let perceptionConfig: WidgetConfig | null = null;
+
 // Cart writer for applyCartPlan: POSTs JSON to an AJAX cart path and returns the raw Response (ok +
 // status + text), so add/remove failures (e.g. a 422 for an unpublished gift product) are surfaced.
 const cartPost = (path: string, body: unknown): Promise<Response> =>
@@ -162,6 +172,8 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
         setDiscount: (code) => postJson('cart/update.js', { discount: code ?? '' }),
         // Nudge the theme to re-render its cart UI; tagged with our source so we ignore the echo.
         nudge: () => w.publish?.(CART_UPDATE_EVENT, { source: SOURCE }),
+        // Real gift work is starting → maybe show the pending indicator (gated by the flicker delay).
+        onGiftMutationStart: () => beginGiftPending(),
       },
       { initialCode: lastDiscount },
     );
@@ -171,9 +183,49 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     for (const variantId of failedAddVariantIds(outcome.failures)) {
       unavailableVariantIds.add(variantId);
     }
+    endGiftPending(); // gift confirmed (or terminal) → clear pending BEFORE the final render
     renderPerception(config);
   } finally {
+    endGiftPending(); // safety: also clear on error/throw — Checkout must never stay locked
     selfMutating = false;
+  }
+}
+
+// Engage the pending indicator only if the in-progress work outlasts the flicker threshold. Called
+// when a reconcile is about to do real gift work (onGiftMutationStart); the engage timer is cancelled
+// by endGiftPending if the work finishes first, so fast reconciles show nothing.
+function beginGiftPending(): void {
+  if (giftPendingActive || giftPendingEngageTimer !== undefined) {
+    return;
+  }
+  giftPendingEngageTimer = setTimeout(() => {
+    giftPendingEngageTimer = undefined;
+    giftPendingActive = true;
+    setCheckoutLocked(true);
+    if (perceptionConfig !== null) {
+      renderPerception(perceptionConfig); // dim chooser + show the hint
+    }
+  }, PENDING_DELAY_MS);
+  giftPendingSafetyTimer = setTimeout(() => endGiftPending(), PENDING_MAX_MS);
+}
+
+// Clear pending on EVERY terminal outcome (success, removal, error/422) and on the safety timeout, so
+// Checkout is never left stuck. Idempotent.
+function endGiftPending(): void {
+  if (giftPendingEngageTimer !== undefined) {
+    clearTimeout(giftPendingEngageTimer);
+    giftPendingEngageTimer = undefined;
+  }
+  if (giftPendingSafetyTimer !== undefined) {
+    clearTimeout(giftPendingSafetyTimer);
+    giftPendingSafetyTimer = undefined;
+  }
+  if (giftPendingActive) {
+    giftPendingActive = false;
+    setCheckoutLocked(false);
+    if (perceptionConfig !== null) {
+      renderPerception(perceptionConfig); // restore full opacity + drop the hint
+    }
   }
 }
 
@@ -203,6 +255,9 @@ function renderPerception(config: WidgetConfig): void {
   // The CURRENT (highest reached) tier is the gift the shopper receives — the chooser shows ONLY it.
   const currentTierId = lastResult?.status === 'gift' ? lastResult.tierId : null;
   const model = buildProgressModel(campaignConfig, lastResult);
+  const pending = giftPendingActive
+    ? { active: true, message: pendingHint(lastResult !== null) }
+    : undefined;
   const handlers = {
     onChoose: (tierId: string, optionId: string) => {
       choiceState = { ...choiceState, [tierId]: optionId };
@@ -223,6 +278,7 @@ function renderPerception(config: WidgetConfig): void {
       { choices: choiceState, declined, unavailableVariantIds },
       handlers,
       currentTierId,
+      pending,
     );
     section.attach(); // ensure both sections are in the cart flow after rendering
   }
@@ -272,6 +328,7 @@ function init(): void {
   if (config === null) {
     return;
   }
+  perceptionConfig = config; // so the pending-timer callbacks can re-render without threading config
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const trigger = (data?: unknown): void => {

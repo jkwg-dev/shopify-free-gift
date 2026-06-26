@@ -362,7 +362,7 @@
     });
     return { declineEnabled: config.declineEnabled, declined: state.declined, tiers };
   }
-  function renderChooser(mount, config, state, handlers, currentTierId) {
+  function renderChooser(mount, config, state, handlers, currentTierId, pending2) {
     mount.textContent = "";
     const model = buildChooserModel(config, state);
     if (model === null) {
@@ -370,6 +370,13 @@
     }
     const root2 = document.createElement("div");
     root2.className = "fge-gift";
+    if (pending2 == null ? void 0 : pending2.active) {
+      root2.classList.add("is-pending");
+      const note = document.createElement("p");
+      note.className = "fge-gift__pending";
+      note.textContent = pending2.message;
+      root2.append(note);
+    }
     renderGiftSection(root2, model, currentTierId, handlers);
     if (model.declineEnabled) {
       root2.append(renderDecline(model.declined, handlers));
@@ -585,6 +592,38 @@
     return { ok: true, config: body };
   }
 
+  // src/pending.ts
+  var PENDING_DELAY_MS = 350;
+  var PENDING_MAX_MS = 8e3;
+  function pendingHint(hasConfirmedResult) {
+    return hasConfirmedResult ? "Updating your free gift\u2026" : "Loading your free gift\u2026";
+  }
+  var CHECKOUT_SELECTORS = [
+    "#CartDrawer-Checkout",
+    "#checkout",
+    'button[name="checkout"]',
+    '[name="checkout"]',
+    ".cart__checkout-button"
+  ];
+  var CHECKOUT_LOCK_CLASS = "fge-checkout-pending";
+  function setCheckoutLocked(locked) {
+    var _a2;
+    const doc = globalThis.document;
+    if (doc === void 0) {
+      return;
+    }
+    (_a2 = doc.body) == null ? void 0 : _a2.classList.toggle(CHECKOUT_LOCK_CLASS, locked);
+    for (const el of Array.from(doc.querySelectorAll(CHECKOUT_SELECTORS.join(", ")))) {
+      if (locked) {
+        el.setAttribute("aria-disabled", "true");
+        el.disabled = true;
+      } else {
+        el.removeAttribute("aria-disabled");
+        el.disabled = false;
+      }
+    }
+  }
+
   // src/progressGraph.ts
   function giftLabelFor(gift) {
     if (gift.kind === "AND") {
@@ -788,7 +827,7 @@
     return applied.failed === 0 && applied.added === expected.adds && applied.removed === expected.removes && applied.adjusted === expected.adjusts;
   }
   async function reconcileGiftCart(io, opts = {}) {
-    var _a2, _b2, _c2;
+    var _a2, _b2, _c2, _d;
     const maxPasses = (_a2 = opts.maxPasses) != null ? _a2 : 4;
     let appliedCode = (_b2 = opts.initialCode) != null ? _b2 : null;
     const addAttempted = /* @__PURE__ */ new Set();
@@ -806,6 +845,7 @@
       if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
         return { passes: pass, converged: true, appliedCode, failures };
       }
+      (_c2 = io.onGiftMutationStart) == null ? void 0 : _c2.call(io);
       const removed = [];
       const adjusted = [];
       const added = [];
@@ -829,7 +869,7 @@
         passFailures.push(...res.failures);
       }
       failures.push(...passFailures);
-      (_c2 = io.nudge) == null ? void 0 : _c2.call(io);
+      (_d = io.nudge) == null ? void 0 : _d.call(io);
       const settled = reconcileSettled(
         { adds: add.length, removes: plan.remove.length, adjusts: plan.adjust.length },
         {
@@ -961,14 +1001,32 @@ cart-drawer .title--primary,
 
 .fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#8a8a8a; }
 
+/* Pending (a gift reconcile is in progress): a small hint + dimmed cards/chips. The hint and the
+   decline control stay full-opacity (the decline is still usable); only the gift selection dims. */
+.fge-gift__pending{ margin:0 0 10px; font-size:12px; color:var(--fge-muted); }
+.fge-gift.is-pending .fge-card,
+.fge-gift.is-pending .fge-variants{ opacity:.5; transition:opacity .2s ease; }
+
 .fge-decline{
   display:flex; align-items:center; gap:8px; margin:12px 0 0; padding-top:11px;
   border-top:1px solid var(--fge-line); font-size:13px; color:var(--fge-ink); cursor:pointer;
 }
 .fge-decline input{ accent-color:var(--fge-brand); width:16px; height:16px; }
 
+/* THEME-OVERRIDE: lock the theme's Checkout button (drawer + /cart) while a gift reconcile is in
+   progress, so the shopper can't pay before the gift is confirmed at $0. Body-class scoped so it
+   survives the theme re-rendering its footer; pointer-events:none blocks the (mouse) click vector.
+   Cleared on every terminal outcome + a safety timeout, so Checkout can never get stuck. */
+body.fge-checkout-pending #CartDrawer-Checkout,
+body.fge-checkout-pending #checkout,
+body.fge-checkout-pending [name="checkout"],
+body.fge-checkout-pending .cart__checkout-button{
+  pointer-events:none !important; opacity:.55 !important; cursor:not-allowed !important;
+}
+
 @media (prefers-reduced-motion: reduce){
-  .fge-stepper__fill, .fge-step, .fge-step__dot{ transition:none; }
+  .fge-stepper__fill, .fge-step, .fge-step__dot, .fge-gift.is-pending .fge-card,
+  .fge-gift.is-pending .fge-variants{ transition:none; }
 }
 `;
   function injectStyles() {
@@ -1040,6 +1098,10 @@ cart-drawer .title--primary,
   var lastResult = null;
   var unavailableVariantIds = /* @__PURE__ */ new Set();
   var sections = [];
+  var giftPendingActive = false;
+  var giftPendingEngageTimer;
+  var giftPendingSafetyTimer;
+  var perceptionConfig = null;
   var cartPost = (path, body) => fetch(`${root}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -1092,7 +1154,9 @@ cart-drawer .title--primary,
           nudge: () => {
             var _a2;
             return (_a2 = w.publish) == null ? void 0 : _a2.call(w, CART_UPDATE_EVENT, { source: SOURCE });
-          }
+          },
+          // Real gift work is starting → maybe show the pending indicator (gated by the flicker delay).
+          onGiftMutationStart: () => beginGiftPending()
         },
         { initialCode: lastDiscount }
       );
@@ -1100,9 +1164,42 @@ cart-drawer .title--primary,
       for (const variantId of failedAddVariantIds(outcome.failures)) {
         unavailableVariantIds.add(variantId);
       }
+      endGiftPending();
       renderPerception(config);
     } finally {
+      endGiftPending();
       selfMutating = false;
+    }
+  }
+  function beginGiftPending() {
+    if (giftPendingActive || giftPendingEngageTimer !== void 0) {
+      return;
+    }
+    giftPendingEngageTimer = setTimeout(() => {
+      giftPendingEngageTimer = void 0;
+      giftPendingActive = true;
+      setCheckoutLocked(true);
+      if (perceptionConfig !== null) {
+        renderPerception(perceptionConfig);
+      }
+    }, PENDING_DELAY_MS);
+    giftPendingSafetyTimer = setTimeout(() => endGiftPending(), PENDING_MAX_MS);
+  }
+  function endGiftPending() {
+    if (giftPendingEngageTimer !== void 0) {
+      clearTimeout(giftPendingEngageTimer);
+      giftPendingEngageTimer = void 0;
+    }
+    if (giftPendingSafetyTimer !== void 0) {
+      clearTimeout(giftPendingSafetyTimer);
+      giftPendingSafetyTimer = void 0;
+    }
+    if (giftPendingActive) {
+      giftPendingActive = false;
+      setCheckoutLocked(false);
+      if (perceptionConfig !== null) {
+        renderPerception(perceptionConfig);
+      }
     }
   }
   function renderSteppers() {
@@ -1121,6 +1218,7 @@ cart-drawer .title--primary,
     }
     const currentTierId = (lastResult == null ? void 0 : lastResult.status) === "gift" ? lastResult.tierId : null;
     const model = buildProgressModel(campaignConfig, lastResult);
+    const pending2 = giftPendingActive ? { active: true, message: pendingHint(lastResult !== null) } : void 0;
     const handlers = {
       onChoose: (tierId, optionId) => {
         choiceState = { ...choiceState, [tierId]: optionId };
@@ -1140,7 +1238,8 @@ cart-drawer .title--primary,
         campaignConfig,
         { choices: choiceState, declined, unavailableVariantIds },
         handlers,
-        currentTierId
+        currentTierId,
+        pending2
       );
       section.attach();
     }
@@ -1179,6 +1278,7 @@ cart-drawer .title--primary,
     if (config === null) {
       return;
     }
+    perceptionConfig = config;
     let timer;
     const trigger = (data) => {
       if (data !== null && typeof data === "object" && data.source === SOURCE) {

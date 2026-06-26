@@ -115,6 +115,7 @@ export function renderChooser(
   state: ChooserState,
   handlers: ChooserHandlers,
   currentTierId: string | null,
+  pending?: { readonly active: boolean; readonly message: string },
 ): void {
   mount.textContent = '';
   const model = buildChooserModel(config, state);
@@ -123,6 +124,17 @@ export function renderChooser(
   }
   const root = document.createElement('div');
   root.className = 'fge-gift';
+
+  // Pending (a gift reconcile is in progress): dim the cards (CSS .is-pending) and show a small hint,
+  // so the current selection reads as "in progress", not final. Authoritative — this is only a
+  // work-in-progress signal; the real gift state still comes from the confirmed cart/validate.
+  if (pending?.active) {
+    root.classList.add('is-pending');
+    const note = document.createElement('p');
+    note.className = 'fge-gift__pending';
+    note.textContent = pending.message;
+    root.append(note);
+  }
 
   renderGiftSection(root, model, currentTierId, handlers);
 

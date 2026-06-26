@@ -119,14 +119,32 @@ cart-drawer .title--primary,
 
 .fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#8a8a8a; }
 
+/* Pending (a gift reconcile is in progress): a small hint + dimmed cards/chips. The hint and the
+   decline control stay full-opacity (the decline is still usable); only the gift selection dims. */
+.fge-gift__pending{ margin:0 0 10px; font-size:12px; color:var(--fge-muted); }
+.fge-gift.is-pending .fge-card,
+.fge-gift.is-pending .fge-variants{ opacity:.5; transition:opacity .2s ease; }
+
 .fge-decline{
   display:flex; align-items:center; gap:8px; margin:12px 0 0; padding-top:11px;
   border-top:1px solid var(--fge-line); font-size:13px; color:var(--fge-ink); cursor:pointer;
 }
 .fge-decline input{ accent-color:var(--fge-brand); width:16px; height:16px; }
 
+/* THEME-OVERRIDE: lock the theme's Checkout button (drawer + /cart) while a gift reconcile is in
+   progress, so the shopper can't pay before the gift is confirmed at $0. Body-class scoped so it
+   survives the theme re-rendering its footer; pointer-events:none blocks the (mouse) click vector.
+   Cleared on every terminal outcome + a safety timeout, so Checkout can never get stuck. */
+body.fge-checkout-pending #CartDrawer-Checkout,
+body.fge-checkout-pending #checkout,
+body.fge-checkout-pending [name="checkout"],
+body.fge-checkout-pending .cart__checkout-button{
+  pointer-events:none !important; opacity:.55 !important; cursor:not-allowed !important;
+}
+
 @media (prefers-reduced-motion: reduce){
-  .fge-stepper__fill, .fge-step, .fge-step__dot{ transition:none; }
+  .fge-stepper__fill, .fge-step, .fge-step__dot, .fge-gift.is-pending .fge-card,
+  .fge-gift.is-pending .fge-variants{ transition:none; }
 }
 `;
 

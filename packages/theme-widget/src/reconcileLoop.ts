@@ -28,6 +28,10 @@ export type GiftCartIo = {
   setDiscount: (code: string | null) => Promise<void>;
   // Optional theme re-render nudge after a mutating pass.
   nudge?: () => void;
+  // Fired once a pass is known to need work (after the no-op early-return) — i.e. a gift add/swap or
+  // code-apply is about to run. The controller uses it to (maybe) show a pending indicator. Optional;
+  // never fires on a converged no-op cart, so a same-state reconcile shows nothing.
+  onGiftMutationStart?: () => void;
 };
 
 export type ReconcileOutcome = {
@@ -91,6 +95,10 @@ export async function reconcileGiftCart(
     if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
       return { passes: pass, converged: true, appliedCode, failures }; // cart already matches
     }
+
+    // Real work is about to happen (gift add/swap/remove or code apply) — signal the controller so it
+    // can show a pending indicator if this outlasts the flicker threshold. Never reached on a no-op.
+    io.onGiftMutationStart?.();
 
     // ORDER (this is what removes the visible FULL-PRICE beat): remove/adjust the OUTGOING gift FIRST,
     // then apply the (new) code, then ADD the new gift LAST — so the incoming gift is zeroed by BXGY
