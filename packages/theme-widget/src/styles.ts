@@ -136,10 +136,6 @@ cart-drawer .title--primary,
 }
 @keyframes fge-spin{ from{ transform:rotate(0deg); } to{ transform:rotate(360deg); } }
 
-/* Dim the in-cart gift line(s) during pending (applied by JS to confidently-identified gift rows
-   only — never the qualifying/paid rows). Visual only; cleared when pending ends. */
-.fge-gift-row-dim{ opacity:.5 !important; transition:opacity .2s ease; }
-
 .fge-decline{
   display:flex; align-items:center; gap:8px; margin:12px 0 0; padding-top:11px;
   border-top:1px solid var(--fge-line); font-size:13px; color:var(--fge-ink); cursor:pointer;
@@ -178,7 +174,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
 
 @media (prefers-reduced-motion: reduce){
   .fge-stepper__fill, .fge-step, .fge-step__dot, .fge-gift.is-pending .fge-card,
-  .fge-gift.is-pending .fge-variants, .fge-gift-row-dim{ transition:none; }
+  .fge-gift.is-pending .fge-variants{ transition:none; }
   .fge-spinner,
   body.fge-checkout-pending #CartDrawer-Checkout::before,
   body.fge-checkout-pending #checkout::before,

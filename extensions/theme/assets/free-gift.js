@@ -375,8 +375,8 @@
     }
     renderGiftSection(root2, model, currentTierId, handlers);
     if (pending2) {
-      const title = root2.querySelector(".fge-gift__title");
-      title == null ? void 0 : title.append(spinner());
+      const heading = root2.querySelector(".fge-gift__title, .fge-gift__hint");
+      heading == null ? void 0 : heading.append(spinner());
     }
     if (model.declineEnabled) {
       root2.append(renderDecline(model.declined, handlers));
@@ -612,7 +612,6 @@
     ".cart__checkout-button"
   ];
   var CHECKOUT_LOCK_CLASS = "fge-checkout-pending";
-  var ROW_DIM_CLASS = "fge-gift-row-dim";
   function setCheckoutLocked(locked) {
     var _a2;
     const doc = globalThis.document;
@@ -627,45 +626,6 @@
       } else {
         el.removeAttribute("aria-disabled");
         el.disabled = false;
-      }
-    }
-  }
-  function confidentDimVariants(rowVariantIds, wanted) {
-    var _a2;
-    const counts = /* @__PURE__ */ new Map();
-    for (const id of rowVariantIds) {
-      counts.set(id, ((_a2 = counts.get(id)) != null ? _a2 : 0) + 1);
-    }
-    return wanted.filter((id) => counts.get(id) === 1);
-  }
-  function dimGiftRows(wantedNumericIds, dim) {
-    var _a2, _b2;
-    const doc = globalThis.document;
-    if (doc === void 0) {
-      return;
-    }
-    for (const el of Array.from(doc.querySelectorAll("." + ROW_DIM_CLASS))) {
-      el.classList.remove(ROW_DIM_CLASS);
-    }
-    if (!dim || wantedNumericIds.length === 0) {
-      return;
-    }
-    const rows = Array.from(doc.querySelectorAll("[data-quantity-variant-id]"));
-    const confident = new Set(
-      confidentDimVariants(
-        rows.map((r) => {
-          var _a3;
-          return (_a3 = r.getAttribute("data-quantity-variant-id")) != null ? _a3 : "";
-        }),
-        wantedNumericIds
-      )
-    );
-    if (confident.size === 0) {
-      return;
-    }
-    for (const r of rows) {
-      if (confident.has((_a2 = r.getAttribute("data-quantity-variant-id")) != null ? _a2 : "")) {
-        ((_b2 = r.closest(".cart-item, tr, li")) != null ? _b2 : r).classList.add(ROW_DIM_CLASS);
       }
     }
   }
@@ -1063,10 +1023,6 @@ cart-drawer .title--primary,
 }
 @keyframes fge-spin{ from{ transform:rotate(0deg); } to{ transform:rotate(360deg); } }
 
-/* Dim the in-cart gift line(s) during pending (applied by JS to confidently-identified gift rows
-   only \u2014 never the qualifying/paid rows). Visual only; cleared when pending ends. */
-.fge-gift-row-dim{ opacity:.5 !important; transition:opacity .2s ease; }
-
 .fge-decline{
   display:flex; align-items:center; gap:8px; margin:12px 0 0; padding-top:11px;
   border-top:1px solid var(--fge-line); font-size:13px; color:var(--fge-ink); cursor:pointer;
@@ -1105,7 +1061,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
 
 @media (prefers-reduced-motion: reduce){
   .fge-stepper__fill, .fge-step, .fge-step__dot, .fge-gift.is-pending .fge-card,
-  .fge-gift.is-pending .fge-variants, .fge-gift-row-dim{ transition:none; }
+  .fge-gift.is-pending .fge-variants{ transition:none; }
   .fge-spinner,
   body.fge-checkout-pending #CartDrawer-Checkout::before,
   body.fge-checkout-pending #checkout::before,
@@ -1188,7 +1144,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
   var giftPendingMinTimer;
   var giftPendingSafetyTimer;
   var perceptionConfig = null;
-  var cartDimObserver = null;
   var cartPost = (path, body) => fetch(`${root}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -1265,8 +1220,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
     giftPendingActive = true;
     giftPendingMinElapsed = false;
     setCheckoutLocked(true);
-    applyCartRowDim(true);
-    startCartDimObserver();
     if (perceptionConfig !== null) {
       renderPerception(perceptionConfig);
     }
@@ -1299,50 +1252,10 @@ body.fge-checkout-pending .cart__checkout-button::after{
       clearTimeout(giftPendingSafetyTimer);
       giftPendingSafetyTimer = void 0;
     }
-    stopCartDimObserver();
-    applyCartRowDim(false);
     setCheckoutLocked(false);
     if (perceptionConfig !== null) {
       renderPerception(perceptionConfig);
     }
-  }
-  function giftRowNumericIds() {
-    if ((lastResult == null ? void 0 : lastResult.status) !== "gift") {
-      return [];
-    }
-    return lastResult.giftVariantIds.map((g) => {
-      var _a2;
-      return (_a2 = g.split("/").pop()) != null ? _a2 : "";
-    }).filter((s) => s.length > 0);
-  }
-  function applyCartRowDim(active) {
-    dimGiftRows(active ? giftRowNumericIds() : [], active);
-  }
-  function cartDimRoots() {
-    var _a2;
-    const roots = [];
-    const drawer = document.querySelector("cart-drawer, #CartDrawer, .cart-drawer");
-    if (drawer !== null) {
-      roots.push(drawer);
-    }
-    const pageSection = (_a2 = document.querySelector("#main-cart-items, .cart-items")) == null ? void 0 : _a2.closest(".shopify-section");
-    if (pageSection instanceof HTMLElement) {
-      roots.push(pageSection);
-    }
-    return roots;
-  }
-  function startCartDimObserver() {
-    if (cartDimObserver !== null || typeof MutationObserver === "undefined") {
-      return;
-    }
-    cartDimObserver = new MutationObserver(() => applyCartRowDim(true));
-    for (const root2 of cartDimRoots()) {
-      cartDimObserver.observe(root2, { childList: true, subtree: true });
-    }
-  }
-  function stopCartDimObserver() {
-    cartDimObserver == null ? void 0 : cartDimObserver.disconnect();
-    cartDimObserver = null;
   }
   function renderSteppers() {
     if (campaignConfig === null || sections.length === 0) {

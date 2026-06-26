@@ -136,8 +136,11 @@ export function renderChooser(
   renderGiftSection(root, model, currentTierId, handlers);
 
   if (pending) {
-    const title = root.querySelector('.fge-gift__title');
-    title?.append(spinner()); // spinner beside "Your free gift" / "Choose your free gift"
+    // Spinner beside whatever heading is shown — the "Your free gift" / "Choose your free gift" title
+    // when a gift is offered, else the prompt/decline hint (so the spinner ALWAYS shows during pending,
+    // not only when a tier is reached).
+    const heading = root.querySelector('.fge-gift__title, .fge-gift__hint');
+    heading?.append(spinner());
   }
 
   // The decline checkbox is PERSISTENT: it renders in EVERY state (declined, below-threshold, or a

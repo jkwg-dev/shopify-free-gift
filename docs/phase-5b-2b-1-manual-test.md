@@ -330,3 +330,18 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 | T9  | Never stuck            | Restores on error/422 and the ~8s safety timeout too                                                                       |
 | T10 | Both surfaces          | All of the above work in BOTH the drawer and /cart                                                                         |
 | T11 | No campaign            | With no active campaign, a cart change does NOT lock Checkout / show pending                                               |
+
+## Round 17 checks (remove in-cart row dim; verify spinners) — display only
+
+> Redeploy the theme widget.
+
+| #   | Check                 | Expected                                                                                                                                                         |
+| --- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| U1  | Cart rows never dim   | During pending the cart line items (incl. the $0 gift row) render NORMALLY — never dimmed/touched                                                                |
+| U2  | Chooser cards dim     | The chooser cards/chips still dim to ~0.5 during pending                                                                                                         |
+| U3  | Heading spinner shows | A .fge-spinner renders next to the chooser heading during pending — in EVERY state (gift shown → next to the title; declined/below-threshold → next to the hint) |
+| U4  | Spinners rotate       | Both spinners (chooser heading + Checkout button) rotate in place, no vertical bobbing                                                                           |
+| U5  | Checkout state        | Checkout still dimmed + locked + rotating spinner + "Updating your free gift…", restored on completion                                                           |
+| U6  | Timing consistent     | The chooser dim + checkout state engage/clear together (no lagging element) — nothing keyed off the theme's list re-render anymore                               |
+| U7  | Min hold + no flicker | Immediate engage, ≥~0.5s hold, clears on completion/error/timeout; fast change = brief clean pending                                                             |
+| U8  | Both surfaces         | Works in drawer and /cart                                                                                                                                        |

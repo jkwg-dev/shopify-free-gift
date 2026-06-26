@@ -64,8 +64,6 @@ export {
 } from './cartSections.js';
 export { injectStyles, FGE_CSS, FGE_STYLE_ID } from './styles.js';
 export {
-  dimGiftRows,
-  confidentDimVariants,
   pendingShouldClear,
   setCheckoutLocked,
   PENDING_MIN_MS,
