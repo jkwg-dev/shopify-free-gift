@@ -159,15 +159,12 @@ export function renderProgress(mount: HTMLElement, model: ProgressModel | null):
     return;
   }
 
-  const eyebrow = document.createElement('p');
-  eyebrow.className = 'fge-eyebrow';
-  eyebrow.textContent = 'Free gift';
-  mount.append(eyebrow);
-
+  // Compact single line (no eyebrow, no big headline) so it blends UNDER the theme's "Your cart"
+  // header as a slim progress row rather than competing with it.
   const headline = document.createElement('p');
   headline.className = 'fge-headline';
   if (model.allUnlocked) {
-    headline.textContent = 'You’ve unlocked your free gift';
+    headline.textContent = 'Free gift unlocked';
   } else if (model.next !== null) {
     const amt = document.createElement('span');
     amt.className = 'fge-amt';

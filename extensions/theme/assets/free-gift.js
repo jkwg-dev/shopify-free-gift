@@ -497,14 +497,10 @@
     if (model === null) {
       return;
     }
-    const eyebrow = document.createElement("p");
-    eyebrow.className = "fge-eyebrow";
-    eyebrow.textContent = "Free gift";
-    mount.append(eyebrow);
     const headline = document.createElement("p");
     headline.className = "fge-headline";
     if (model.allUnlocked) {
-      headline.textContent = "You\u2019ve unlocked your free gift";
+      headline.textContent = "Free gift unlocked";
     } else if (model.next !== null) {
       const amt = document.createElement("span");
       amt.className = "fge-amt";
@@ -591,36 +587,41 @@
 }
 .fge *{ box-sizing:border-box; }
 
-/* --- top: slim progress row (blended, no box/shadow) --- */
-.fge-stepper-wrap{ padding:8px 2px 6px; color:var(--fge-ink); }
+/* --- top: COMPACT progress row (blended, no box/shadow). Deliberately slim: one small headline +
+   a visible bar, so the cart items below keep real space and the theme's own "Your cart" header
+   stays the top of the drawer. No eyebrow, no big headline competing with it. --- */
+.fge-stepper-wrap{ padding:4px 2px 2px; color:var(--fge-ink); }
 
-.fge-eyebrow{
-  margin:0 0 2px; font-size:10.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
-  color:var(--fge-muted);
-}
-.fge-headline{ margin:0 0 10px; font-size:13.5px; font-weight:650; color:var(--fge-ink); }
+.fge-headline{ margin:0 0 2px; font-size:12px; font-weight:600; color:var(--fge-ink); }
 .fge-headline .fge-amt{ color:var(--fge-brand-strong); font-weight:750; }
-.fge-subnote{ margin:6px 0 0; font-size:11px; color:var(--fge-muted); }
+.fge-subnote{ margin:6px 0 0; font-size:10px; line-height:1.3; color:var(--fge-muted); }
 
-/* --- the progress stepper --- */
-.fge-stepper{ position:relative; margin:12px 6px 28px; height:6px; }
-.fge-stepper__track{ position:absolute; inset:0; background:var(--fge-line); border-radius:999px; }
+/* --- the progress stepper: a clearly visible slim bar. Explicit px geometry (NOT inset:0 + parent
+   height) so the track/fill/dots render reliably regardless of the host theme's resets. The bar area
+   is 14px tall; the track is a 4px line centred in it; dots (12px) sit on the track; labels hang below. */
+.fge-stepper{ position:relative; height:14px; margin:10px 6px 26px; }
+.fge-stepper__track{
+  position:absolute; left:0; right:0; top:5px; height:4px;
+  background-color:var(--fge-line); border-radius:999px;
+}
 .fge-stepper__fill{
-  position:absolute; left:0; top:0; bottom:0; background:var(--fge-brand);
-  border-radius:999px; transition:width .35s ease;
+  position:absolute; left:0; top:5px; height:4px; min-width:0;
+  background-color:var(--fge-brand); border-radius:999px; transition:width .35s ease;
 }
-.fge-step{ position:absolute; top:50%; transform:translate(-50%,-50%); text-align:center; }
+.fge-step{ position:absolute; top:7px; transform:translate(-50%,-50%); }
 .fge-step__dot{
-  width:14px; height:14px; border-radius:50%; background:var(--fge-surface);
-  border:2px solid var(--fge-line); margin:0 auto;
+  width:12px; height:12px; border-radius:50%; display:block;
+  background-color:#ffffff; border:2px solid var(--fge-line);
 }
-.fge-step.is-reached .fge-step__dot{ background:var(--fge-brand); border-color:var(--fge-brand); }
+.fge-step.is-reached .fge-step__dot{
+  background-color:var(--fge-brand); border-color:var(--fge-brand);
+}
 .fge-step.is-current .fge-step__dot{
-  background:var(--fge-brand); border-color:var(--fge-brand);
+  background-color:var(--fge-brand); border-color:var(--fge-brand);
   box-shadow:0 0 0 4px rgba(17,17,17,.16);
 }
 .fge-step__label{
-  position:absolute; top:16px; left:50%; transform:translateX(-50%);
+  position:absolute; top:13px; left:50%; transform:translateX(-50%);
   white-space:nowrap; font-size:10.5px; font-weight:600; color:var(--fge-muted);
 }
 /* Edge-aware label alignment so the first/last labels stay inside the track (no right-edge clip). */

@@ -115,3 +115,28 @@ split into two parts, and the gift line is **no longer hidden** from the cart li
 | V5  | Gift in cart at $0  | The free gift shows normally in the cart list at $0 (not hidden); the chooser is choice/progress, not a duplicate                                                          |
 | V6  | Survives re-render  | Both sections re-inject on cart change; selection preserved                                                                                                                |
 | V7  | Black + cards       | Black/neutral palette; image cards; OR selectable / AND bundle / OOS ("Currently unavailable")                                                                             |
+
+## Round 5 checks (stepper actually renders; top section compact)
+
+> Confirmed by live DOM inspection: injection ORDER is correct (header → stepper → cart items →
+> chooser → footer). These fixes are CSS/sizing only. Redeploy `free-gift.js` then re-inspect.
+
+Root causes fixed this round:
+
+- **Track/fill/dots invisible** (`offsetParent === null`, only labels showed): the dot used
+  `background:var(--fge-surface)`, an **undefined** token → transparent (white-on-white), and the
+  track relied on `inset:0` + a 6px parent. Rebuilt with **explicit px geometry** (14px bar area,
+  4px track at `top:5px`, 12px dots, defined `#fff` dot fill) so it renders regardless of theme resets.
+- **Top section 124px tall** squeezing the cart items: dropped the eyebrow and the big "You've
+  unlocked…" headline; now one small 12px headline + the bar (~70px total). The theme's own "Your
+  cart" header stays the visual top of the drawer.
+
+| #   | Check          | Expected                                                                                                                      |
+| --- | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| S1  | Track visible  | A slim grey horizontal **line** spans the stepper width (not just text)                                                       |
+| S2  | Fill visible   | The reached portion is a **black bar** from the left, width = confirmed subtotal / top tier                                   |
+| S3  | Nodes visible  | A **dot per tier** sits on the track; unreached = white w/ grey ring, reached/current = solid black (current has a soft ring) |
+| S4  | Labels fit     | CA$500 / CA$1,000 / CA$1,500 fit; the last is right-aligned and does NOT clip                                                 |
+| S5  | Top is compact | The top section is a slim row (~one small line + the bar); no big headline; cart line items below have clear visible space    |
+| S6  | Hierarchy      | "Your cart" (theme header) reads as the top; our row blends under it as progress                                              |
+| S7  | Cart usable    | Cart lines, subtotal, and checkout are visible/usable; the chooser scrolls internally (≤42vh) below the items                 |
