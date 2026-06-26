@@ -12,10 +12,14 @@ import {
   type CampaignConfigResponse,
   type CartLineView,
   type ValidateRequest,
+  type ValidateResult,
 } from '@free-gift-engine/core';
+import { mountDrawerOverlay, type DrawerMount } from './cartDrawer.js';
+import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
+import { buildProgressModel, renderProgress } from './progressGraph.js';
 import { reconcileGiftCart } from './reconcileLoop.js';
 import { postValidate } from './validateClient.js';
 
@@ -41,6 +45,9 @@ type WidgetConfig = {
   readonly proxyPath: string;
   readonly country: string;
   readonly presentmentCurrency: string;
+  // Optional per-theme overrides for portability (production theme ≠ dev snowboard theme).
+  readonly drawerSelector?: string | undefined;
+  readonly drawerOpenClass?: string | undefined;
 };
 
 const w = window as ThemeWindow;
@@ -59,6 +66,8 @@ function readConfig(): WidgetConfig | null {
     proxyPath: el.dataset['proxyPath'] ?? '/apps/free-gift/validate',
     country: el.dataset['country'] ?? '',
     presentmentCurrency: el.dataset['presentmentCurrency'] ?? '',
+    drawerSelector: el.dataset['drawerSelector'],
+    drawerOpenClass: el.dataset['drawerOpenClass'],
   };
 }
 
@@ -80,6 +89,15 @@ let lastDiscount: string | null = null;
 // triggers a reconcile so a new choice / decline is applied transactionally.
 let choiceState: Record<string, string> = {};
 let declined = false;
+
+// Perception-UI state (5b-2b-1): the campaign structure (/config), the last server result (drives the
+// authoritative graph), and gift variants found unavailable at runtime (cart/add 422 → disable + note).
+let campaignConfig: CampaignConfigResponse | null = null;
+let lastResult: ValidateResult | null = null;
+const unavailableVariantIds = new Set<string>();
+let drawer: DrawerMount | null = null;
+let graphEl: HTMLElement | null = null;
+let chooserEl: HTMLElement | null = null;
 
 // Cart writer for applyCartPlan: POSTs JSON to an AJAX cart path and returns the raw Response (ok +
 // status + text), so add/remove failures (e.g. a 422 for an unpublished gift product) are surfaced.
@@ -130,7 +148,11 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
             countryCode: config.country,
           };
           const response = await postValidate(request, { proxyPath: config.proxyPath });
-          return response.ok ? response.result : null; // null => error: leave the cart untouched
+          if (!response.ok) {
+            return null; // null => error: leave the cart untouched
+          }
+          lastResult = response.result; // authoritative state for the progress graph
+          return response.result;
         },
         post: cartPost,
         setDiscount: (code) => postJson('cart/update.js', { discount: code ?? '' }),
@@ -140,9 +162,41 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
       { initialCode: lastDiscount },
     );
     lastDiscount = outcome.appliedCode;
+    // Runtime 422 fallback: any gift that failed to add is marked unavailable so the chooser disables
+    // it (+ note) and never shows it as added. Then re-render the perception UI from server state.
+    for (const variantId of failedAddVariantIds(outcome.failures)) {
+      unavailableVariantIds.add(variantId);
+    }
+    renderPerception(config);
   } finally {
     selfMutating = false;
   }
+}
+
+// Render the progress graph + chooser into the drawer overlay from CURRENT server-confirmed state.
+function renderPerception(config: WidgetConfig): void {
+  if (campaignConfig === null || graphEl === null || chooserEl === null) {
+    return;
+  }
+  renderProgress(graphEl, buildProgressModel(campaignConfig, lastResult));
+  renderChooser(
+    chooserEl,
+    campaignConfig,
+    { choices: choiceState, declined, unavailableVariantIds },
+    {
+      onChoose: (tierId, optionId) => {
+        choiceState = { ...choiceState, [tierId]: optionId };
+        renderPerception(config); // reflect the selection immediately
+        schedule(config); // transactional re-validate/reconcile for the new choice
+      },
+      onDeclineToggle: (next) => {
+        declined = next;
+        renderPerception(config);
+        schedule(config);
+      },
+    },
+  );
+  drawer?.refresh();
 }
 
 function schedule(config: WidgetConfig): void {
@@ -162,10 +216,19 @@ function schedule(config: WidgetConfig): void {
     });
 }
 
-// Fetch the campaign structure and render the chooser. Best-effort: if config is unavailable or the
-// campaign is inactive, the engine still reconciles (AND tiers need no choice); OR tiers simply have
-// no selection until config loads.
-async function initChooser(config: WidgetConfig): Promise<void> {
+// Mount the drawer overlay (graph + chooser), fetch the campaign structure, and render. Best-effort:
+// if config is unavailable/inactive, the engine still reconciles (AND tiers need no choice).
+async function initPerception(config: WidgetConfig): Promise<void> {
+  // Overlay lives on document.body so it SURVIVES the drawer's inner re-render on every cart change,
+  // and sits above the backdrop (clickable). Shown/hidden with the drawer (resilient + overridable).
+  drawer = mountDrawerOverlay({
+    drawerSelector: config.drawerSelector,
+    openClass: config.drawerOpenClass,
+  });
+  graphEl = document.createElement('div');
+  chooserEl = document.createElement('div');
+  drawer.container.append(graphEl, chooserEl);
+
   const result = await getConfig({
     presentmentCurrency: config.presentmentCurrency,
     countryCode: config.country,
@@ -173,28 +236,9 @@ async function initChooser(config: WidgetConfig): Promise<void> {
   if (!result.ok || result.config.status !== 'active') {
     return;
   }
-  const campaignConfig: CampaignConfigResponse = result.config;
+  campaignConfig = result.config;
   choiceState = defaultGiftChoices(campaignConfig.tiers);
-
-  const mount = document.querySelector<HTMLElement>('[data-fge-chooser]');
-  if (mount === null) {
-    return;
-  }
-  renderChooser(
-    mount,
-    campaignConfig,
-    { choices: choiceState, declined },
-    {
-      onChoose: (tierId, optionId) => {
-        choiceState = { ...choiceState, [tierId]: optionId };
-        schedule(config);
-      },
-      onDeclineToggle: (next) => {
-        declined = next;
-        schedule(config);
-      },
-    },
-  );
+  renderPerception(config);
 }
 
 function init(): void {
@@ -234,8 +278,8 @@ function init(): void {
     return result;
   };
 
-  // Load the chooser (default selection enables the gift), then the initial reconcile.
-  void initChooser(config).finally(() => schedule(config));
+  // Mount overlay + load the chooser/graph (default selection enables the gift), then reconcile.
+  void initPerception(config).finally(() => schedule(config));
 }
 
 if (document.readyState === 'loading') {

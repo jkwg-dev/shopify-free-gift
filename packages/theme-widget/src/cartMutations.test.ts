@@ -1,6 +1,12 @@
 import type { GiftReconciliation } from '@free-gift-engine/core';
 import { describe, expect, it, vi } from 'vitest';
-import { applyCartPlan, type CartPost, type PostResponse } from './cartMutations.js';
+import {
+  applyCartPlan,
+  failedAddVariantIds,
+  type CartMutationFailure,
+  type CartPost,
+  type PostResponse,
+} from './cartMutations.js';
 
 const HIDDEN = 'gid://shopify/ProductVariant/301037';
 const MULTI = 'gid://shopify/ProductVariant/595949';
@@ -124,5 +130,17 @@ describe('applyCartPlan — remove path', () => {
     expect(result.failures).toEqual([
       { kind: 'remove', variantId: HIDDEN, status: 404, body: 'gone' },
     ]);
+  });
+});
+
+describe('failedAddVariantIds', () => {
+  it('returns only the variant ids of failed ADDs (for the chooser unavailable set)', () => {
+    const failures: CartMutationFailure[] = [
+      { kind: 'add', variantId: HIDDEN, status: 422, body: 'not published' },
+      { kind: 'remove', variantId: MULTI, status: 404, body: 'gone' },
+      { kind: 'add', variantId: MULTI, status: 422, body: 'oos' },
+    ];
+    expect(failedAddVariantIds(failures)).toEqual([HIDDEN, MULTI]);
+    expect(failedAddVariantIds([])).toEqual([]);
   });
 });

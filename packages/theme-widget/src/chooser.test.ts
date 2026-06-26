@@ -117,3 +117,35 @@ describe('buildChooserModel', () => {
     expect(or.groups[0]!.options.map((o) => o.variantLabel)).toEqual(['Ice', 'Dawn']);
   });
 });
+
+describe('buildChooserModel — runtime unavailability (422 fallback)', () => {
+  it('disables an OR option whose variant failed at runtime (config available, but in the set)', () => {
+    const model = buildChooserModel(config, {
+      choices: { t1: 'a' },
+      declined: false,
+      unavailableVariantIds: new Set([DAWN]),
+    });
+    const or = model!.tiers[0] as ChooserOrTier;
+    const opts = or.groups.flatMap((g) => g.options);
+    expect(opts.find((o) => o.variantId === ICE)!.available).toBe(true);
+    expect(opts.find((o) => o.variantId === DAWN)!.available).toBe(false); // runtime-disabled
+  });
+
+  it('marks an AND tier INCOMPLETE when one bundle item failed at runtime', () => {
+    const model = buildChooserModel(config, {
+      choices: {},
+      declined: false,
+      unavailableVariantIds: new Set([HIDDEN]),
+    });
+    const and = model!.tiers[1] as ChooserAndTier;
+    expect(and.incomplete).toBe(true);
+    expect(and.items.find((i) => i.variantId === HIDDEN)!.available).toBe(false);
+    expect(and.items.find((i) => i.variantId === MULTI)!.available).toBe(true);
+  });
+
+  it('AND tier is NOT incomplete when all items are available', () => {
+    const model = buildChooserModel(config, { choices: {}, declined: false });
+    const and = model!.tiers[1] as ChooserAndTier;
+    expect(and.incomplete).toBe(false);
+  });
+});

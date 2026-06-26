@@ -109,6 +109,12 @@ export async function applyCartPlan(
   return { added, removed, adjusted, failures };
 }
 
+// The gift VARIANT GIDs that FAILED to add (e.g. 422 — unpublished/sold-out). Feeds the chooser's
+// runtime `unavailableVariantIds` so the option is disabled + noted and never shown as added.
+export function failedAddVariantIds(failures: readonly CartMutationFailure[]): string[] {
+  return failures.filter((f) => f.kind === 'add').map((f) => f.variantId);
+}
+
 function logFailure(message: string, body: string): void {
   // Surface to the storefront console; the perception UX for failures is 5b-2b.
   const c = (globalThis as { console?: { warn?: (...args: unknown[]) => void } }).console;

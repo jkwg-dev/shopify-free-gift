@@ -17,6 +17,10 @@ import { groupGiftOptionsByProduct, type GiftProductGroup } from './choices.js';
 export type ChooserState = {
   readonly choices: Readonly<Record<string, string>>;
   readonly declined: boolean;
+  // Gift VARIANT GIDs found unavailable at RUNTIME (e.g. a cart/add 422 for an unpublished/sold-out
+  // gift). ORed into static config availability so the option is disabled + noted; the gift is never
+  // shown as added when it wasn't. Defaults to empty.
+  readonly unavailableVariantIds?: ReadonlySet<string>;
 };
 
 export type ChooserHandlers = {
@@ -41,6 +45,9 @@ export type ChooserAndTier = {
   readonly tierId: string;
   readonly threshold: Money;
   readonly items: readonly GiftItemView[];
+  // True when any bundle item is unavailable — the gift can't be FULLY added (surface it; don't
+  // silently deliver a partial bundle).
+  readonly incomplete: boolean;
 };
 
 export type ChooserTier = ChooserOrTier | ChooserAndTier;
@@ -61,20 +68,34 @@ export function buildChooserModel(
   if (config.status !== 'active') {
     return null;
   }
+  const unavailable = state.unavailableVariantIds ?? new Set<string>();
+  // Effective availability = static config availability AND not runtime-unavailable.
+  const isAvailable = (variantId: string, configAvailable: boolean): boolean =>
+    configAvailable && !unavailable.has(variantId);
+
   const tiers = config.tiers.map((tier: TierConfig): ChooserTier => {
     if (tier.gift.kind === 'AND') {
+      const items: GiftItemView[] = tier.gift.gifts.map((g) => ({
+        ...g,
+        available: isAvailable(g.variantId, g.available),
+      }));
       return {
         kind: 'and',
         tierId: tier.tierId,
         threshold: tier.threshold,
-        items: tier.gift.gifts,
+        items,
+        incomplete: items.some((i) => !i.available),
       };
     }
+    const options = tier.gift.options.map((o) => ({
+      ...o,
+      available: isAvailable(o.variantId, o.available),
+    }));
     return {
       kind: 'or',
       tierId: tier.tierId,
       threshold: tier.threshold,
-      groups: groupGiftOptionsByProduct(tier.gift.options),
+      groups: groupGiftOptionsByProduct(options),
       selected: state.choices[tier.tierId],
     };
   });
@@ -147,7 +168,10 @@ function renderOrTier(tier: ChooserOrTier, handlers: ChooserHandlers): HTMLEleme
       radio.checked = opt.optionId === tier.selected;
       radio.disabled = !opt.available;
       radio.addEventListener('change', () => handlers.onChoose(tier.tierId, opt.optionId));
-      const text = opt.available ? opt.variantLabel : `${opt.variantLabel} (out of stock)`;
+      if (!opt.available) {
+        label.classList.add('is-unavailable');
+      }
+      const text = opt.available ? opt.variantLabel : `${opt.variantLabel} — currently unavailable`;
       label.append(radio, document.createTextNode(` ${text}`));
       groupEl.append(label);
     }
@@ -171,10 +195,19 @@ function renderAndTier(tier: ChooserAndTier): HTMLElement {
     }
     const span = document.createElement('span');
     span.className = 'fge-bundle-item';
-    span.textContent = item.available ? item.variantLabel : `${item.variantLabel} (out of stock)`;
+    if (!item.available) span.classList.add('is-unavailable');
+    span.textContent = item.available ? item.variantLabel : `${item.variantLabel} (unavailable)`;
     list.append(span);
   });
   fieldset.append(list);
+  // Surface a partial bundle: an AND gift must be delivered in full, so if any item is unavailable
+  // the shopper is told it can't be fully added rather than silently getting one of two.
+  if (tier.incomplete) {
+    const note = document.createElement('p');
+    note.className = 'fge-note fge-note--unavailable';
+    note.textContent = 'This gift can’t be fully added right now — please check back.';
+    fieldset.append(note);
+  }
   return fieldset;
 }
 

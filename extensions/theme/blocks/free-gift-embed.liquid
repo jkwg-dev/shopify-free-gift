@@ -1,14 +1,20 @@
 {% comment %}
   Free Gift Engine — app EMBED. This is the ENGINE: it loads the storefront controller site-wide
-  (every page, so it reacts to the cart drawer opening from anywhere), renders a hidden config element
-  the controller reads, and provides the chooser mount the perception UI renders into.
+  (every page, so it reacts to the cart drawer opening from anywhere) and renders a hidden config
+  element the controller reads.
 
   Enable it in the theme editor under: Theme settings (gear) -> App embeds -> "Free Gift Engine".
 
-  Phase 5b-2a: the OR/variant chooser + decline checkbox render into [data-fge-chooser] from the
-  read-only campaign config (GET /apps/free-gift/config). The old `default_choices` setting (a 5b-1
-  seam that needed manual tier-id JSON and broke on every re-seed) is RETIRED — choices now come from
-  the shopper's selection. The tier progress graph + pending hint + placement/mobile polish are 5b-2b.
+  Phase 5b-2b-1: the perception UI (tier progress graph + OR/variant chooser + decline) is mounted by
+  JS as an OVERLAY on <body>, positioned over the cart drawer and shown/hidden with it — so it sits
+  ABOVE the backdrop (clickable) and SURVIVES the drawer's inner re-render on every cart change. No
+  static mount node is needed (the old [data-fge-chooser] band that sat at the bottom of the page is
+  gone). Choices come from the shopper's selection (the `default_choices` seam was retired in 5b-2a).
+
+  PORTABILITY: the controller auto-detects the cart drawer (e.g. Dawn's <cart-drawer>, open class
+  `active`). If a production theme differs, override without code via the optional attributes below:
+    data-drawer-selector="<css selector for the drawer element>"
+    data-drawer-open-class="<class the theme toggles when the drawer opens>"
 {% endcomment %}
 
 <div
@@ -18,9 +24,6 @@
   data-country="{{ localization.country.iso_code }}"
   hidden
 ></div>
-
-{% comment %} Chooser mount (visible). 5b-2b moves/styles this into the cart drawer. {% endcomment %}
-<div data-fge-chooser class="fge-chooser-mount"></div>
 
 <script src="{{ 'free-gift.js' | asset_url }}" defer></script>
 

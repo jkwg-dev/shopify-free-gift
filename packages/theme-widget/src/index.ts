@@ -24,6 +24,7 @@ export {
 } from './configClient.js';
 export {
   applyCartPlan,
+  failedAddVariantIds,
   type CartPost,
   type PostResponse,
   type CartMutationResult,
@@ -39,6 +40,17 @@ export {
   type ChooserOrTier,
   type ChooserAndTier,
 } from './chooser.js';
+
+// Tier progress graph (authoritative-only) + cart-drawer overlay mount (Phase 5b-2b-1).
+export {
+  buildProgressModel,
+  renderProgress,
+  giftLabelFor,
+  type ProgressModel,
+  type ProgressTierView,
+  type ProgressNext,
+} from './progressGraph.js';
+export { mountDrawerOverlay, type DrawerMount, type DrawerMountOptions } from './cartDrawer.js';
 
 // Convergent reconcile loop (re-read -> re-validate -> apply until stable) — Phase 5b-2a fix.
 export { reconcileGiftCart, type GiftCartIo, type ReconcileOutcome } from './reconcileLoop.js';
