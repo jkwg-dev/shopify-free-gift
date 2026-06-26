@@ -176,3 +176,18 @@ Root causes fixed this round:
 | A1  | Fill animates        | Crossing a tier, the fill width slides smoothly to the new value (CSS transition) rather than snapping; current-dot ring fades in. (Note: the ~5–6s staggered convergence itself is a 5b-2b-2 latency item, not fixed here — the transition just softens the eventual update.) |
 | A2  | Authoritative        | The fill animates only to the server-confirmed value — never optimistically ahead of /validate                                                                                                                                                                                 |
 | A3  | Reduced motion       | With OS "reduce motion", the fill/dots update without transition                                                                                                                                                                                                               |
+
+## Round 8 checks (product-grouped chooser; single title; persistent decline)
+
+> Redeploy `free-gift.js` then re-inspect.
+
+| #   | Check                  | Expected                                                                                                                                                                  |
+| --- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1  | One card per product   | A multi-variant product (Ice/Dawn; S/M/L) shows ONE card titled by the PRODUCT, not one card per variant                                                                  |
+| P2  | Inner variant picker   | Selecting that product reveals pill buttons (Ice/Dawn or S/M/L) inside the card; the chosen variant is highlighted and its label shows in the status ("Ice · added free") |
+| P3  | OOS variant disabled   | An out-of-stock variant (e.g. Liquid L) is a disabled, struck-through pill in the picker; the product card itself is still selectable if any sibling is in stock          |
+| P4  | Single-variant product | A product with one variant shows a plain card with NO inner picker (unchanged)                                                                                            |
+| P5  | Choice wiring          | Switching the variant re-validates and swaps the gift line + code (one optionId per tier, same as before)                                                                 |
+| D1  | One "Your cart"        | Only the theme's drawer header "Your cart" shows; the duplicate H1.title--primary inside the drawer is hidden (cart PAGE title unaffected)                                |
+| X1  | Decline persists       | Unchecking "Add my free gift" removes the gift BUT the checkbox stays visible (with a note); re-checking re-adds the gift                                                 |
+| X2  | Toggle responsive      | The checkbox reflects its new state immediately on click even though the cart removal/re-add takes a moment (latency itself is 5b-2b-2)                                   |

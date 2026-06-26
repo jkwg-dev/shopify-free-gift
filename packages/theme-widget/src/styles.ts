@@ -68,6 +68,14 @@ export const FGE_CSS = `
 .fge-step__dot,
 .fge-card__img{ display:block !important; }
 
+/* THEME-OVERRIDE: Dawn renders TWO "Your cart" titles inside the drawer — the H2.drawer__heading
+   (header) and the H1.title--primary (cart section title, normally suppressed). Our injected layout
+   surfaces both, so we hide the section-title duplicate — SCOPED to drawer containers only, so the
+   cart PAGE's own H1.title--primary is untouched. No-op on themes where it isn't present. */
+cart-drawer .title--primary,
+#CartDrawer .title--primary,
+.drawer__inner .title--primary{ display:none !important; }
+
 /* --- gift panel: lives INSIDE the drawer's scrollable items region, after the line items, so it
    scrolls with the cart (no inner max-height/scroll — that would nest a scrollbar and pin it). --- */
 .fge-gift{
@@ -75,6 +83,12 @@ export const FGE_CSS = `
 }
 .fge-gift__title{ margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.01em; }
 .fge-gift__hint{ margin:0; font-size:13px; color:var(--fge-muted); }
+
+/* A product group: the header card + (when selected) an inner variant picker, as one unit. */
+.fge-product{ margin:0 0 8px; }
+.fge-product > .fge-card{ margin:0; }
+.fge-product.is-selected > .fge-card{ border-bottom-left-radius:0; border-bottom-right-radius:0; }
+.fge-product.is-unavailable{ opacity:.55; }
 
 .fge-card{
   display:flex; align-items:center; gap:11px; width:100%; text-align:left;
@@ -94,6 +108,20 @@ export const FGE_CSS = `
 .fge-card__status{ font-size:11.5px; color:var(--fge-muted); margin-top:1px; }
 .fge-card__status.is-unlocked{ color:var(--fge-ink); font-weight:700; }
 .fge-card__status.is-unavailable{ color:#8a8a8a; }
+
+/* Inner variant picker (Ice/Dawn, S/M/L) inside a selected product card — pill buttons. */
+.fge-variants{
+  display:flex; flex-wrap:wrap; gap:6px;
+  padding:9px 10px 10px; border:1.5px solid var(--fge-brand); border-top:0;
+  border-radius:0 0 var(--fge-card-radius) var(--fge-card-radius); background:#f0f0f0;
+}
+.fge-variant{
+  font:inherit; font-size:12px; line-height:1; padding:6px 11px; cursor:pointer;
+  background:#fff; color:var(--fge-ink); border:1.5px solid var(--fge-line); border-radius:999px;
+}
+.fge-variant.is-selected{ background:var(--fge-brand); color:#fff; border-color:var(--fge-brand); }
+.fge-variant:focus-visible{ outline:2px solid var(--fge-brand); outline-offset:2px; }
+.fge-variant.is-unavailable{ opacity:.5; cursor:not-allowed; text-decoration:line-through; }
 
 .fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#8a8a8a; }
 

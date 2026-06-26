@@ -18,6 +18,10 @@ export type GiftOptionView = {
   readonly optionId: string;
   readonly variantId: string;
   readonly productId: string;
+  // The OWNING PRODUCT's title — the heading for a product card that groups sibling variants (the
+  // chooser shows ONE card per product with a variant picker inside). `variantLabel` is the variant's
+  // own option value (Ice/Dawn, S/M/L). For a single-variant product the two coincide.
+  readonly productLabel?: string;
   readonly variantLabel: string;
   readonly available: boolean;
   // Variant (or product) featured image for the chooser cards; null when the product has no image.

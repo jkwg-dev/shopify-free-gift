@@ -276,13 +276,22 @@
     }
     const root2 = document.createElement("div");
     root2.className = "fge-gift";
+    renderGiftSection(root2, model, currentTierId, handlers);
+    if (model.declineEnabled) {
+      root2.append(renderDecline(model.declined, handlers));
+    }
+    mount.append(root2);
+  }
+  function renderGiftSection(root2, model, currentTierId, handlers) {
+    if (model.declined) {
+      root2.append(
+        hint("Your free gift is removed. Re-check \u201CAdd my free gift\u201D below to add it back.")
+      );
+      return;
+    }
     const current = currentTierId === null ? null : model.tiers.find((t) => t.tierId === currentTierId);
     if (current === void 0 || current === null) {
-      const hint = document.createElement("p");
-      hint.className = "fge-gift__hint";
-      hint.textContent = "Add a little more to your cart to unlock your free gift.";
-      root2.append(hint);
-      mount.append(root2);
+      root2.append(hint("Add a little more to your cart to unlock your free gift."));
       return;
     }
     const title = document.createElement("p");
@@ -291,19 +300,17 @@
     root2.append(title);
     if (current.kind === "or") {
       for (const group of current.groups) {
-        for (const opt of group.options) {
-          root2.append(
-            renderOptionCard(current.tierId, opt, opt.optionId === current.selected, handlers)
-          );
-        }
+        root2.append(renderProductGroup(current.tierId, group, current.selected, handlers));
       }
     } else {
       root2.append(renderBundle(current));
     }
-    if (model.declineEnabled) {
-      root2.append(renderDecline(model.declined, handlers));
-    }
-    mount.append(root2);
+  }
+  function hint(text) {
+    const p = document.createElement("p");
+    p.className = "fge-gift__hint";
+    p.textContent = text;
+    return p;
   }
   function giftImage(imageUrl, alt) {
     if (imageUrl !== null && imageUrl !== void 0 && imageUrl.length > 0) {
@@ -317,6 +324,77 @@
     const ph = document.createElement("div");
     ph.className = "fge-card__img";
     return ph;
+  }
+  function renderProductGroup(tierId, group, selectedOptionId, handlers) {
+    var _a2, _b2, _c2, _d, _e;
+    const options = group.options;
+    if (options.length <= 1) {
+      const opt = options[0];
+      return renderOptionCard(tierId, opt, opt.optionId === selectedOptionId, handlers);
+    }
+    const productLabel = (_d = (_c2 = (_a2 = options[0]) == null ? void 0 : _a2.productLabel) != null ? _c2 : (_b2 = options[0]) == null ? void 0 : _b2.variantLabel) != null ? _d : "";
+    const selectedOpt = options.find((o) => o.optionId === selectedOptionId);
+    const productSelected = selectedOpt !== void 0;
+    const anyAvailable = options.some((o) => o.available);
+    const defaultPick = (_e = selectedOpt != null ? selectedOpt : options.find((o) => o.available)) != null ? _e : options[0];
+    const wrap = document.createElement("div");
+    wrap.className = "fge-product";
+    if (!anyAvailable) wrap.classList.add("is-unavailable");
+    const head = document.createElement("label");
+    head.className = "fge-card";
+    if (productSelected) head.classList.add("is-selected");
+    if (!anyAvailable) head.classList.add("is-unavailable");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.className = "fge-card__radio";
+    radio.name = `fge-tier-${tierId}`;
+    radio.value = defaultPick.optionId;
+    radio.checked = productSelected;
+    radio.disabled = !anyAvailable;
+    radio.addEventListener("change", () => handlers.onChoose(tierId, defaultPick.optionId));
+    const body = document.createElement("div");
+    body.className = "fge-card__body";
+    const name = document.createElement("div");
+    name.className = "fge-card__name";
+    name.textContent = productLabel;
+    const status = document.createElement("div");
+    status.className = "fge-card__status";
+    if (!anyAvailable) {
+      status.classList.add("is-unavailable");
+      status.textContent = "Currently unavailable";
+    } else if (productSelected) {
+      status.classList.add("is-unlocked");
+      status.textContent = `${selectedOpt.variantLabel} \xB7 added free`;
+    } else {
+      status.textContent = `Choose this gift \xB7 ${options.length} options`;
+    }
+    body.append(name, status);
+    head.append(radio, giftImage((selectedOpt != null ? selectedOpt : defaultPick).imageUrl, productLabel), body);
+    wrap.append(head);
+    if (productSelected) {
+      const picker = document.createElement("div");
+      picker.className = "fge-variants";
+      picker.setAttribute("role", "group");
+      picker.setAttribute("aria-label", `Choose a ${productLabel} option`);
+      for (const opt of options) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "fge-variant";
+        btn.textContent = opt.variantLabel;
+        const isSel = opt.optionId === selectedOptionId;
+        if (isSel) btn.classList.add("is-selected");
+        btn.setAttribute("aria-pressed", String(isSel));
+        if (!opt.available) {
+          btn.disabled = true;
+          btn.classList.add("is-unavailable");
+        } else {
+          btn.addEventListener("click", () => handlers.onChoose(tierId, opt.optionId));
+        }
+        picker.append(btn);
+      }
+      wrap.append(picker);
+    }
+    return wrap;
   }
   function renderOptionCard(tierId, opt, selected, handlers) {
     const available = opt.available;
@@ -713,6 +791,14 @@
 .fge-step__dot,
 .fge-card__img{ display:block !important; }
 
+/* THEME-OVERRIDE: Dawn renders TWO "Your cart" titles inside the drawer \u2014 the H2.drawer__heading
+   (header) and the H1.title--primary (cart section title, normally suppressed). Our injected layout
+   surfaces both, so we hide the section-title duplicate \u2014 SCOPED to drawer containers only, so the
+   cart PAGE's own H1.title--primary is untouched. No-op on themes where it isn't present. */
+cart-drawer .title--primary,
+#CartDrawer .title--primary,
+.drawer__inner .title--primary{ display:none !important; }
+
 /* --- gift panel: lives INSIDE the drawer's scrollable items region, after the line items, so it
    scrolls with the cart (no inner max-height/scroll \u2014 that would nest a scrollbar and pin it). --- */
 .fge-gift{
@@ -720,6 +806,12 @@
 }
 .fge-gift__title{ margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.01em; }
 .fge-gift__hint{ margin:0; font-size:13px; color:var(--fge-muted); }
+
+/* A product group: the header card + (when selected) an inner variant picker, as one unit. */
+.fge-product{ margin:0 0 8px; }
+.fge-product > .fge-card{ margin:0; }
+.fge-product.is-selected > .fge-card{ border-bottom-left-radius:0; border-bottom-right-radius:0; }
+.fge-product.is-unavailable{ opacity:.55; }
 
 .fge-card{
   display:flex; align-items:center; gap:11px; width:100%; text-align:left;
@@ -739,6 +831,20 @@
 .fge-card__status{ font-size:11.5px; color:var(--fge-muted); margin-top:1px; }
 .fge-card__status.is-unlocked{ color:var(--fge-ink); font-weight:700; }
 .fge-card__status.is-unavailable{ color:#8a8a8a; }
+
+/* Inner variant picker (Ice/Dawn, S/M/L) inside a selected product card \u2014 pill buttons. */
+.fge-variants{
+  display:flex; flex-wrap:wrap; gap:6px;
+  padding:9px 10px 10px; border:1.5px solid var(--fge-brand); border-top:0;
+  border-radius:0 0 var(--fge-card-radius) var(--fge-card-radius); background:#f0f0f0;
+}
+.fge-variant{
+  font:inherit; font-size:12px; line-height:1; padding:6px 11px; cursor:pointer;
+  background:#fff; color:var(--fge-ink); border:1.5px solid var(--fge-line); border-radius:999px;
+}
+.fge-variant.is-selected{ background:var(--fge-brand); color:#fff; border-color:var(--fge-brand); }
+.fge-variant:focus-visible{ outline:2px solid var(--fge-brand); outline-offset:2px; }
+.fge-variant.is-unavailable{ opacity:.5; cursor:not-allowed; text-decoration:line-through; }
 
 .fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#8a8a8a; }
 

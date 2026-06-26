@@ -26,6 +26,7 @@ const config: CampaignConfigResponse = {
             optionId: 'a',
             variantId: ICE,
             productId: SNOWBOARD,
+            productLabel: 'The Complete Snowboard',
             variantLabel: 'Ice',
             available: true,
           },
@@ -33,6 +34,7 @@ const config: CampaignConfigResponse = {
             optionId: 'b',
             variantId: DAWN,
             productId: SNOWBOARD,
+            productLabel: 'The Complete Snowboard',
             variantLabel: 'Dawn',
             available: true,
           },
@@ -112,9 +114,11 @@ describe('buildChooserModel', () => {
     const or = model!.tiers[0] as ChooserOrTier;
     expect(or.kind).toBe('or');
     expect(or.selected).toBe('b');
-    // Ice + Dawn are siblings of one product -> a single group with two options.
+    // Ice + Dawn are siblings of one product -> a single group with two options (ONE product card
+    // with an inner variant picker), carrying the product title for the card heading.
     expect(or.groups).toHaveLength(1);
     expect(or.groups[0]!.options.map((o) => o.variantLabel)).toEqual(['Ice', 'Dawn']);
+    expect(or.groups[0]!.options[0]!.productLabel).toBe('The Complete Snowboard');
   });
 });
 

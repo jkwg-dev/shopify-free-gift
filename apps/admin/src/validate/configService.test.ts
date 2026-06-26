@@ -148,6 +148,7 @@ describe('resolveCampaignConfig', () => {
         optionId: 'a',
         variantId: ICE,
         productId: SNOWBOARD,
+        productLabel: 'The Complete Snowboard',
         variantLabel: 'Ice',
         available: true,
         imageUrl: 'https://cdn/ice.jpg',
@@ -156,6 +157,7 @@ describe('resolveCampaignConfig', () => {
         optionId: 'b',
         variantId: DAWN,
         productId: SNOWBOARD,
+        productLabel: 'The Complete Snowboard',
         variantLabel: 'Dawn',
         available: false,
         imageUrl: 'https://cdn/dawn.jpg',
@@ -169,6 +171,7 @@ describe('resolveCampaignConfig', () => {
       {
         variantId: HIDDEN,
         productId: HIDDEN_P,
+        productLabel: 'The Hidden Snowboard',
         variantLabel: 'The Hidden Snowboard',
         available: true,
         imageUrl: null,
