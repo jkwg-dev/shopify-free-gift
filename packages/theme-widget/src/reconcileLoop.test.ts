@@ -1,7 +1,7 @@
 import { money, type ValidateResult } from '@free-gift-engine/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { CartPost, PostResponse } from './cartMutations.js';
-import { reconcileGiftCart, type GiftCartIo } from './reconcileLoop.js';
+import { reconcileGiftCart, reconcileSettled, type GiftCartIo } from './reconcileLoop.js';
 
 const PAID = 'gid://shopify/ProductVariant/1000';
 const ICE = 'gid://shopify/ProductVariant/2001';
@@ -274,6 +274,98 @@ describe('reconcileGiftCart — no full-price beat (apply order)', () => {
         p.path === 'discount' ? `code:${(p.body as { discount: string }).discount}` : p.path,
       );
     expect(seq).toEqual(['code:CODE-ICE', 'cart/add.js']);
+  });
+});
+
+describe('reconcileSettled (pure convergence predicate)', () => {
+  it('true only when EVERY planned mutation applied with no failures', () => {
+    expect(
+      reconcileSettled(
+        { adds: 1, removes: 1, adjusts: 0 },
+        { added: 1, removed: 1, adjusted: 0, failed: 0 },
+      ),
+    ).toBe(true);
+    // code-only change (no cart mutations) is settled
+    expect(
+      reconcileSettled(
+        { adds: 0, removes: 0, adjusts: 0 },
+        { added: 0, removed: 0, adjusted: 0, failed: 0 },
+      ),
+    ).toBe(true);
+  });
+
+  it('false on any failure or partial apply — keeps the confirming re-validate', () => {
+    // add 422
+    expect(
+      reconcileSettled(
+        { adds: 1, removes: 0, adjusts: 0 },
+        { added: 0, removed: 0, adjusted: 0, failed: 1 },
+      ),
+    ).toBe(false);
+    // only one of two adds landed
+    expect(
+      reconcileSettled(
+        { adds: 2, removes: 0, adjusts: 0 },
+        { added: 1, removed: 0, adjusted: 0, failed: 0 },
+      ),
+    ).toBe(false);
+    // planned remove didn't land
+    expect(
+      reconcileSettled(
+        { adds: 0, removes: 1, adjusts: 0 },
+        { added: 0, removed: 0, adjusted: 0, failed: 0 },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('reconcileGiftCart — round-trip reduction (step 3a)', () => {
+  it('clean apply converges in ONE pass: a single /validate and a single cart read', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    let validateCalls = 0;
+    let readCalls = 0;
+    const base = makeIo(cart, () => {
+      validateCalls += 1;
+      return giftResult([ICE], 'CODE-ICE');
+    });
+    const io: GiftCartIo = {
+      ...base,
+      readCart: () => {
+        readCalls += 1;
+        return base.readCart();
+      },
+    };
+
+    const outcome = await reconcileGiftCart(io);
+
+    expect(outcome.converged).toBe(true);
+    expect(outcome.passes).toBe(1);
+    expect(validateCalls).toBe(1); // no confirming SECOND /validate
+    expect(readCalls).toBe(1); // no confirming SECOND /cart.js re-read
+    expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 });
+  });
+
+  it('re-validates (extra pass) when the apply did NOT fully land — convergence guarantee intact', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    let validateCalls = 0;
+    const io = makeIo(
+      cart,
+      () => {
+        validateCalls += 1;
+        return giftResult([BRUSH], 'CODE-X');
+      },
+      { add422: new Set([BRUSH]) },
+    );
+
+    const outcome = await reconcileGiftCart(io, { maxPasses: 4 });
+
+    expect(validateCalls).toBeGreaterThanOrEqual(2); // failed apply -> NOT skipped, re-validated
+    expect(outcome.converged).toBe(true);
+    expect(countGift(cart, BRUSH)).toEqual({ lines: 0, qty: 0 });
+    vi.restoreAllMocks();
   });
 });
 

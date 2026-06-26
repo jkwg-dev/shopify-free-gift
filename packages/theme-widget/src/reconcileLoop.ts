@@ -1,10 +1,16 @@
 // Convergent gift-cart reconcile (Phase 5b-2a fix for rapid-add / tier-cross races). reconcileGiftLines
 // (core, pure) computes the normalization for ONE cart snapshot; this loop drives it to CONVERGENCE
-// against the LIVE cart: re-read -> re-validate -> apply, repeating until the cart already matches
-// (empty plan + code unchanged) or a pass cap. Re-validating each pass means the desired set always
-// reflects the TRUE current subtotal/tier — so a gift added mid-burst isn't re-added, a previous
-// tier's gift is removed (highest-tier-only), and a bumped quantity is collapsed, even when rapid
-// user adds and our own writes interleave.
+// against the LIVE cart: read -> validate -> apply, repeating until the cart already matches (empty plan
+// + code unchanged) or a pass cap. Re-validating each pass means the desired set always reflects the
+// TRUE current subtotal/tier — so a gift added mid-burst isn't re-added, a previous tier's gift is
+// removed (highest-tier-only), and a bumped quantity is collapsed, even when rapid user adds and our
+// own writes interleave.
+//
+// Round-trip reduction (step 3a): when an apply FULLY realizes the plan (reconcileSettled — every
+// planned remove/adjust/add succeeded, no failures), we converge WITHOUT the confirming extra /cart.js
+// re-read + /validate. That's safe because our mutations only touch GIFT lines, never the qualifying
+// lines — so the tier /validate computed this pass is invariant under them. A partial/failed apply
+// still falls through to a real re-read + re-validate pass (the race/422 path is never skipped).
 //
 // Safety: a gift variant that FAILS to add (e.g. 422 — unpublished to the Online Store) is recorded
 // and NOT retried within this run, so an unaddable gift can never spin the loop. Bounded by maxPasses.
@@ -30,6 +36,32 @@ export type ReconcileOutcome = {
   readonly appliedCode: string | null;
   readonly failures: readonly CartMutationFailure[];
 };
+
+// Pure predicate (unit-tested): did the apply FULLY realize the plan? If every planned remove/adjust/add
+// succeeded with zero failures, the cart now holds exactly the desired gifts AND the qualifying (non-gift)
+// lines are untouched — so a re-`/validate` would return the SAME tier, making the confirming pass
+// redundant. We can converge without the extra /cart.js re-read + /validate round-trip.
+//
+// SAFETY: this skips the confirming validate ONLY on a clean, complete apply. ANY failure or partial
+// apply (a count is off — a 422, a race, a merge/split) returns false, so the loop re-reads and
+// re-validates exactly as before. We never skip validation in a way that could leave a wrong gift or a
+// leak: correctness over speed on every doubtful path.
+export function reconcileSettled(
+  expected: { readonly adds: number; readonly removes: number; readonly adjusts: number },
+  applied: {
+    readonly added: number;
+    readonly removed: number;
+    readonly adjusted: number;
+    readonly failed: number;
+  },
+): boolean {
+  return (
+    applied.failed === 0 &&
+    applied.added === expected.adds &&
+    applied.removed === expected.removes &&
+    applied.adjusted === expected.adjusts
+  );
+}
 
 export async function reconcileGiftCart(
   io: GiftCartIo,
@@ -67,9 +99,15 @@ export async function reconcileGiftCart(
     // BXGY does the zeroing server-side, so we never show a $0 the server hasn't applied, and the
     // code's minimum-purchase condition still gates the discount (no leak). If the add fails, we've
     // merely applied a code with no matching gift (harmless $0 effect) — same end state as before.
+    const removed: string[] = [];
+    const adjusted: string[] = [];
+    const added: string[] = [];
+    const passFailures: CartMutationFailure[] = [];
     if (hasRemoveAdjust) {
       const res = await applyCartPlan({ ...plan, add: [] }, io.post);
-      failures.push(...res.failures);
+      removed.push(...res.removed);
+      adjusted.push(...res.adjusted);
+      passFailures.push(...res.failures);
     }
     if (codeNeedsChange) {
       await io.setDiscount(plan.applyCode);
@@ -80,9 +118,28 @@ export async function reconcileGiftCart(
         addAttempted.add(a.variantId); // add this variant at most once per run (no re-add churn)
       }
       const res = await applyCartPlan({ ...plan, remove: [], adjust: [], add }, io.post);
-      failures.push(...res.failures);
+      added.push(...res.added);
+      passFailures.push(...res.failures);
     }
+    failures.push(...passFailures);
     io.nudge?.();
+
+    // CONVERGE EARLY when the apply fully realized the plan: the desired gifts are now in the cart and
+    // the qualifying lines are untouched, so re-validating would return the same tier. This drops the
+    // redundant confirming /cart.js re-read AND /validate in the common case. A failure/partial apply
+    // (predicate false) falls through to the next pass — re-read + re-validate — preserving convergence.
+    const settled = reconcileSettled(
+      { adds: add.length, removes: plan.remove.length, adjusts: plan.adjust.length },
+      {
+        added: added.length,
+        removed: removed.length,
+        adjusted: adjusted.length,
+        failed: passFailures.length,
+      },
+    );
+    if (settled) {
+      return { passes: pass, converged: true, appliedCode, failures };
+    }
   }
 
   return { passes: maxPasses, converged: false, appliedCode, failures };

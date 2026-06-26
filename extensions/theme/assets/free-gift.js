@@ -784,6 +784,9 @@
   }
 
   // src/reconcileLoop.ts
+  function reconcileSettled(expected, applied) {
+    return applied.failed === 0 && applied.added === expected.adds && applied.removed === expected.removes && applied.adjusted === expected.adjusts;
+  }
   async function reconcileGiftCart(io, opts = {}) {
     var _a2, _b2, _c2;
     const maxPasses = (_a2 = opts.maxPasses) != null ? _a2 : 4;
@@ -803,9 +806,15 @@
       if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
         return { passes: pass, converged: true, appliedCode, failures };
       }
+      const removed = [];
+      const adjusted = [];
+      const added = [];
+      const passFailures = [];
       if (hasRemoveAdjust) {
         const res = await applyCartPlan({ ...plan, add: [] }, io.post);
-        failures.push(...res.failures);
+        removed.push(...res.removed);
+        adjusted.push(...res.adjusted);
+        passFailures.push(...res.failures);
       }
       if (codeNeedsChange) {
         await io.setDiscount(plan.applyCode);
@@ -816,9 +825,23 @@
           addAttempted.add(a.variantId);
         }
         const res = await applyCartPlan({ ...plan, remove: [], adjust: [], add }, io.post);
-        failures.push(...res.failures);
+        added.push(...res.added);
+        passFailures.push(...res.failures);
       }
+      failures.push(...passFailures);
       (_c2 = io.nudge) == null ? void 0 : _c2.call(io);
+      const settled = reconcileSettled(
+        { adds: add.length, removes: plan.remove.length, adjusts: plan.adjust.length },
+        {
+          added: added.length,
+          removed: removed.length,
+          adjusted: adjusted.length,
+          failed: passFailures.length
+        }
+      );
+      if (settled) {
+        return { passes: pass, converged: true, appliedCode, failures };
+      }
     }
     return { passes: maxPasses, converged: false, appliedCode, failures };
   }

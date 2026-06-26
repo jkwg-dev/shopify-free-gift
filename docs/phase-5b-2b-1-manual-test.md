@@ -261,3 +261,17 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 | F5  | Leak guard intact   | A code's minimum still gates it — dropping below threshold reverts the gift to paid; suppression/highest-tier-only unchanged              |
 | F6  | First unlock        | First time crossing a threshold, the gift also appears already free (code applied before add)                                             |
 | F7  | Both surfaces       | No full-price beat in either the drawer or the /cart page                                                                                 |
+
+## Round 13 checks (fewer round-trips) — delay step 3a
+
+> Reuse/skip only; BXGY, tiers, suppression, leak guards, and step-2 apply ORDER all UNCHANGED.
+> Redeploy the theme widget. Re-profile a tier-1↔tier-2 transition in the Network panel.
+
+| #   | Check                         | Expected                                                                                                                               |
+| --- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | One /validate (common case)   | A clean tier transition fires `/validate` ONCE, not twice — no confirming second call after the gift mutations                         |
+| R2  | No confirming /cart.js        | No extra `/cart.js` re-read after the gift mutations land (the pass-2 read is gone)                                                    |
+| R3  | Correct gift still            | The right tier's gift is applied at $0; subtotal correct; nothing changed about the result                                             |
+| R4  | Convergence intact (race/422) | If a gift add fails (422) or the cart changed mid-flight, the loop STILL re-reads + re-validates and recovers (no wrong gift, no leak) |
+| R5  | Suppression intact            | Highest-tier-only / drop-below-threshold revert still work exactly as before                                                           |
+| R6  | Faster                        | Overall transition is noticeably quicker (~1.5s less from the dropped /validate + re-read)                                             |
