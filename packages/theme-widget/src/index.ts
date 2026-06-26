@@ -41,7 +41,7 @@ export {
   type ChooserAndTier,
 } from './chooser.js';
 
-// Tier progress graph (authoritative-only) + cart-drawer overlay mount (Phase 5b-2b-1).
+// Tier progress graph (authoritative-only) + cart section mount for drawer & /cart page (Phase 5b-2b-1).
 export {
   buildProgressModel,
   renderProgress,
@@ -54,10 +54,14 @@ export {
   type StepAlign,
 } from './progressGraph.js';
 export {
-  mountDrawerSections,
-  type DrawerSections,
-  type DrawerSectionsOptions,
-} from './cartDrawer.js';
+  mountCartContexts,
+  planInsertions,
+  type CartSection,
+  type CartMountOptions,
+  type Insertion,
+  type AnchorPresence,
+  type MountStrategy,
+} from './cartSections.js';
 export { injectStyles, FGE_CSS, FGE_STYLE_ID } from './styles.js';
 
 // Convergent reconcile loop (re-read -> re-validate -> apply until stable) — Phase 5b-2a fix.

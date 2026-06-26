@@ -208,3 +208,25 @@ Root causes fixed this round:
 | V4  | OOS chip          | An out-of-stock variant (Liquid L) is a disabled, struck-through pill; the card stays selectable if any sibling is in stock                                   |
 | V5  | Single-variant    | A single-variant product is still a plain card with no chips                                                                                                  |
 | V6  | Choice wiring     | Tapping a chip swaps the gift line + code (one optionId per tier), unchanged                                                                                  |
+
+## Round 10 checks (widget on the full /cart PAGE too)
+
+> The widget now mounts into BOTH the cart drawer and the full /cart page. Redeploy the theme widget
+> (`shopify app deploy`); the product-title needs the config SERVER redeployed (see round 9 V1).
+
+Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `cart-drawer-items` →
+`#main-cart-items`; `.drawer__footer` → `#main-cart-footer`; drawer re-render root → the cart-items
+`.shopify-section`. The chooser sits INSIDE the items scroll region in the drawer, and AFTER
+`#main-cart-items` (before the footer section) on the page.
+
+| #   | Check               | Expected                                                                                                                  |
+| --- | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| G1  | Page banner         | On /cart the stepper banner shows directly under the "Your cart" heading                                                  |
+| G2  | Page chooser        | The chooser shows below the cart line items (above the footer/checkout)                                                   |
+| G3  | Page order          | Reads: heading → banner → cart items → chooser → footer (same as the drawer)                                              |
+| G4  | Page renders        | Track/fill/dots and the variant chips render correctly (theme :empty + button overrides apply on the page too)            |
+| G5  | Page selection      | Choosing a gift / variant chip / decline works and applies the code, same as the drawer                                   |
+| G6  | Survives qty change | Changing a line qty on /cart re-renders the cart-items section; the banner + chooser re-inject and the selection persists |
+| G7  | Single heading      | Only one "Your cart" on the page (no duplicate); our banner doesn't restate it                                            |
+| G8  | Drawer unchanged    | The cart DRAWER still behaves exactly as before (banner under header, chooser in the scroll flow)                         |
+| G9  | Both surfaces       | On /cart, using the drawer AND the page both work; a change in one is reflected after reconcile                           |

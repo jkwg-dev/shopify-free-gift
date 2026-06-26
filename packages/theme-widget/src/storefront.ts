@@ -14,7 +14,7 @@ import {
   type ValidateRequest,
   type ValidateResult,
 } from '@free-gift-engine/core';
-import { mountDrawerSections, type DrawerSections } from './cartDrawer.js';
+import { mountCartContexts, type CartSection } from './cartSections.js';
 import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
@@ -94,9 +94,9 @@ let declined = false;
 let campaignConfig: CampaignConfigResponse | null = null;
 let lastResult: ValidateResult | null = null;
 const unavailableVariantIds = new Set<string>();
-let drawer: DrawerSections | null = null;
-let graphEl: HTMLElement | null = null;
-let chooserEl: HTMLElement | null = null;
+// One entry per present cart surface (drawer and/or full /cart page); we render the same perception UI
+// into each so the widget works wherever the shopper is.
+let sections: CartSection[] = [];
 
 // Cart writer for applyCartPlan: POSTs JSON to an AJAX cart path and returns the raw Response (ok +
 // status + text), so add/remove failures (e.g. a 422 for an unpublished gift product) are surfaced.
@@ -172,33 +172,38 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
   }
 }
 
-// Render the progress graph + chooser into the drawer overlay from CURRENT server-confirmed state.
+// Render the progress graph + chooser into EVERY mounted cart surface (drawer and/or /cart page) from
+// CURRENT server-confirmed state. The model is pure, so it's built once and painted into each context.
 function renderPerception(config: WidgetConfig): void {
-  if (campaignConfig === null || graphEl === null || chooserEl === null) {
+  if (campaignConfig === null || sections.length === 0) {
     return;
   }
   // The CURRENT (highest reached) tier is the gift the shopper receives — the chooser shows ONLY it.
   const currentTierId = lastResult?.status === 'gift' ? lastResult.tierId : null;
-  renderProgress(graphEl, buildProgressModel(campaignConfig, lastResult));
-  renderChooser(
-    chooserEl,
-    campaignConfig,
-    { choices: choiceState, declined, unavailableVariantIds },
-    {
-      onChoose: (tierId, optionId) => {
-        choiceState = { ...choiceState, [tierId]: optionId };
-        renderPerception(config); // reflect the selection immediately
-        schedule(config); // transactional re-validate/reconcile for the new choice
-      },
-      onDeclineToggle: (next) => {
-        declined = next;
-        renderPerception(config);
-        schedule(config);
-      },
+  const model = buildProgressModel(campaignConfig, lastResult);
+  const handlers = {
+    onChoose: (tierId: string, optionId: string) => {
+      choiceState = { ...choiceState, [tierId]: optionId };
+      renderPerception(config); // reflect the selection immediately, in every context
+      schedule(config); // transactional re-validate/reconcile for the new choice
     },
-    currentTierId,
-  );
-  drawer?.attach(); // ensure both sections are in the drawer flow after rendering
+    onDeclineToggle: (next: boolean) => {
+      declined = next;
+      renderPerception(config);
+      schedule(config);
+    },
+  };
+  for (const section of sections) {
+    renderProgress(section.stepperEl, model);
+    renderChooser(
+      section.chooserEl,
+      campaignConfig,
+      { choices: choiceState, declined, unavailableVariantIds },
+      handlers,
+      currentTierId,
+    );
+    section.attach(); // ensure both sections are in the cart flow after rendering
+  }
 }
 
 function schedule(config: WidgetConfig): void {
@@ -218,17 +223,15 @@ function schedule(config: WidgetConfig): void {
     });
 }
 
-// Inject the two perception sections into the drawer flow (stepper under the header, chooser below
-// the items), fetch the campaign structure, and render. Best-effort: if config is unavailable/inactive,
-// the engine still reconciles (AND tiers need no choice). The free gift renders normally in the cart
-// list at $0 — we no longer hide it (role separation: the cart line confirms receipt, our chooser is
-// progress + choice).
+// Inject the two perception sections into EVERY present cart surface (drawer + full /cart page): a
+// stepper under the heading, the chooser by the items, re-attached on every re-render. Fetch the
+// campaign structure and render. Best-effort: if config is unavailable/inactive, the engine still
+// reconciles (AND tiers need no choice). The free gift renders normally in the cart list at $0 — we no
+// longer hide it (role separation: the cart line confirms receipt, our chooser is progress + choice).
 async function initPerception(config: WidgetConfig): Promise<void> {
   injectStyles(); // design tokens + component CSS (once)
-  // Sections are injected INTO the drawer (blended, in-flow) and re-attached on every re-render.
-  drawer = mountDrawerSections({ drawerSelector: config.drawerSelector });
-  graphEl = drawer.stepperEl;
-  chooserEl = drawer.chooserEl;
+  // Blended, in-flow sections per context (drawer and/or /cart page); re-attached on every re-render.
+  sections = mountCartContexts({ drawerSelector: config.drawerSelector });
 
   const result = await getConfig({
     presentmentCurrency: config.presentmentCurrency,

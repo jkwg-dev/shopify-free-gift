@@ -46,7 +46,7 @@
     };
   }
 
-  // src/cartDrawer.ts
+  // src/cartSections.ts
   var DRAWER_SELECTORS = [
     "cart-drawer",
     "#CartDrawer",
@@ -65,6 +65,39 @@
     '[class*="cart-items" i]'
   ];
   var FOOTER_SELECTORS = [".drawer__footer", ".cart-drawer__footer", '[class*="drawer__footer" i]'];
+  var PAGE_HEADER_SELECTORS = ["h1.title--primary", ".title--primary"];
+  var PAGE_ITEMS_SELECTORS = ["#main-cart-items", ".cart__items"];
+  var PAGE_FOOTER_SELECTORS = ["#main-cart-footer"];
+  function planInsertions(strategy, present) {
+    const out = [];
+    if (present.header) {
+      out.push({ el: "stepper", mode: "afterend", anchor: "header" });
+    } else if (!strategy.strict) {
+      out.push({ el: "stepper", mode: "prepend", anchor: "panel" });
+    } else {
+      out.push({ el: "stepper", mode: "skip", anchor: "panel" });
+    }
+    if (strategy.chooserInsideItems) {
+      if (present.items) {
+        out.push({ el: "chooser", mode: "append", anchor: "items" });
+      } else if (!strategy.strict && present.footer) {
+        out.push({ el: "chooser", mode: "beforebegin", anchor: "footer" });
+      } else if (!strategy.strict) {
+        out.push({ el: "chooser", mode: "append", anchor: "panel" });
+      } else {
+        out.push({ el: "chooser", mode: "skip", anchor: "items" });
+      }
+    } else {
+      if (present.items) {
+        out.push({ el: "chooser", mode: "afterend", anchor: "items" });
+      } else if (!strategy.strict) {
+        out.push({ el: "chooser", mode: "append", anchor: "panel" });
+      } else {
+        out.push({ el: "chooser", mode: "skip", anchor: "items" });
+      }
+    }
+    return out;
+  }
   function findFirst(root2, selectors) {
     for (const sel of selectors) {
       const el = root2.querySelector(sel);
@@ -78,57 +111,110 @@
     const selectors = selectorOverride ? [selectorOverride, ...DRAWER_SELECTORS] : DRAWER_SELECTORS;
     return findFirst(document, selectors);
   }
-  function mountDrawerSections(opts = {}) {
+  function doAttach(spec, stepperEl, chooserEl) {
+    var _a2;
+    const panel = spec.panelSelectors.length > 0 ? (_a2 = findFirst(spec.observeRoot, spec.panelSelectors)) != null ? _a2 : spec.observeRoot : spec.observeRoot;
+    const anchors = {
+      header: findFirst(panel, spec.headerSelectors),
+      items: findFirst(panel, spec.itemsSelectors),
+      footer: findFirst(panel, spec.footerSelectors),
+      panel
+    };
+    const plan = planInsertions(
+      { chooserInsideItems: spec.chooserInsideItems, strict: spec.strict },
+      {
+        header: anchors.header !== null,
+        items: anchors.items !== null,
+        footer: anchors.footer !== null
+      }
+    );
+    for (const step of plan) {
+      const el = step.el === "stepper" ? stepperEl : chooserEl;
+      const anchor = anchors[step.anchor];
+      if (anchor === null) {
+        continue;
+      }
+      switch (step.mode) {
+        case "skip":
+          break;
+        case "afterend":
+          anchor.insertAdjacentElement("afterend", el);
+          break;
+        case "beforebegin":
+          anchor.insertAdjacentElement("beforebegin", el);
+          break;
+        case "append":
+          if (step.anchor === "items" || el.parentNode === null) {
+            anchor.append(el);
+          }
+          break;
+        case "prepend":
+          if (el.parentNode === null) {
+            anchor.prepend(el);
+          }
+          break;
+      }
+    }
+  }
+  function mountOne(spec) {
     const stepperEl = document.createElement("div");
     stepperEl.className = "fge fge-stepper-wrap";
     stepperEl.setAttribute("data-fge-stepper", "");
-    const chooserEl2 = document.createElement("div");
-    chooserEl2.className = "fge";
-    chooserEl2.setAttribute("data-fge-chooser", "");
-    const drawer2 = findDrawer(opts.drawerSelector);
-    const doAttach = () => {
-      var _a2;
-      if (drawer2 === null) {
-        if (stepperEl.parentNode === null) document.body.append(stepperEl, chooserEl2);
-        return;
-      }
-      const panel = (_a2 = findFirst(drawer2, PANEL_SELECTORS)) != null ? _a2 : drawer2;
-      const header = findFirst(panel, HEADER_SELECTORS);
-      if (header !== null) {
-        header.insertAdjacentElement("afterend", stepperEl);
-      } else if (stepperEl.parentNode === null) {
-        panel.prepend(stepperEl);
-      }
-      const items = findFirst(panel, ITEMS_SELECTORS);
-      if (items !== null) {
-        items.append(chooserEl2);
-      } else {
-        const footer = findFirst(panel, FOOTER_SELECTORS);
-        if (footer !== null) {
-          footer.insertAdjacentElement("beforebegin", chooserEl2);
-        } else if (chooserEl2.parentNode === null) {
-          panel.append(chooserEl2);
-        }
-      }
-    };
+    const chooserEl = document.createElement("div");
+    chooserEl.className = "fge";
+    chooserEl.setAttribute("data-fge-chooser", "");
     let observer = null;
     const attach = () => {
       observer == null ? void 0 : observer.disconnect();
       try {
-        doAttach();
+        doAttach(spec, stepperEl, chooserEl);
       } finally {
-        if (observer !== null && drawer2 !== null) {
+        if (observer !== null) {
           observer.takeRecords();
-          observer.observe(drawer2, { childList: true, subtree: true });
+          observer.observe(spec.observeRoot, { childList: true, subtree: true });
         }
       }
     };
-    if (drawer2 !== null) {
-      observer = new MutationObserver(() => attach());
-      observer.observe(drawer2, { childList: true, subtree: true });
-    }
+    observer = new MutationObserver(() => attach());
+    observer.observe(spec.observeRoot, { childList: true, subtree: true });
     attach();
-    return { stepperEl, chooserEl: chooserEl2, attach };
+    return { context: spec.context, stepperEl, chooserEl, attach };
+  }
+  function mountCartContexts(opts = {}) {
+    var _a2;
+    const specs = [];
+    const drawer = findDrawer(opts.drawerSelector);
+    if (drawer !== null) {
+      specs.push({
+        context: "drawer",
+        observeRoot: drawer,
+        panelSelectors: PANEL_SELECTORS,
+        headerSelectors: HEADER_SELECTORS,
+        itemsSelectors: ITEMS_SELECTORS,
+        footerSelectors: FOOTER_SELECTORS,
+        chooserInsideItems: true,
+        // scroll past the items to reach the chooser
+        strict: false
+        // keep the drawer's lenient fallbacks (unchanged behavior)
+      });
+    }
+    const pageItems = findFirst(document, PAGE_ITEMS_SELECTORS);
+    const pageSection = (_a2 = pageItems == null ? void 0 : pageItems.closest(".shopify-section")) != null ? _a2 : null;
+    if (pageSection instanceof HTMLElement) {
+      specs.push({
+        context: "page",
+        observeRoot: pageSection,
+        panelSelectors: [],
+        headerSelectors: PAGE_HEADER_SELECTORS,
+        itemsSelectors: PAGE_ITEMS_SELECTORS,
+        footerSelectors: PAGE_FOOTER_SELECTORS,
+        chooserInsideItems: false,
+        // a normal page: chooser AFTER the items, before the footer section
+        strict: true
+        // never inject in the wrong place on an unknown theme
+      });
+    }
+    return specs.map(mountOne);
   }
 
   // src/cartMutations.ts
@@ -918,9 +1004,7 @@ cart-drawer .title--primary,
   var campaignConfig = null;
   var lastResult = null;
   var unavailableVariantIds = /* @__PURE__ */ new Set();
-  var drawer = null;
-  var graphEl = null;
-  var chooserEl = null;
+  var sections = [];
   var cartPost = (path, body) => fetch(`${root}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -986,30 +1070,34 @@ cart-drawer .title--primary,
     }
   }
   function renderPerception(config) {
-    if (campaignConfig === null || graphEl === null || chooserEl === null) {
+    if (campaignConfig === null || sections.length === 0) {
       return;
     }
     const currentTierId = (lastResult == null ? void 0 : lastResult.status) === "gift" ? lastResult.tierId : null;
-    renderProgress(graphEl, buildProgressModel(campaignConfig, lastResult));
-    renderChooser(
-      chooserEl,
-      campaignConfig,
-      { choices: choiceState, declined, unavailableVariantIds },
-      {
-        onChoose: (tierId, optionId) => {
-          choiceState = { ...choiceState, [tierId]: optionId };
-          renderPerception(config);
-          schedule(config);
-        },
-        onDeclineToggle: (next) => {
-          declined = next;
-          renderPerception(config);
-          schedule(config);
-        }
+    const model = buildProgressModel(campaignConfig, lastResult);
+    const handlers = {
+      onChoose: (tierId, optionId) => {
+        choiceState = { ...choiceState, [tierId]: optionId };
+        renderPerception(config);
+        schedule(config);
       },
-      currentTierId
-    );
-    drawer == null ? void 0 : drawer.attach();
+      onDeclineToggle: (next) => {
+        declined = next;
+        renderPerception(config);
+        schedule(config);
+      }
+    };
+    for (const section of sections) {
+      renderProgress(section.stepperEl, model);
+      renderChooser(
+        section.chooserEl,
+        campaignConfig,
+        { choices: choiceState, declined, unavailableVariantIds },
+        handlers,
+        currentTierId
+      );
+      section.attach();
+    }
   }
   function schedule(config) {
     if (running) {
@@ -1027,9 +1115,7 @@ cart-drawer .title--primary,
   }
   async function initPerception(config) {
     injectStyles();
-    drawer = mountDrawerSections({ drawerSelector: config.drawerSelector });
-    graphEl = drawer.stepperEl;
-    chooserEl = drawer.chooserEl;
+    sections = mountCartContexts({ drawerSelector: config.drawerSelector });
     const result = await getConfig({
       presentmentCurrency: config.presentmentCurrency,
       countryCode: config.country
