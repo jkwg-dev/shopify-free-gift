@@ -28,6 +28,7 @@ import {
   type QualifyingRule,
 } from '@free-gift-engine/shopify';
 import { buildAuthorizeUrl, type OAuthCallbackDeps } from '../auth/oauth.js';
+import type { Campaign } from '../domain.js';
 import type { PrismaLike } from '../db/prismaLike.js';
 import {
   PrismaCampaignRepository,
@@ -222,6 +223,23 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
     now: () => new Date(),
   };
   return validateDeps;
+}
+
+// --- embedded admin (Phase 3b Stage A) -----------------------------------------------------------
+
+// API key + secret used to VERIFY the App Bridge session token on embedded admin API calls.
+export function getAdminSessionConfig(): { readonly apiKey: string; readonly apiSecret: string } {
+  return { apiKey: requireEnv('SHOPIFY_API_KEY'), apiSecret: requireEnv('SHOPIFY_API_SECRET') };
+}
+
+// Read-only: all campaigns for a (session-verified) shop domain, for the admin list. Empty if the
+// shop isn't installed. Read path only — no provisioning/activation (Stage C).
+export async function listCampaignsByDomain(shopDomain: string): Promise<readonly Campaign[]> {
+  const shop = await shopRepo().findByDomain(shopDomain);
+  if (shop === null) {
+    return [];
+  }
+  return new PrismaCampaignRepository(prismaLike()).listByShop(shop.id);
 }
 
 // --- /config (read-only campaign structure for the perception UI) --------------------------------

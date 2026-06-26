@@ -10,6 +10,8 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       '**/.turbo/**',
+      // Next.js generates this (triple-slash refs into .next/types); gitignored, not linted.
+      '**/next-env.d.ts',
       // Generated theme-extension bundle (built by extensions/theme/build.mjs from src/).
       'extensions/*/assets/**',
     ],

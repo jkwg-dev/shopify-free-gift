@@ -8,6 +8,9 @@ out/
 # Next.js generates this on build/dev (augments tsconfig too); not committed.
 next-env.d.ts
 
+# TypeScript incremental build cache (Next sets incremental:true in apps/admin/tsconfig.json).
+*.tsbuildinfo
+
 # turbo / tooling caches
 .turbo/
 coverage/

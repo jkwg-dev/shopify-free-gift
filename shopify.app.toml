@@ -8,8 +8,9 @@
 client_id = "b17eeffcb3567de7684f87a3a4543612"
 name = "free-gift-engine"
 application_url = "https://free-gift-engine.vercel.app"
-# Headless until Phase 3b (the "/" route redirects installs into OAuth; no embedded App Bridge UI).
-embedded = false
+# Phase 3b Stage A: embedded admin (App Bridge + Polaris). "/" renders the embedded UI for an
+# installed shop and redirects a not-yet-installed shop into OAuth begin.
+embedded = true
 
 [access_scopes]
 # Minimal scopes the engine uses (composition.ts GIFT_ENGINE_SCOPES). write_products tags gift

@@ -116,6 +116,37 @@ Consequences (do not regress):
 - **No admin token in env**: Admin API calls use the per-shop **offline token from install**, stored AES-256-GCM-encrypted in the Shop row and decrypted per request (`adminClientForShop`). The OAuth-install path is the one that's used.
 - **Minimal scopes** (audited against `packages/shopify`): `read_products` (variant validation + contextualPricing), `write_discounts` (create/deactivate the scoped codes), `read_discounts` (discounts API reads the created node back). No `write_products`. The list lives in `composition.ts` (`GIFT_ENGINE_SCOPES`) and must match `shopify.app.toml [access_scopes]` and the Dashboard app.
 
+### Decision: Phase 3b admin (embedded UI + scheduling + provisioning + channel scope)
+
+Design + staged plan: `docs/phase-3b-admin-design.md`. **Stage A shipped** (embedded shell + the App
+Bridge session-token boundary + a read-only campaign list); Stages B–E are designed, not built. Locked
+decisions:
+
+- **One active FGE campaign at a time (mutual exclusion), server-enforced.** Applies to OUR engine's
+  campaigns only (not other promo types). On activate, deactivate any other active FGE campaign (with
+  its teardown) first — active-FGE count is always ≤ 1; reject overlapping schedule windows
+  (confirm-and-replace). Build in Stage B/C; Stage A is read-only. (This is why one shared qualifying
+  collection is correct — below.)
+- **Single shared qualifying collection** (`fge-qualifying`): with only one active campaign, one shared
+  smart collection serves it. No per-campaign collections.
+- **`combinesWith.productDiscounts:false` stays** — a free gift should NOT stack with another product
+  discount; "not combinable" is the intended default. PRODUCTION LAUNCH-GATE CHECK (dev can't
+  reproduce; no Kite): a Kite "BOGO 50%" runs in prod and is itself BXGY — verify in production which
+  one wins when a cart qualifies for both, and that it isn't confusing. FUTURE: a per-campaign "allow
+  combining" toggle (default off).
+- **Channel/availability scope = `read_products`** (no new scope, no reinstall):
+  `Product.publishedOnPublication(<Online Store>)` gives the channel-publication boolean; we do NOT add
+  `read_product_listings`. The policy (don't auto-publish; off-channel → exclude from candidates;
+  unlisted → treat as OOS; dropped-off-channel → remove customer-side + dim admin-side with explicit
+  removal) is Stage E.
+- **Scheduling stays LAZY** (no cron) — `isCampaignActive` is already enforced at `/validate`/`/config`;
+  the admin just edits `active` + dates. **Provision + eager-mint AT ACTIVATE** (Stage C), not at the
+  scheduled start.
+- **Embedded auth boundary**: embedded admin API calls (`/api/admin/*`) verify the **App Bridge session
+  token (HS256 JWT, `SHOPIFY_API_SECRET`)** — distinct from OAuth HMAC and the App-Proxy signature,
+  which are unchanged. `embedded=true`; `/` renders the embedded UI for an installed shop and redirects
+  a not-installed shop into OAuth.
+
 ## Storefront UX: perception (required)
 
 The shopper MUST clearly notice the gift. No silent additions.

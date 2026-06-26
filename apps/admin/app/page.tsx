@@ -1,0 +1,31 @@
+// App entry "/" — now the embedded admin (Phase 3b Stage A) instead of a text placeholder. Reuses the
+// pure install gate (resolveRootEntry): no shop → a "open from admin" message; invalid shop → 400-ish
+// message; not installed → redirect into OAuth begin; installed → render the embedded campaign list.
+// Server component (Node runtime: isShopInstalled uses Prisma + crypto).
+import { redirect } from 'next/navigation';
+import type { ReactNode } from 'react';
+import { resolveRootEntry } from '../src/install/rootEntry.js';
+import { isShopInstalled } from '../src/validate/composition.js';
+import { CampaignListClient } from './CampaignListClient.js';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+export default async function Page({
+  searchParams,
+}: {
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
+}): Promise<ReactNode> {
+  const sp = await searchParams;
+  const shopParam = sp['shop'];
+  const shop = typeof shopParam === 'string' ? shopParam : null;
+
+  const entry = await resolveRootEntry(shop, { isInstalled: isShopInstalled });
+  if (entry.kind === 'redirect') {
+    redirect(entry.location); // not installed → OAuth begin
+  }
+  if (entry.kind === 'bad-request' || shop === null) {
+    return <main style={{ padding: 24 }}>{entry.body}</main>;
+  }
+  return <CampaignListClient />;
+}
