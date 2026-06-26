@@ -131,6 +131,7 @@ export function renderChooser(
   // signal; the real gift state still comes from the confirmed cart/validate.
   if (pending) {
     root.classList.add('is-pending');
+    root.setAttribute('aria-busy', 'true'); // AT: this region is updating (paired with the live region)
   }
 
   renderGiftSection(root, model, currentTierId, handlers);
@@ -186,10 +187,14 @@ function renderGiftSection(
   root.append(title);
 
   if (current.kind === 'or') {
-    // ONE card per PRODUCT; sibling variants picked inside the selected card (not a card each).
-    for (const group of current.groups) {
-      root.append(renderProductGroup(current.tierId, group, current.selected, handlers));
+    // ONE card per PRODUCT (radios). Group them so AT announces "Choose your free gift, radio group".
+    const group = document.createElement('div');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Choose your free gift');
+    for (const g of current.groups) {
+      group.append(renderProductGroup(current.tierId, g, current.selected, handlers));
     }
+    root.append(group);
   } else {
     root.append(renderBundle(current));
   }
@@ -202,18 +207,22 @@ function hint(text: string): HTMLElement {
   return p;
 }
 
-// An <img> for the gift, or an empty placeholder box (CSS background) when there's no image.
-function giftImage(imageUrl: string | null | undefined, alt: string): HTMLElement {
+// An <img> for the gift, or an empty placeholder box (CSS background) when there's no image. DECORATIVE
+// for AT: the product/variant name is already in the card text, so alt is empty + aria-hidden (avoids
+// the screen reader announcing the name twice).
+function giftImage(imageUrl: string | null | undefined): HTMLElement {
   if (imageUrl !== null && imageUrl !== undefined && imageUrl.length > 0) {
     const img = document.createElement('img');
     img.className = 'fge-card__img';
     img.src = imageUrl;
-    img.alt = alt;
+    img.alt = '';
+    img.setAttribute('aria-hidden', 'true');
     img.loading = 'lazy';
     return img;
   }
   const ph = document.createElement('div');
   ph.className = 'fge-card__img';
+  ph.setAttribute('aria-hidden', 'true');
   return ph;
 }
 
@@ -255,6 +264,9 @@ function renderProductGroup(
   radio.value = defaultPick.optionId;
   radio.checked = productSelected;
   radio.disabled = !anyAvailable;
+  // Clean accessible name = the product name. Without it the label-text name would also absorb the
+  // variant chips' button text ("Ice Dawn"). The chips are separately navigable buttons.
+  radio.setAttribute('aria-label', productLabel);
   radio.addEventListener('change', () => handlers.onChoose(tierId, defaultPick.optionId));
 
   const body = document.createElement('div');
@@ -279,7 +291,7 @@ function renderProductGroup(
     body.append(status);
   }
 
-  card.append(radio, giftImage((selectedOpt ?? defaultPick).imageUrl, productLabel), body);
+  card.append(radio, giftImage((selectedOpt ?? defaultPick).imageUrl), body);
   return card;
 }
 
@@ -304,8 +316,9 @@ function renderVariantChips(
     if (isSel) btn.classList.add('is-selected');
     btn.setAttribute('aria-pressed', String(isSel));
     if (!opt.available) {
-      btn.disabled = true;
+      btn.disabled = true; // removed from the tab order + announced as unavailable
       btn.classList.add('is-unavailable');
+      btn.setAttribute('aria-label', `${opt.variantLabel} (currently unavailable)`);
     } else {
       btn.addEventListener('click', () => handlers.onChoose(tierId, opt.optionId));
     }
@@ -354,7 +367,7 @@ function renderOptionCard(
   }
   body.append(name, status);
 
-  card.append(radio, giftImage(opt.imageUrl, opt.variantLabel), body);
+  card.append(radio, giftImage(opt.imageUrl), body);
   return card;
 }
 
@@ -381,7 +394,7 @@ function renderBundle(tier: ChooserAndTier): HTMLElement {
       status.textContent = 'Currently unavailable';
     }
     body.append(name, status);
-    card.append(giftImage(item.imageUrl, item.variantLabel), body);
+    card.append(giftImage(item.imageUrl), body);
     wrap.append(card);
   }
   if (tier.incomplete) {

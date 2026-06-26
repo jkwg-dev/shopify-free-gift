@@ -372,6 +372,7 @@
     root2.className = "fge-gift";
     if (pending2) {
       root2.classList.add("is-pending");
+      root2.setAttribute("aria-busy", "true");
     }
     renderGiftSection(root2, model, currentTierId, handlers);
     if (pending2) {
@@ -406,9 +407,13 @@
     title.textContent = current.kind === "or" ? "Choose your free gift" : "Your free gift";
     root2.append(title);
     if (current.kind === "or") {
-      for (const group of current.groups) {
-        root2.append(renderProductGroup(current.tierId, group, current.selected, handlers));
+      const group = document.createElement("div");
+      group.setAttribute("role", "radiogroup");
+      group.setAttribute("aria-label", "Choose your free gift");
+      for (const g of current.groups) {
+        group.append(renderProductGroup(current.tierId, g, current.selected, handlers));
       }
+      root2.append(group);
     } else {
       root2.append(renderBundle(current));
     }
@@ -419,17 +424,19 @@
     p.textContent = text;
     return p;
   }
-  function giftImage(imageUrl, alt) {
+  function giftImage(imageUrl) {
     if (imageUrl !== null && imageUrl !== void 0 && imageUrl.length > 0) {
       const img = document.createElement("img");
       img.className = "fge-card__img";
       img.src = imageUrl;
-      img.alt = alt;
+      img.alt = "";
+      img.setAttribute("aria-hidden", "true");
       img.loading = "lazy";
       return img;
     }
     const ph = document.createElement("div");
     ph.className = "fge-card__img";
+    ph.setAttribute("aria-hidden", "true");
     return ph;
   }
   function renderProductGroup(tierId, group, selectedOptionId, handlers) {
@@ -455,6 +462,7 @@
     radio.value = defaultPick.optionId;
     radio.checked = productSelected;
     radio.disabled = !anyAvailable;
+    radio.setAttribute("aria-label", productLabel);
     radio.addEventListener("change", () => handlers.onChoose(tierId, defaultPick.optionId));
     const body = document.createElement("div");
     body.className = "fge-card__body";
@@ -475,7 +483,7 @@
       status.textContent = `Choose this gift \xB7 ${options.length} options`;
       body.append(status);
     }
-    card.append(radio, giftImage((selectedOpt != null ? selectedOpt : defaultPick).imageUrl, productLabel), body);
+    card.append(radio, giftImage((selectedOpt != null ? selectedOpt : defaultPick).imageUrl), body);
     return card;
   }
   function renderVariantChips(tierId, options, selectedOptionId, productLabel, handlers) {
@@ -494,6 +502,7 @@
       if (!opt.available) {
         btn.disabled = true;
         btn.classList.add("is-unavailable");
+        btn.setAttribute("aria-label", `${opt.variantLabel} (currently unavailable)`);
       } else {
         btn.addEventListener("click", () => handlers.onChoose(tierId, opt.optionId));
       }
@@ -532,7 +541,7 @@
       status.textContent = "Choose this gift";
     }
     body.append(name, status);
-    card.append(radio, giftImage(opt.imageUrl, opt.variantLabel), body);
+    card.append(radio, giftImage(opt.imageUrl), body);
     return card;
   }
   function renderBundle(tier) {
@@ -556,7 +565,7 @@
         status.textContent = "Currently unavailable";
       }
       body.append(name, status);
-      card.append(giftImage(item.imageUrl, item.variantLabel), body);
+      card.append(giftImage(item.imageUrl), body);
       wrap.append(card);
     }
     if (tier.incomplete) {
@@ -612,6 +621,24 @@
     ".cart__checkout-button"
   ];
   var CHECKOUT_LOCK_CLASS = "fge-checkout-pending";
+  var LIVE_REGION_ID = "fge-live";
+  function announcePending(message) {
+    var _a2;
+    const doc = globalThis.document;
+    if (doc === void 0) {
+      return;
+    }
+    let live = doc.getElementById(LIVE_REGION_ID);
+    if (live === null) {
+      live = doc.createElement("span");
+      live.id = LIVE_REGION_ID;
+      live.className = "fge-sr-only";
+      live.setAttribute("role", "status");
+      live.setAttribute("aria-live", "polite");
+      (_a2 = doc.body) == null ? void 0 : _a2.append(live);
+    }
+    live.textContent = message;
+  }
   function setCheckoutLocked(locked) {
     var _a2;
     const doc = globalThis.document;
@@ -737,6 +764,7 @@
     headline.className = "fge-headline";
     const stepper = document.createElement("div");
     stepper.className = "fge-stepper";
+    stepper.setAttribute("aria-hidden", "true");
     const track = document.createElement("div");
     track.className = "fge-stepper__track";
     const fill = document.createElement("div");
@@ -1011,6 +1039,14 @@ cart-drawer .title--primary,
   border-top:1px solid var(--fge-line); font-size:13px; color:var(--fge-ink); cursor:pointer;
 }
 .fge-decline input{ accent-color:var(--fge-brand); width:16px; height:16px; }
+.fge-decline:focus-within{ outline:2px solid var(--fge-brand); outline-offset:2px; border-radius:4px; }
+
+/* Visually-hidden but screen-reader-readable (the pending live region). A <span> so the theme's
+   div:empty rule never hides it; persistently present, announces on textContent change. */
+.fge-sr-only{
+  position:absolute !important; width:1px; height:1px; margin:-1px; padding:0;
+  overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0;
+}
 
 /* THEME-OVERRIDE: lock + load the theme's Checkout button (drawer + /cart) while a gift reconcile is
    in progress, so the shopper can't pay before the gift is confirmed at $0, and the button itself
@@ -1203,6 +1239,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
     giftPendingActive = true;
     giftPendingMinElapsed = false;
     setCheckoutLocked(true);
+    announcePending("Updating your free gift\u2026");
     if (perceptionConfig !== null) {
       renderPerception(perceptionConfig);
     }
@@ -1236,6 +1273,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
       giftPendingSafetyTimer = void 0;
     }
     setCheckoutLocked(false);
+    announcePending("");
     if (perceptionConfig !== null) {
       renderPerception(perceptionConfig);
     }

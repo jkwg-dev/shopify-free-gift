@@ -66,6 +66,7 @@ export { injectStyles, FGE_CSS, FGE_STYLE_ID } from './styles.js';
 export {
   pendingShouldClear,
   setCheckoutLocked,
+  announcePending,
   PENDING_MIN_MS,
   PENDING_MAX_MS,
 } from './pending.js';

@@ -141,6 +141,14 @@ cart-drawer .title--primary,
   border-top:1px solid var(--fge-line); font-size:13px; color:var(--fge-ink); cursor:pointer;
 }
 .fge-decline input{ accent-color:var(--fge-brand); width:16px; height:16px; }
+.fge-decline:focus-within{ outline:2px solid var(--fge-brand); outline-offset:2px; border-radius:4px; }
+
+/* Visually-hidden but screen-reader-readable (the pending live region). A <span> so the theme's
+   div:empty rule never hides it; persistently present, announces on textContent change. */
+.fge-sr-only{
+  position:absolute !important; width:1px; height:1px; margin:-1px; padding:0;
+  overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0;
+}
 
 /* THEME-OVERRIDE: lock + load the theme's Checkout button (drawer + /cart) while a gift reconcile is
    in progress, so the shopper can't pay before the gift is confirmed at $0, and the button itself

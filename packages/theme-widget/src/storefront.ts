@@ -22,6 +22,7 @@ import { getConfig } from './configClient.js';
 import {
   PENDING_MIN_MS,
   PENDING_MAX_MS,
+  announcePending,
   pendingShouldClear,
   setCheckoutLocked,
 } from './pending.js';
@@ -209,6 +210,7 @@ function beginGiftPending(): void {
   giftPendingActive = true;
   giftPendingMinElapsed = false;
   setCheckoutLocked(true); // dim + lock + spinner/message overlay (CSS)
+  announcePending('Updating your free gift…'); // tell AT why Checkout is disabled
   if (perceptionConfig !== null) {
     renderPerception(perceptionConfig); // dim chooser cards + heading spinner
   }
@@ -248,6 +250,7 @@ function clearGiftPending(): void {
     giftPendingSafetyTimer = undefined;
   }
   setCheckoutLocked(false); // restore "Check out" label + unlock
+  announcePending(''); // clear the AT announcement
   if (perceptionConfig !== null) {
     renderPerception(perceptionConfig); // restore chooser opacity + drop the spinner
   }

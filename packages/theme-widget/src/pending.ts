@@ -26,6 +26,28 @@ const CHECKOUT_SELECTORS = [
   '.cart__checkout-button',
 ];
 const CHECKOUT_LOCK_CLASS = 'fge-checkout-pending';
+const LIVE_REGION_ID = 'fge-live';
+
+// Announce the pending state to assistive tech (the Checkout overlay text is CSS ::after content, which
+// screen readers don't reliably read). A single persistent visually-hidden polite live region: set a
+// message on engage so an AT user learns WHY Checkout is disabled, clear it ('') when done. A <span>
+// (not a div) dodges the theme's div:empty{display:none}. Never throws.
+export function announcePending(message: string): void {
+  const doc = (globalThis as { document?: Document }).document;
+  if (doc === undefined) {
+    return;
+  }
+  let live = doc.getElementById(LIVE_REGION_ID);
+  if (live === null) {
+    live = doc.createElement('span');
+    live.id = LIVE_REGION_ID;
+    live.className = 'fge-sr-only';
+    live.setAttribute('role', 'status');
+    live.setAttribute('aria-live', 'polite');
+    doc.body?.append(live);
+  }
+  live.textContent = message;
+}
 
 // Lock/unlock Checkout while a gift reconcile is in progress, covering BOTH the drawer and /cart. The
 // body class is the DURABLE lock + spinner/label overlay (all CSS — see styles.ts), so it survives the

@@ -206,6 +206,9 @@ function ensureSkeleton(mount: HTMLElement, nodes: readonly StepNode[]): Stepper
   headline.className = 'fge-headline';
   const stepper = document.createElement('div');
   stepper.className = 'fge-stepper';
+  // The bar/nodes/labels are a DECORATIVE visualization of the headline + subnote text; hide them from
+  // AT so it doesn't read "CA$500 CA$1,000 CA$1,500" as noise. The headline + subnote stay readable.
+  stepper.setAttribute('aria-hidden', 'true');
   const track = document.createElement('div');
   track.className = 'fge-stepper__track';
   const fill = document.createElement('div');

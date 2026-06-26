@@ -377,3 +377,21 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 
 > NOTE: the no-gift subtotal needs the SERVER redeploy. Until then the widget falls back to 0% below
 > tier 1 (the no-gift /validate response won't carry `subtotal`).
+
+## Round 20 checks (accessibility pass)
+
+> Redeploy the theme widget. Test with keyboard + a screen reader (VoiceOver/NVDA), drawer and /cart.
+
+| #   | Check          | Expected                                                                                                                                                                   |
+| --- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Tab order      | Tab reaches: gift radios, variant chips, the decline checkbox — all operable (radio arrows/space, chip space/enter, checkbox space)                                        |
+| A2  | Focus visible  | A clear focus ring shows on the focused card/radio, chip, and the decline checkbox                                                                                         |
+| A3  | OOS chip       | Liquid L is not tab-focusable (disabled) and announces "(currently unavailable)"                                                                                           |
+| A4  | Radio group    | The OR options announce as a radio group ("Choose your free gift") with N radios named by product                                                                          |
+| A5  | Chip state     | Chips announce pressed/not-pressed (aria-pressed) and the selected one as pressed                                                                                          |
+| A6  | Stepper SR     | The decorative bar/nodes are NOT read out; the headline ("Spend CA$X more…" / "You've unlocked…") + subnote ARE read                                                       |
+| A7  | Pending SR     | When Checkout locks, a screen reader hears "Updating your free gift…" (polite live region) and Checkout is announced disabled; the message clears when done                |
+| A8  | Images         | Gift card images are not announced (decorative; the name is in text — not read twice)                                                                                      |
+| A9  | Contrast       | Text + focus rings remain legible on the black/neutral palette; dimmed cards during pending are transient/intentional (headline, decline, live message stay full contrast) |
+| A10 | Reduced motion | (already) spinners/stepper/dim respect prefers-reduced-motion                                                                                                              |
+| A11 | Both surfaces  | All of the above in drawer and /cart                                                                                                                                       |
