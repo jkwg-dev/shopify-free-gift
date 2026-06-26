@@ -40,9 +40,7 @@ type MetaNode =
 
 type MetaResponse = { readonly nodes: readonly (MetaNode | null)[] };
 
-function isVariantNode(
-  node: MetaNode | null,
-): node is {
+function isVariantNode(node: MetaNode | null): node is {
   __typename: 'ProductVariant';
   id: string;
   title: string;
