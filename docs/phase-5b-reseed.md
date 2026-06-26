@@ -231,6 +231,22 @@ Print for the record: **collection id**, **productsCount**, **hasProduct(Hydroge
 untagged, or Hydrogen excluded — **do not mint**; provisioning / the mint precondition will (and
 should) abort.
 
+> **⚠️ A gift variant MUST NOT be the qualifying product (verified-broken 5b-2a).** The seed once put
+> Hydrogen (`…235501`, the qualifying paid item) into `SEED_OR1500_GIDS`, so it was both qualifying
+> AND a tier-3 gift. The widget then adds Hydrogen _as a gift_, colliding with the shopper's paid
+> Hydrogen line at the Shopify cart layer (qty confusion / a line getting reset). It is also
+> internally contradictory: a correctly-provisioned gift is tagged `app:fge_gift` and **excluded** from
+> the qualifying collection, so it could never drive the threshold. **Confirm no tier's gift set
+> contains the qualifying product** before seeding/minting:
+>
+> ```graphql
+> # the qualifying paid product's variant must NOT appear in any tier's giftConfig
+> # (check the seed's SEED_*_GIDS / SEED_OR1500_GIDS lists — they must exclude …235501)
+> ```
+>
+> Fix: re-seed with a corrected `SEED_OR1500_GIDS` that excludes Hydrogen (use Oxygen `…727021`,
+> Minimal `…711213`, etc. per the Phase-4 fixtures), then re-provision.
+
 ## Step 4 — mint (only now)
 
 Hit `/validate` for each tier (see `docs/phase-4-smoke-test.md` → "Calling /validate during the
