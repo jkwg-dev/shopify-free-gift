@@ -75,21 +75,32 @@ because the qualifying collection is missing/empty) could leave a **reservation 
 the next caller then waited on it and failed with `Timed out waiting for a concurrent gift-code
 creation to resolve` — masking the real cause.
 
-Fixed in `store/giftCodeMapping.ts`: any mint failure **releases the reservation** before the error
-propagates, and a waiter that sees the holder fail/abandon **takes over and re-mints**, so the caller
-now surfaces the REAL error (empty qualifying scope → "reinstall + re-seed to create the qualifying
-collection") and fails fast instead of timing out. A reservation older than `staleReservationMs`
-(60s) is reclaimed automatically, so a pre-existing zombie self-heals on the next call.
+A key can wedge in two ways — `getOrCreate` (and `clear:reservations`) handle both:
 
-To clear zombies explicitly:
+1. **Zombie reservation** (`code IS NULL`): a holder died mid-mint. Reclaimed once older than
+   `staleReservationMs` (60s), so it self-heals on the next call.
+2. **Superseded row** (`active = false`, code SET): a deactivated code still occupying its key — e.g.
+   a leaky code that was deactivated during cleanup but whose mapping row was never deleted. This
+   matched **neither** the reuse branch (`active && code`) nor the reservation branch (`code IS NULL`),
+   so every call fell through to the unique-key insert and timed out. **This was the live tier-1
+   "a"/Ice wedge** (row `code` set, `active=false`, ~78min old) while "b"/Dawn (`active=true`) returned 200. `clear:reservations` skipped it (it only deleted `code IS NULL`) and the 60s self-heal skipped
+   it (only `code IS NULL`).
+
+Fixed in `store/giftCodeMapping.ts`: any mint failure **releases the reservation** before the error
+propagates; a waiter that sees the holder fail/abandon **takes over and re-mints** (surfacing the REAL
+error, not a timeout); and after the reuse + fresh-reservation-wait branches, **any other existing row
+— a stale reservation OR an inactive (superseded) row — is reclaimed** before minting. A live holder
+never owns those, so deletion is safe.
+
+To clear wedging rows explicitly:
 
 - **Re-seeding already does it:** `seed:smoke` runs `campaign.deleteMany`, which **cascades** to
-  `gift_code_mappings` (`onDelete: Cascade`) — every reservation under the old campaign is removed.
-  Re-seed is therefore idempotent w.r.t. stale reservations.
+  `gift_code_mappings` (`onDelete: Cascade`) — every row under the old campaign is removed. Re-seed is
+  therefore idempotent w.r.t. both wedge states.
 - **Without re-seeding** (unwedge the current campaign): `pnpm --filter @free-gift-engine/admin run
-clear:reservations` (env `SHOPIFY_SHOP_DOMAIN`, `DATABASE_URL`/`DIRECT_URL`). It deletes only
-  unresolved rows (code IS NULL) older than `STALE_MINUTES` (default 2); finalized/active codes are
-  untouched.
+clear:reservations` (env `SHOPIFY_SHOP_DOMAIN`, `DATABASE_URL`/`DIRECT_URL`). It deletes `code IS
+NULL` rows older than `STALE_MINUTES` (default 2) **and** `active = false` rows; a live `active=true`
+  row with a code is never touched. (Used live to clear the "a"/Ice wedge — 1 row removed.)
 
 ## Step 2 — provision (tag the gift products)
 
