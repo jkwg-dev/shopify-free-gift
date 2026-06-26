@@ -151,6 +151,11 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
             return null; // null => error: leave the cart untouched
           }
           lastResult = response.result; // authoritative state for the progress graph
+          // Paint the stepper THE INSTANT the confirmed subtotal is known — decoupled from the slower
+          // gift remove/add/code-apply that follows in this same reconcile. Authoritative-only (the
+          // server's result, never an optimistic guess). The fill then animates to the new value
+          // (grow or shrink) instead of snapping after the whole sequence finishes.
+          renderSteppers();
           return response.result;
         },
         post: cartPost,
@@ -169,6 +174,23 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     renderPerception(config);
   } finally {
     selfMutating = false;
+  }
+}
+
+// Render ONLY the stepper (authoritative progress) into every cart surface from the latest /validate
+// result. Called the moment the confirmed subtotal is known — decoupled from the slow gift
+// add/remove/code-apply — so the bar updates promptly and its CSS transition (grow AND shrink) is
+// visible, rather than snapping after the whole reconcile. Idempotent: the final renderPerception
+// repaints the same value (renderProgress is in-place, so no re-animation). The chooser still waits
+// for the full reconcile (it reflects what's actually in the cart).
+function renderSteppers(): void {
+  if (campaignConfig === null || sections.length === 0) {
+    return;
+  }
+  const model = buildProgressModel(campaignConfig, lastResult);
+  for (const section of sections) {
+    renderProgress(section.stepperEl, model);
+    section.attach(); // no-op when already placed (idempotent) → does NOT cancel the fill transition
   }
 }
 

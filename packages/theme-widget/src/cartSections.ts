@@ -163,18 +163,29 @@ function doAttach(spec: CartMountSpec, stepperEl: HTMLElement, chooserEl: HTMLEl
     if (anchor === null) {
       continue;
     }
+    // IDEMPOTENT: only move a node that is NOT already in its target position. Re-parenting an
+    // already-placed node (remove + reinsert) cancels an in-progress CSS transition — so a needless
+    // attach() during a render would make the stepper fill SNAP instead of animate. Guard every mode.
     switch (step.mode) {
       case 'skip':
         break;
       case 'afterend':
-        anchor.insertAdjacentElement('afterend', el);
+        if (anchor.nextElementSibling !== el) {
+          anchor.insertAdjacentElement('afterend', el);
+        }
         break;
       case 'beforebegin':
-        anchor.insertAdjacentElement('beforebegin', el);
+        if (anchor.previousElementSibling !== el) {
+          anchor.insertAdjacentElement('beforebegin', el);
+        }
         break;
       case 'append':
-        // Always (re-)append inside the items region; the panel fallback only if not already placed.
-        if (step.anchor === 'items' || el.parentNode === null) {
+        // (Re-)append inside the items region; the panel fallback only if not already placed.
+        if (step.anchor === 'items') {
+          if (anchor.lastElementChild !== el) {
+            anchor.append(el);
+          }
+        } else if (el.parentNode === null) {
           anchor.append(el);
         }
         break;

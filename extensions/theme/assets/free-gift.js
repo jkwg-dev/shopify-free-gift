@@ -138,13 +138,21 @@
         case "skip":
           break;
         case "afterend":
-          anchor.insertAdjacentElement("afterend", el);
+          if (anchor.nextElementSibling !== el) {
+            anchor.insertAdjacentElement("afterend", el);
+          }
           break;
         case "beforebegin":
-          anchor.insertAdjacentElement("beforebegin", el);
+          if (anchor.previousElementSibling !== el) {
+            anchor.insertAdjacentElement("beforebegin", el);
+          }
           break;
         case "append":
-          if (step.anchor === "items" || el.parentNode === null) {
+          if (step.anchor === "items") {
+            if (anchor.lastElementChild !== el) {
+              anchor.append(el);
+            }
+          } else if (el.parentNode === null) {
             anchor.append(el);
           }
           break;
@@ -1048,6 +1056,7 @@ cart-drawer .title--primary,
               return null;
             }
             lastResult = response.result;
+            renderSteppers();
             return response.result;
           },
           post: cartPost,
@@ -1067,6 +1076,16 @@ cart-drawer .title--primary,
       renderPerception(config);
     } finally {
       selfMutating = false;
+    }
+  }
+  function renderSteppers() {
+    if (campaignConfig === null || sections.length === 0) {
+      return;
+    }
+    const model = buildProgressModel(campaignConfig, lastResult);
+    for (const section of sections) {
+      renderProgress(section.stepperEl, model);
+      section.attach();
     }
   }
   function renderPerception(config) {

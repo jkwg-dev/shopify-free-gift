@@ -230,3 +230,19 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 | G7  | Single heading      | Only one "Your cart" on the page (no duplicate); our banner doesn't restate it                                            |
 | G8  | Drawer unchanged    | The cart DRAWER still behaves exactly as before (banner under header, chooser in the scroll flow)                         |
 | G9  | Both surfaces       | On /cart, using the drawer AND the page both work; a change in one is reflected after reconcile                           |
+
+## Round 11 checks (stepper updates promptly + visibly animates) — delay step 1
+
+> Display-timing + CSS only; reconcile / BXGY / add-remove / code-apply order UNCHANGED. Redeploy the
+> theme widget. Re-measure a tier-1↔tier-2 transition in the browser.
+
+| #   | Check                  | Expected                                                                                                                                              |
+| --- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L1  | Prompt update          | The stepper headline + fill update as soon as /validate returns the confirmed subtotal (~1s), NOT after the gift remove/add/code-apply finishes (~4s) |
+| L2  | Animate UP             | Crossing a threshold upward, the fill GROWS smoothly (CSS transition), not an instant jump                                                            |
+| L3  | Animate DOWN           | Removing a qualifying item, the fill SHRINKS smoothly to the lower tier — visible, not a snap                                                         |
+| L4  | No snap from re-attach | The drawer/page re-render (gift add/remove) does NOT cancel the fill transition (attach is idempotent — only moves a displaced node)                  |
+| L5  | Authoritative          | The fill animates only to the server-confirmed value (no optimistic pre-server movement); first load still shows "Loading your free gift…"            |
+| L6  | Reduced motion         | With OS "reduce motion", the fill/dots update instantly (no transition)                                                                               |
+| L7  | Chooser unchanged      | The gift cards/chooser still reflect the actual cart (they update after the reconcile, as before) — only the stepper is decoupled to update early     |
+| L8  | Both surfaces          | Prompt update + animation happen in both the drawer and the /cart page                                                                                |
