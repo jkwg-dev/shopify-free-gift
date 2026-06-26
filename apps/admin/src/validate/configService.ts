@@ -89,6 +89,7 @@ export async function resolveCampaignConfig(
       productId: m?.productId ?? '',
       variantLabel: m === undefined ? variantId : labelFor(m),
       available: (availableById.get(variantId) ?? false) && m !== undefined,
+      imageUrl: m?.imageUrl ?? null,
     };
   };
 

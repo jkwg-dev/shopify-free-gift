@@ -21,6 +21,7 @@ import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
 import { buildProgressModel, renderProgress } from './progressGraph.js';
 import { reconcileGiftCart } from './reconcileLoop.js';
+import { injectStyles } from './styles.js';
 import { postValidate } from './validateClient.js';
 
 const SOURCE = 'free-gift-engine';
@@ -178,6 +179,8 @@ function renderPerception(config: WidgetConfig): void {
   if (campaignConfig === null || graphEl === null || chooserEl === null) {
     return;
   }
+  // The CURRENT (highest reached) tier is the gift the shopper receives — the chooser shows ONLY it.
+  const currentTierId = lastResult?.status === 'gift' ? lastResult.tierId : null;
   renderProgress(graphEl, buildProgressModel(campaignConfig, lastResult));
   renderChooser(
     chooserEl,
@@ -195,6 +198,7 @@ function renderPerception(config: WidgetConfig): void {
         schedule(config);
       },
     },
+    currentTierId,
   );
   drawer?.refresh();
 }
@@ -219,6 +223,7 @@ function schedule(config: WidgetConfig): void {
 // Mount the drawer overlay (graph + chooser), fetch the campaign structure, and render. Best-effort:
 // if config is unavailable/inactive, the engine still reconciles (AND tiers need no choice).
 async function initPerception(config: WidgetConfig): Promise<void> {
+  injectStyles(); // design tokens + component CSS (once)
   // Overlay lives on document.body so it SURVIVES the drawer's inner re-render on every cart change,
   // and sits above the backdrop (clickable). Shown/hidden with the drawer (resilient + overridable).
   drawer = mountDrawerOverlay({

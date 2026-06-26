@@ -99,51 +99,93 @@ export function buildProgressModel(
 
 // --- DOM rendering (manual-tested) ---------------------------------------------------------------
 
-// Currency-correct display (Intl knows each currency's fraction digits; minor units / 10^digits).
-function fmt(m: Money): string {
+const major = (m: Money): number => {
   try {
-    const f = new Intl.NumberFormat(undefined, { style: 'currency', currency: m.currency });
-    const digits = f.resolvedOptions().maximumFractionDigits ?? 2;
-    return f.format(m.amountMinor / 10 ** digits);
+    const digits =
+      new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: m.currency,
+      }).resolvedOptions().maximumFractionDigits ?? 2;
+    return m.amountMinor / 10 ** digits;
+  } catch {
+    return m.amountMinor / 100;
+  }
+};
+// Currency-correct display; `compact` drops the fraction (tidy stepper node labels).
+function fmt(m: Money, compact = false): string {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: m.currency,
+      ...(compact ? { maximumFractionDigits: 0 } : {}),
+    }).format(major(m));
   } catch {
     return `${m.amountMinor} ${m.currency}`;
   }
 }
 
+// Visual horizontal "trail" stepper: track + filled portion (server subtotal) + a node per tier at
+// its threshold; the current (highest reached) tier is marked. Authoritative-only — the fill reflects
+// the confirmed subtotal, never an optimistic guess. Highest-tier-only is stated in the subnote.
 export function renderProgress(mount: HTMLElement, model: ProgressModel | null): void {
   mount.textContent = '';
   if (model === null) {
     return;
   }
-  const root = document.createElement('div');
-  root.className = 'fge-progress';
 
-  // Headline: "Spend $X more to unlock <gift>" (server subtotal known) / "Spend $threshold to unlock"
-  // (subtotal not yet confirmed) / "All gifts unlocked" when everything is reached.
+  const eyebrow = document.createElement('p');
+  eyebrow.className = 'fge-eyebrow';
+  eyebrow.textContent = 'Free gift';
+  mount.append(eyebrow);
+
   const headline = document.createElement('p');
-  headline.className = 'fge-progress__headline';
+  headline.className = 'fge-headline';
   if (model.allUnlocked) {
     headline.textContent = 'You’ve unlocked your free gift';
   } else if (model.next !== null) {
-    headline.textContent =
+    const amt = document.createElement('span');
+    amt.className = 'fge-amt';
+    amt.textContent = fmt(model.next.spendMore ?? model.next.threshold);
+    const verb = model.next.spendMore !== null ? 'Spend ' : 'Reach ';
+    const tail =
       model.next.spendMore !== null
-        ? `Spend ${fmt(model.next.spendMore)} more to unlock ${model.next.giftLabel}`
-        : `Spend ${fmt(model.next.threshold)} to unlock ${model.next.giftLabel}`;
+        ? ` more to unlock ${model.next.giftLabel}`
+        : ` to unlock ${model.next.giftLabel}`;
+    headline.append(document.createTextNode(verb), amt, document.createTextNode(tail));
   }
-  root.append(headline);
+  mount.append(headline);
 
-  const ladder = document.createElement('ol');
-  ladder.className = 'fge-progress__ladder';
+  // Node positions are threshold / topThreshold; the fill is subtotal / topThreshold (0 when unknown).
+  const top = Math.max(...model.tiers.map((t) => t.threshold.amountMinor), 1);
+  const ratio =
+    model.subtotal === null ? 0 : Math.max(0, Math.min(1, model.subtotal.amountMinor / top));
+
+  const stepper = document.createElement('div');
+  stepper.className = 'fge-stepper';
+  const track = document.createElement('div');
+  track.className = 'fge-stepper__track';
+  const fill = document.createElement('div');
+  fill.className = 'fge-stepper__fill';
+  fill.style.width = `${ratio * 100}%`;
+  stepper.append(track, fill);
   for (const tier of model.tiers) {
-    const li = document.createElement('li');
-    li.className = 'fge-progress__tier';
-    li.dataset['tierId'] = tier.tierId;
-    if (tier.reached) li.classList.add('is-reached');
-    if (tier.isCurrent) li.classList.add('is-current');
-    const state = tier.isCurrent ? '✓ unlocked' : tier.reached ? '✓' : '🔒';
-    li.textContent = `${state} ${fmt(tier.threshold)} — ${tier.giftLabel}`;
-    ladder.append(li);
+    const step = document.createElement('div');
+    step.className = 'fge-step';
+    if (tier.reached) step.classList.add('is-reached');
+    if (tier.isCurrent) step.classList.add('is-current');
+    step.style.left = `${(tier.threshold.amountMinor / top) * 100}%`;
+    const dot = document.createElement('div');
+    dot.className = 'fge-step__dot';
+    const label = document.createElement('div');
+    label.className = 'fge-step__label';
+    label.textContent = fmt(tier.threshold, true);
+    step.append(dot, label);
+    stepper.append(step);
   }
-  root.append(ladder);
-  mount.append(root);
+  mount.append(stepper);
+
+  const subnote = document.createElement('p');
+  subnote.className = 'fge-subnote';
+  subnote.textContent = 'You receive the gift for your highest unlocked tier — not one per step.';
+  mount.append(subnote);
 }

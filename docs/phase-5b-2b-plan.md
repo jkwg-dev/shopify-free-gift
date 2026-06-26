@@ -83,3 +83,17 @@ One Ice→Dawn switch is **5 serialized round-trips**: `GET cart.js` → `POST /
 
 > Not 3b: campaign CRUD UI and wiring `provisionGifts` (incl. channel publish) into campaign
 > activation remain 3b. `provisionGifts` is still unwired; gift provisioning is manual until then.
+
+## Recorded open question — model C (gift also sold at full price)
+
+**Not solved here; separate task after the 5b-2b polish.** The team chose model C: a gift product is
+also sold at full price. The current exclusion is **product-level** (tag `app:fge_gift` → excluded
+from the `fge-qualifying` collection), which can't express "counts toward the threshold when bought at
+full price, but excluded when given as the gift." Unknowns to resolve: (1) does BXGY exclude its own
+`customerGets` line from the `customerBuys` total (so the same product as both qualifier+gift doesn't
+self-qualify — the original $0-leak class)? (2) a shopper can add the gift product **directly** at full
+price — that unit should count toward the threshold but is tag-excluded; per-line (not per-product)
+treatment is needed, which a tag/collection can't express. Likely needs a different qualifying-scope
+mechanism (or a Plus-only Function for per-line allocation). For now the dev campaign keeps gift
+products tagged/excluded and distinct from the qualifier — unchanged. See memory
+`model-c-gift-also-sold-open-question`.

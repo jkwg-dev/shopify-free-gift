@@ -50,3 +50,20 @@ the unavailable state rather than spinning.
 
 Record results; if the overlay placement needs visual tuning on this theme, note it (placement polish
 is acceptable to defer). Then proceed to 5b-2b-2 (pending hint + delay + polish).
+
+## Visual polish checks (5b-2b-1 polish pass)
+
+| #   | Check                            | Expected                                                                                                                                                                                                                            |
+| --- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1  | Panel background                 | The panel is a **solid opaque card** (white) with border + shadow — NO cart-line text bleeds through from behind it                                                                                                                 |
+| P2  | Size / no trap                   | The card sits at the **top of the drawer panel** with a gutter, capped at ~70% height (scrolls internally); the cart items + **checkout button remain visible and usable** below; backdrop click still closes                       |
+| P3  | Progress = visual stepper        | A horizontal **track with 3 nodes** at CA$500 / CA$1,000 / CA$1,500; the reached portion is **filled**; the current (highest reached) tier node is highlighted (gold); headline reads **"Spend CA$X more to unlock <next gift>"\*\* |
+| P4  | Highest-tier-only clarity        | Subnote: **"You receive the gift for your highest unlocked tier — not one per step."** The gift panel shows only the **current** tier's gift (never all three as selectable)                                                        |
+| P5  | Gift cards with images           | Each gift option is a **card row with a product image** + name + status; selected card is clearly marked; status reads "Unlocked · added free" / "Currently unavailable"                                                            |
+| P6  | OR selectable / AND bundle / OOS | tier-1 OR: Ice/Dawn selectable cards (radio, auto-add); tier-2 AND: both gifts shown as cards (no radios); tier-3 OR: Liquid L (OOS) disabled                                                                                       |
+| P7  | Decline                          | "Add my free gift" checkbox is styled within the panel, checked by default; unchecking removes the gift                                                                                                                             |
+| P8  | Survives re-render               | After add/remove/qty change (drawer re-renders), the panel stays styled + correct (it's a body overlay, not wiped)                                                                                                                  |
+
+If the panel's vertical placement needs tuning on the production theme, set `data-drawer-selector` /
+`data-drawer-open-class` on the app embed (no code change). The model-C question (gift also sold at
+full price) is recorded for a later task — see `docs/phase-5b-2b-plan.md`.

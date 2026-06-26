@@ -89,10 +89,15 @@ export function mountDrawerOverlay(opts: DrawerMountOptions = {}): DrawerMount {
       (el) => el !== null,
     ) ?? drawer) as HTMLElement;
     const r = panel.getBoundingClientRect();
-    overlay.style.left = `${r.left}px`;
-    overlay.style.top = `${r.top}px`;
-    overlay.style.width = `${r.width}px`;
-    overlay.style.maxHeight = `${Math.max(120, r.height)}px`;
+    const gutter = 10;
+    // A contained card pinned to the TOP of the drawer panel: opaque (CSS), inset by a gutter, and
+    // capped at ~70% of the panel height (scrolls internally) so the cart items + checkout below stay
+    // visible and usable — never covers the whole drawer (no trap), never bleeds through (opaque bg).
+    overlay.style.display = 'block';
+    overlay.style.left = `${r.left + gutter}px`;
+    overlay.style.top = `${r.top + gutter}px`;
+    overlay.style.width = `${Math.max(0, r.width - gutter * 2)}px`;
+    overlay.style.maxHeight = `${Math.max(160, Math.round(r.height * 0.7))}px`;
     overlay.style.overflow = 'auto';
   };
 

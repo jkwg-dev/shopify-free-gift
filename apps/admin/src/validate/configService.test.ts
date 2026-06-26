@@ -70,14 +70,27 @@ const campaign: Campaign = {
 };
 
 const meta: readonly VariantMeta[] = [
-  { id: ICE, productId: SNOWBOARD, productTitle: 'The Complete Snowboard', variantTitle: 'Ice' },
-  { id: DAWN, productId: SNOWBOARD, productTitle: 'The Complete Snowboard', variantTitle: 'Dawn' },
+  {
+    id: ICE,
+    productId: SNOWBOARD,
+    productTitle: 'The Complete Snowboard',
+    variantTitle: 'Ice',
+    imageUrl: 'https://cdn/ice.jpg',
+  },
+  {
+    id: DAWN,
+    productId: SNOWBOARD,
+    productTitle: 'The Complete Snowboard',
+    variantTitle: 'Dawn',
+    imageUrl: 'https://cdn/dawn.jpg',
+  },
   // single-variant product -> 'Default Title' sentinel; label should fall back to the product name.
   {
     id: HIDDEN,
     productId: HIDDEN_P,
     productTitle: 'The Hidden Snowboard',
     variantTitle: 'Default Title',
+    imageUrl: null,
   },
 ];
 
@@ -131,13 +144,21 @@ describe('resolveCampaignConfig', () => {
     expect(t1!.gift.kind).toBe('OR');
     if (t1!.gift.kind !== 'OR') return;
     expect(t1!.gift.options).toEqual([
-      { optionId: 'a', variantId: ICE, productId: SNOWBOARD, variantLabel: 'Ice', available: true },
+      {
+        optionId: 'a',
+        variantId: ICE,
+        productId: SNOWBOARD,
+        variantLabel: 'Ice',
+        available: true,
+        imageUrl: 'https://cdn/ice.jpg',
+      },
       {
         optionId: 'b',
         variantId: DAWN,
         productId: SNOWBOARD,
         variantLabel: 'Dawn',
         available: false,
+        imageUrl: 'https://cdn/dawn.jpg',
       }, // OOS
     ]);
 
@@ -150,6 +171,7 @@ describe('resolveCampaignConfig', () => {
         productId: HIDDEN_P,
         variantLabel: 'The Hidden Snowboard',
         available: true,
+        imageUrl: null,
       },
     ]);
   });

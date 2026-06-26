@@ -99,10 +99,12 @@
         (el) => el !== null
       )) != null ? _a2 : drawer2;
       const r = panel.getBoundingClientRect();
-      overlay.style.left = `${r.left}px`;
-      overlay.style.top = `${r.top}px`;
-      overlay.style.width = `${r.width}px`;
-      overlay.style.maxHeight = `${Math.max(120, r.height)}px`;
+      const gutter = 10;
+      overlay.style.display = "block";
+      overlay.style.left = `${r.left + gutter}px`;
+      overlay.style.top = `${r.top + gutter}px`;
+      overlay.style.width = `${Math.max(0, r.width - gutter * 2)}px`;
+      overlay.style.maxHeight = `${Math.max(160, Math.round(r.height * 0.7))}px`;
       overlay.style.overflow = "auto";
     };
     const refresh = () => {
@@ -266,21 +268,121 @@
     });
     return { declineEnabled: config.declineEnabled, declined: state.declined, tiers };
   }
-  function renderChooser(mount, config, state, handlers) {
+  function renderChooser(mount, config, state, handlers, currentTierId) {
     mount.textContent = "";
     const model = buildChooserModel(config, state);
     if (model === null) {
       return;
     }
     const root2 = document.createElement("div");
-    root2.className = "fge-chooser";
+    root2.className = "fge-gift";
+    const current = currentTierId === null ? null : model.tiers.find((t) => t.tierId === currentTierId);
+    if (current === void 0 || current === null) {
+      const hint = document.createElement("p");
+      hint.className = "fge-gift__hint";
+      hint.textContent = "Add a little more to your cart to unlock your free gift.";
+      root2.append(hint);
+      mount.append(root2);
+      return;
+    }
+    const title = document.createElement("p");
+    title.className = "fge-gift__title";
+    title.textContent = current.kind === "or" ? "Choose your free gift" : "Your free gift";
+    root2.append(title);
+    if (current.kind === "or") {
+      for (const group of current.groups) {
+        for (const opt of group.options) {
+          root2.append(
+            renderOptionCard(current.tierId, opt, opt.optionId === current.selected, handlers)
+          );
+        }
+      }
+    } else {
+      root2.append(renderBundle(current));
+    }
     if (model.declineEnabled) {
       root2.append(renderDecline(model.declined, handlers));
     }
-    for (const tier of model.tiers) {
-      root2.append(tier.kind === "or" ? renderOrTier(tier, handlers) : renderAndTier(tier));
-    }
     mount.append(root2);
+  }
+  function giftImage(imageUrl, alt) {
+    if (imageUrl !== null && imageUrl !== void 0 && imageUrl.length > 0) {
+      const img = document.createElement("img");
+      img.className = "fge-card__img";
+      img.src = imageUrl;
+      img.alt = alt;
+      img.loading = "lazy";
+      return img;
+    }
+    const ph = document.createElement("div");
+    ph.className = "fge-card__img";
+    return ph;
+  }
+  function renderOptionCard(tierId, opt, selected, handlers) {
+    const available = opt.available;
+    const card = document.createElement("label");
+    card.className = "fge-card";
+    if (selected) card.classList.add("is-selected");
+    if (!available) card.classList.add("is-unavailable");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.className = "fge-card__radio";
+    radio.name = `fge-tier-${tierId}`;
+    radio.value = opt.optionId;
+    radio.checked = selected;
+    radio.disabled = !available;
+    radio.addEventListener("change", () => handlers.onChoose(tierId, opt.optionId));
+    const body = document.createElement("div");
+    body.className = "fge-card__body";
+    const name = document.createElement("div");
+    name.className = "fge-card__name";
+    name.textContent = opt.variantLabel;
+    const status = document.createElement("div");
+    status.className = "fge-card__status";
+    if (!available) {
+      status.classList.add("is-unavailable");
+      status.textContent = "Currently unavailable";
+    } else if (selected) {
+      status.classList.add("is-unlocked");
+      status.textContent = "Unlocked \xB7 added free";
+    } else {
+      status.textContent = "Choose this gift";
+    }
+    body.append(name, status);
+    card.append(radio, giftImage(opt.imageUrl, opt.variantLabel), body);
+    return card;
+  }
+  function renderBundle(tier) {
+    const wrap = document.createElement("div");
+    for (const item of tier.items) {
+      const card = document.createElement("div");
+      card.className = "fge-card";
+      if (!item.available) card.classList.add("is-unavailable");
+      const body = document.createElement("div");
+      body.className = "fge-card__body";
+      const name = document.createElement("div");
+      name.className = "fge-card__name";
+      name.textContent = item.variantLabel;
+      const status = document.createElement("div");
+      status.className = "fge-card__status";
+      if (item.available) {
+        status.classList.add("is-unlocked");
+        status.textContent = "Unlocked \xB7 added free";
+      } else {
+        status.classList.add("is-unavailable");
+        status.textContent = "Currently unavailable";
+      }
+      body.append(name, status);
+      card.append(giftImage(item.imageUrl, item.variantLabel), body);
+      wrap.append(card);
+    }
+    if (tier.incomplete) {
+      const note = document.createElement("p");
+      note.className = "fge-note--unavailable";
+      note.textContent = "This gift can\u2019t be fully added right now \u2014 please check back.";
+      wrap.append(note);
+    }
+    return wrap;
   }
   function renderDecline(declined2, handlers) {
     const label = document.createElement("label");
@@ -291,82 +393,6 @@
     cb.addEventListener("change", () => handlers.onDeclineToggle(!cb.checked));
     label.append(cb, document.createTextNode(" Add my free gift"));
     return label;
-  }
-  function tierFieldset(tier, legendText) {
-    const fieldset = document.createElement("fieldset");
-    fieldset.className = "fge-tier";
-    fieldset.dataset["tierId"] = tier.tierId;
-    const legend = document.createElement("legend");
-    legend.textContent = legendText;
-    fieldset.append(legend);
-    const threshold = document.createElement("div");
-    threshold.className = "fge-threshold";
-    threshold.textContent = `Spend ${formatMoney(tier.threshold)}`;
-    fieldset.append(threshold);
-    return fieldset;
-  }
-  function renderOrTier(tier, handlers) {
-    const fieldset = tierFieldset(tier, "Choose your free gift");
-    for (const group of tier.groups) {
-      const groupEl = document.createElement("div");
-      groupEl.className = "fge-group";
-      for (const opt of group.options) {
-        const label = document.createElement("label");
-        label.className = "fge-option";
-        const radio = document.createElement("input");
-        radio.type = "radio";
-        radio.name = `fge-tier-${tier.tierId}`;
-        radio.value = opt.optionId;
-        radio.checked = opt.optionId === tier.selected;
-        radio.disabled = !opt.available;
-        radio.addEventListener("change", () => handlers.onChoose(tier.tierId, opt.optionId));
-        if (!opt.available) {
-          label.classList.add("is-unavailable");
-        }
-        const text = opt.available ? opt.variantLabel : `${opt.variantLabel} \u2014 currently unavailable`;
-        label.append(radio, document.createTextNode(` ${text}`));
-        groupEl.append(label);
-      }
-      fieldset.append(groupEl);
-    }
-    return fieldset;
-  }
-  function renderAndTier(tier) {
-    const fieldset = tierFieldset(tier, "Your free gift");
-    const list = document.createElement("div");
-    list.className = "fge-bundle";
-    const intro = document.createElement("span");
-    intro.className = "fge-bundle-intro";
-    intro.textContent = tier.items.length > 1 ? "Get all: " : "Get: ";
-    list.append(intro);
-    tier.items.forEach((item, i) => {
-      if (i > 0) {
-        list.append(document.createTextNode(" + "));
-      }
-      const span = document.createElement("span");
-      span.className = "fge-bundle-item";
-      if (!item.available) span.classList.add("is-unavailable");
-      span.textContent = item.available ? item.variantLabel : `${item.variantLabel} (unavailable)`;
-      list.append(span);
-    });
-    fieldset.append(list);
-    if (tier.incomplete) {
-      const note = document.createElement("p");
-      note.className = "fge-note fge-note--unavailable";
-      note.textContent = "This gift can\u2019t be fully added right now \u2014 please check back.";
-      fieldset.append(note);
-    }
-    return fieldset;
-  }
-  function formatMoney(m) {
-    var _a2;
-    try {
-      const fmt2 = new Intl.NumberFormat(void 0, { style: "currency", currency: m.currency });
-      const digits = (_a2 = fmt2.resolvedOptions().maximumFractionDigits) != null ? _a2 : 2;
-      return fmt2.format(m.amountMinor / 10 ** digits);
-    } catch {
-      return `${m.amountMinor} ${m.currency}`;
-    }
   }
 
   // src/configClient.ts
@@ -433,45 +459,81 @@
       allUnlocked: next === null && tiers.length > 0
     };
   }
-  function fmt(m) {
+  var major = (m) => {
     var _a2;
     try {
-      const f = new Intl.NumberFormat(void 0, { style: "currency", currency: m.currency });
-      const digits = (_a2 = f.resolvedOptions().maximumFractionDigits) != null ? _a2 : 2;
-      return f.format(m.amountMinor / 10 ** digits);
+      const digits = (_a2 = new Intl.NumberFormat(void 0, {
+        style: "currency",
+        currency: m.currency
+      }).resolvedOptions().maximumFractionDigits) != null ? _a2 : 2;
+      return m.amountMinor / 10 ** digits;
+    } catch {
+      return m.amountMinor / 100;
+    }
+  };
+  function fmt(m, compact = false) {
+    try {
+      return new Intl.NumberFormat(void 0, {
+        style: "currency",
+        currency: m.currency,
+        ...compact ? { maximumFractionDigits: 0 } : {}
+      }).format(major(m));
     } catch {
       return `${m.amountMinor} ${m.currency}`;
     }
   }
   function renderProgress(mount, model) {
+    var _a2;
     mount.textContent = "";
     if (model === null) {
       return;
     }
-    const root2 = document.createElement("div");
-    root2.className = "fge-progress";
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "fge-eyebrow";
+    eyebrow.textContent = "Free gift";
+    mount.append(eyebrow);
     const headline = document.createElement("p");
-    headline.className = "fge-progress__headline";
+    headline.className = "fge-headline";
     if (model.allUnlocked) {
       headline.textContent = "You\u2019ve unlocked your free gift";
     } else if (model.next !== null) {
-      headline.textContent = model.next.spendMore !== null ? `Spend ${fmt(model.next.spendMore)} more to unlock ${model.next.giftLabel}` : `Spend ${fmt(model.next.threshold)} to unlock ${model.next.giftLabel}`;
+      const amt = document.createElement("span");
+      amt.className = "fge-amt";
+      amt.textContent = fmt((_a2 = model.next.spendMore) != null ? _a2 : model.next.threshold);
+      const verb = model.next.spendMore !== null ? "Spend " : "Reach ";
+      const tail = model.next.spendMore !== null ? ` more to unlock ${model.next.giftLabel}` : ` to unlock ${model.next.giftLabel}`;
+      headline.append(document.createTextNode(verb), amt, document.createTextNode(tail));
     }
-    root2.append(headline);
-    const ladder = document.createElement("ol");
-    ladder.className = "fge-progress__ladder";
+    mount.append(headline);
+    const top = Math.max(...model.tiers.map((t) => t.threshold.amountMinor), 1);
+    const ratio = model.subtotal === null ? 0 : Math.max(0, Math.min(1, model.subtotal.amountMinor / top));
+    const stepper = document.createElement("div");
+    stepper.className = "fge-stepper";
+    const track = document.createElement("div");
+    track.className = "fge-stepper__track";
+    const fill = document.createElement("div");
+    fill.className = "fge-stepper__fill";
+    fill.style.width = `${ratio * 100}%`;
+    stepper.append(track, fill);
     for (const tier of model.tiers) {
-      const li = document.createElement("li");
-      li.className = "fge-progress__tier";
-      li.dataset["tierId"] = tier.tierId;
-      if (tier.reached) li.classList.add("is-reached");
-      if (tier.isCurrent) li.classList.add("is-current");
-      const state = tier.isCurrent ? "\u2713 unlocked" : tier.reached ? "\u2713" : "\u{1F512}";
-      li.textContent = `${state} ${fmt(tier.threshold)} \u2014 ${tier.giftLabel}`;
-      ladder.append(li);
+      const step = document.createElement("div");
+      step.className = "fge-step";
+      if (tier.reached) step.classList.add("is-reached");
+      if (tier.isCurrent) step.classList.add("is-current");
+      step.style.left = `${tier.threshold.amountMinor / top * 100}%`;
+      const dot = document.createElement("div");
+      dot.className = "fge-step__dot";
+      const label = document.createElement("div");
+      label.className = "fge-step__label";
+      label.textContent = fmt(tier.threshold, true);
+      step.append(dot, label);
+      stepper.append(step);
     }
-    root2.append(ladder);
-    mount.append(root2);
+    mount.append(stepper);
+    const subnote = document.createElement("p");
+    subnote.className = "fge-subnote";
+    subnote.textContent = "You receive the gift for your highest unlocked tier \u2014 not one per step.";
+    mount.append(subnote);
   }
 
   // src/reconcileLoop.ts
@@ -508,6 +570,103 @@
       (_c2 = io.nudge) == null ? void 0 : _c2.call(io);
     }
     return { passes: maxPasses, converged: false, appliedCode, failures };
+  }
+
+  // src/styles.ts
+  var FGE_STYLE_ID = "fge-styles";
+  var FGE_CSS = `
+[data-fge-overlay]{
+  --fge-ink:#16271d; --fge-muted:#5d6f63; --fge-surface:#ffffff; --fge-subtle:#f4f8f5;
+  --fge-line:#d8e3da; --fge-brand:#1f7a4d; --fge-brand-strong:#155f3a; --fge-gift:#b8862f;
+  --fge-radius:14px; --fge-card-radius:10px;
+  box-sizing:border-box; color:var(--fge-ink);
+  font-family:inherit; line-height:1.35; -webkit-font-smoothing:antialiased;
+  background:var(--fge-surface);
+  border:1px solid var(--fge-line); border-radius:var(--fge-radius);
+  box-shadow:0 14px 38px rgba(20,39,30,.20);
+  padding:16px 16px 14px;
+}
+[data-fge-overlay] *{ box-sizing:border-box; }
+
+.fge-eyebrow{
+  margin:0 0 2px; font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--fge-brand-strong);
+}
+.fge-headline{ margin:0 0 12px; font-size:15px; font-weight:650; color:var(--fge-ink); }
+.fge-headline .fge-amt{ color:var(--fge-brand-strong); }
+.fge-subnote{ margin:6px 0 0; font-size:11.5px; color:var(--fge-muted); }
+
+/* --- the trail stepper (signature) --- */
+.fge-stepper{ position:relative; margin:14px 6px 30px; height:6px; }
+.fge-stepper__track{ position:absolute; inset:0; background:var(--fge-line); border-radius:999px; }
+.fge-stepper__fill{
+  position:absolute; left:0; top:0; bottom:0; background:var(--fge-brand);
+  border-radius:999px; transition:width .35s ease;
+}
+.fge-step{ position:absolute; top:50%; transform:translate(-50%,-50%); text-align:center; }
+.fge-step__dot{
+  width:14px; height:14px; border-radius:50%; background:var(--fge-surface);
+  border:2px solid var(--fge-line); margin:0 auto;
+}
+.fge-step.is-reached .fge-step__dot{ background:var(--fge-brand); border-color:var(--fge-brand); }
+.fge-step.is-current .fge-step__dot{
+  background:var(--fge-gift); border-color:var(--fge-gift);
+  box-shadow:0 0 0 4px rgba(184,134,47,.22);
+}
+.fge-step__label{
+  position:absolute; top:16px; left:50%; transform:translateX(-50%);
+  white-space:nowrap; font-size:11px; font-weight:600; color:var(--fge-muted);
+}
+.fge-step.is-reached .fge-step__label{ color:var(--fge-brand-strong); }
+
+/* --- gift panel --- */
+.fge-gift{ border-top:1px solid var(--fge-line); padding-top:12px; }
+.fge-gift__title{ margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.01em; }
+.fge-gift__hint{ margin:0; font-size:13px; color:var(--fge-muted); }
+
+.fge-card{
+  display:flex; align-items:center; gap:11px; width:100%; text-align:left;
+  background:var(--fge-subtle); border:1.5px solid var(--fge-line);
+  border-radius:var(--fge-card-radius); padding:8px 10px; margin:0 0 8px; cursor:pointer;
+}
+.fge-card:focus-within{ outline:2px solid var(--fge-brand); outline-offset:2px; }
+.fge-card.is-selected{ border-color:var(--fge-brand); background:#eef5f0; }
+.fge-card.is-unavailable{ opacity:.6; cursor:not-allowed; }
+.fge-card__radio{ accent-color:var(--fge-brand); width:16px; height:16px; flex:0 0 auto; }
+.fge-card__img{
+  width:46px; height:46px; flex:0 0 auto; border-radius:8px; object-fit:cover;
+  background:#e7eee9; border:1px solid var(--fge-line);
+}
+.fge-card__body{ flex:1 1 auto; min-width:0; }
+.fge-card__name{ font-size:13px; font-weight:600; color:var(--fge-ink); }
+.fge-card__status{ font-size:11.5px; color:var(--fge-muted); margin-top:1px; }
+.fge-card__status.is-unlocked{ color:var(--fge-gift); font-weight:700; }
+.fge-card__status.is-unavailable{ color:#9a6a00; }
+
+.fge-bundle{ display:flex; align-items:center; gap:10px; }
+.fge-bundle .fge-plus{ color:var(--fge-muted); font-weight:700; }
+
+.fge-note--unavailable{ margin:4px 0 0; font-size:11.5px; color:#9a6a00; }
+
+.fge-decline{
+  display:flex; align-items:center; gap:8px; margin:12px 0 0; padding-top:11px;
+  border-top:1px solid var(--fge-line); font-size:13px; color:var(--fge-ink); cursor:pointer;
+}
+.fge-decline input{ accent-color:var(--fge-brand); width:16px; height:16px; }
+
+@media (prefers-reduced-motion: reduce){
+  .fge-stepper__fill{ transition:none; }
+}
+`;
+  function injectStyles() {
+    const doc = globalThis.document;
+    if (doc === void 0 || doc.getElementById(FGE_STYLE_ID) !== null) {
+      return;
+    }
+    const style = doc.createElement("style");
+    style.id = FGE_STYLE_ID;
+    style.textContent = FGE_CSS;
+    doc.head.append(style);
   }
 
   // src/validateClient.ts
@@ -639,6 +798,7 @@
     if (campaignConfig === null || graphEl === null || chooserEl === null) {
       return;
     }
+    const currentTierId = (lastResult == null ? void 0 : lastResult.status) === "gift" ? lastResult.tierId : null;
     renderProgress(graphEl, buildProgressModel(campaignConfig, lastResult));
     renderChooser(
       chooserEl,
@@ -655,7 +815,8 @@
           renderPerception(config);
           schedule(config);
         }
-      }
+      },
+      currentTierId
     );
     drawer == null ? void 0 : drawer.refresh();
   }
@@ -674,6 +835,7 @@
     });
   }
   async function initPerception(config) {
+    injectStyles();
     drawer = mountDrawerOverlay({
       drawerSelector: config.drawerSelector,
       openClass: config.drawerOpenClass

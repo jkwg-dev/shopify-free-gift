@@ -20,6 +20,9 @@ export type GiftOptionView = {
   readonly productId: string;
   readonly variantLabel: string;
   readonly available: boolean;
+  // Variant (or product) featured image for the chooser cards; null when the product has no image.
+  // Optional in the type (older callers/fixtures may omit), but ALWAYS populated by the config builder.
+  readonly imageUrl?: string | null;
 };
 
 // One variant of an AND tier (all unlocked together): same as an option minus the choice id.

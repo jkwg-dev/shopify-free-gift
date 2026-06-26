@@ -51,6 +51,7 @@ export {
   type ProgressNext,
 } from './progressGraph.js';
 export { mountDrawerOverlay, type DrawerMount, type DrawerMountOptions } from './cartDrawer.js';
+export { injectStyles, FGE_CSS, FGE_STYLE_ID } from './styles.js';
 
 // Convergent reconcile loop (re-read -> re-validate -> apply until stable) — Phase 5b-2a fix.
 export { reconcileGiftCart, type GiftCartIo, type ReconcileOutcome } from './reconcileLoop.js';

@@ -6,12 +6,19 @@ import { mockFetch, parseBody, testConfig } from './test-helpers.js';
 const V1 = 'gid://shopify/ProductVariant/1';
 const V2 = 'gid://shopify/ProductVariant/2';
 
-function variantNode(id: string, title: string, productId: string, productTitle: string) {
+function variantNode(
+  id: string,
+  title: string,
+  productId: string,
+  productTitle: string,
+  imageUrl: string | null = null,
+) {
   return {
     __typename: 'ProductVariant',
     id,
     title,
-    product: { id: productId, title: productTitle },
+    image: imageUrl === null ? null : { url: imageUrl },
+    product: { id: productId, title: productTitle, featuredImage: null },
   };
 }
 
@@ -22,7 +29,13 @@ describe('fetchVariantMeta', () => {
         body: {
           data: {
             nodes: [
-              variantNode(V1, 'Ice', 'gid://shopify/Product/100', 'The Complete Snowboard'),
+              variantNode(
+                V1,
+                'Ice',
+                'gid://shopify/Product/100',
+                'The Complete Snowboard',
+                'https://cdn/ice.jpg',
+              ),
               variantNode(V2, 'Dawn', 'gid://shopify/Product/100', 'The Complete Snowboard'),
             ],
           },
@@ -39,12 +52,14 @@ describe('fetchVariantMeta', () => {
         productId: 'gid://shopify/Product/100',
         productTitle: 'The Complete Snowboard',
         variantTitle: 'Ice',
+        imageUrl: 'https://cdn/ice.jpg', // variant image preferred
       },
       {
         id: V2,
         productId: 'gid://shopify/Product/100',
         productTitle: 'The Complete Snowboard',
         variantTitle: 'Dawn',
+        imageUrl: null, // no variant or product image
       },
     ]);
     expect(parseBody(calls[0]!).variables).toEqual({ ids: [V1, V2] });
@@ -65,6 +80,33 @@ describe('fetchVariantMeta', () => {
     const meta = await fetchVariantMeta(client, [V1, V2]);
     expect(meta).toHaveLength(1);
     expect(meta[0]!.id).toBe(V1);
+  });
+
+  it('falls back to the product featured image when the variant has none', async () => {
+    const { fetch } = mockFetch([
+      {
+        body: {
+          data: {
+            nodes: [
+              {
+                __typename: 'ProductVariant',
+                id: V1,
+                title: 'Default Title',
+                image: null,
+                product: {
+                  id: 'gid://shopify/Product/100',
+                  title: 'The Hidden Snowboard',
+                  featuredImage: { url: 'https://cdn/hidden.jpg' },
+                },
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    const meta = await fetchVariantMeta(client, [V1]);
+    expect(meta[0]!.imageUrl).toBe('https://cdn/hidden.jpg');
   });
 
   it('no-ops on empty input (no Shopify call)', async () => {

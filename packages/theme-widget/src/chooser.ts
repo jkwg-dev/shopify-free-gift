@@ -9,6 +9,7 @@
 import type {
   CampaignConfigResponse,
   GiftItemView,
+  GiftOptionView,
   Money,
   TierConfig,
 } from '@free-gift-engine/core';
@@ -104,11 +105,16 @@ export function buildChooserModel(
 
 // --- DOM rendering (manual-tested) ---------------------------------------------------------------
 
+// Render the "Your free gift" panel for the CURRENT (highest reached) tier only — the gift the shopper
+// actually receives. Showing one tier's gift (never all three as selectable) is what makes
+// highest-tier-only unambiguous; the stepper above gives the ladder context. When no tier is reached
+// yet, a short prompt is shown (the stepper carries the "spend X more" figure).
 export function renderChooser(
   mount: HTMLElement,
   config: CampaignConfigResponse,
   state: ChooserState,
   handlers: ChooserHandlers,
+  currentTierId: string | null,
 ): void {
   mount.textContent = '';
   const model = buildChooserModel(config, state);
@@ -116,15 +122,134 @@ export function renderChooser(
     return;
   }
   const root = document.createElement('div');
-  root.className = 'fge-chooser';
+  root.className = 'fge-gift';
+
+  const current =
+    currentTierId === null ? null : model.tiers.find((t) => t.tierId === currentTierId);
+  if (current === undefined || current === null) {
+    const hint = document.createElement('p');
+    hint.className = 'fge-gift__hint';
+    hint.textContent = 'Add a little more to your cart to unlock your free gift.';
+    root.append(hint);
+    mount.append(root);
+    return;
+  }
+
+  const title = document.createElement('p');
+  title.className = 'fge-gift__title';
+  title.textContent = current.kind === 'or' ? 'Choose your free gift' : 'Your free gift';
+  root.append(title);
+
+  if (current.kind === 'or') {
+    for (const group of current.groups) {
+      for (const opt of group.options) {
+        root.append(
+          renderOptionCard(current.tierId, opt, opt.optionId === current.selected, handlers),
+        );
+      }
+    }
+  } else {
+    root.append(renderBundle(current));
+  }
 
   if (model.declineEnabled) {
     root.append(renderDecline(model.declined, handlers));
   }
-  for (const tier of model.tiers) {
-    root.append(tier.kind === 'or' ? renderOrTier(tier, handlers) : renderAndTier(tier));
-  }
   mount.append(root);
+}
+
+// An <img> for the gift, or an empty placeholder box (CSS background) when there's no image.
+function giftImage(imageUrl: string | null | undefined, alt: string): HTMLElement {
+  if (imageUrl !== null && imageUrl !== undefined && imageUrl.length > 0) {
+    const img = document.createElement('img');
+    img.className = 'fge-card__img';
+    img.src = imageUrl;
+    img.alt = alt;
+    img.loading = 'lazy';
+    return img;
+  }
+  const ph = document.createElement('div');
+  ph.className = 'fge-card__img';
+  return ph;
+}
+
+// One selectable OR option as a card row: image + name + status, with a radio (auto-add on change).
+function renderOptionCard(
+  tierId: string,
+  opt: GiftOptionView,
+  selected: boolean,
+  handlers: ChooserHandlers,
+): HTMLElement {
+  const available = opt.available;
+  const card = document.createElement('label');
+  card.className = 'fge-card';
+  if (selected) card.classList.add('is-selected');
+  if (!available) card.classList.add('is-unavailable');
+
+  const radio = document.createElement('input');
+  radio.type = 'radio';
+  radio.className = 'fge-card__radio';
+  radio.name = `fge-tier-${tierId}`;
+  radio.value = opt.optionId;
+  radio.checked = selected;
+  radio.disabled = !available;
+  radio.addEventListener('change', () => handlers.onChoose(tierId, opt.optionId));
+
+  const body = document.createElement('div');
+  body.className = 'fge-card__body';
+  const name = document.createElement('div');
+  name.className = 'fge-card__name';
+  name.textContent = opt.variantLabel;
+  const status = document.createElement('div');
+  status.className = 'fge-card__status';
+  if (!available) {
+    status.classList.add('is-unavailable');
+    status.textContent = 'Currently unavailable';
+  } else if (selected) {
+    status.classList.add('is-unlocked');
+    status.textContent = 'Unlocked · added free';
+  } else {
+    status.textContent = 'Choose this gift';
+  }
+  body.append(name, status);
+
+  card.append(radio, giftImage(opt.imageUrl, opt.variantLabel), body);
+  return card;
+}
+
+// AND: every gift shown as an image card (no radios — both are granted together). Incomplete note when
+// a bundle item is unavailable (can't be fully added).
+function renderBundle(tier: ChooserAndTier): HTMLElement {
+  const wrap = document.createElement('div');
+  for (const item of tier.items) {
+    const card = document.createElement('div');
+    card.className = 'fge-card';
+    if (!item.available) card.classList.add('is-unavailable');
+    const body = document.createElement('div');
+    body.className = 'fge-card__body';
+    const name = document.createElement('div');
+    name.className = 'fge-card__name';
+    name.textContent = item.variantLabel;
+    const status = document.createElement('div');
+    status.className = 'fge-card__status';
+    if (item.available) {
+      status.classList.add('is-unlocked');
+      status.textContent = 'Unlocked · added free';
+    } else {
+      status.classList.add('is-unavailable');
+      status.textContent = 'Currently unavailable';
+    }
+    body.append(name, status);
+    card.append(giftImage(item.imageUrl, item.variantLabel), body);
+    wrap.append(card);
+  }
+  if (tier.incomplete) {
+    const note = document.createElement('p');
+    note.className = 'fge-note--unavailable';
+    note.textContent = 'This gift can’t be fully added right now — please check back.';
+    wrap.append(note);
+  }
+  return wrap;
 }
 
 // "Add my free gift" — checked by default (declined=false); unchecking removes the gift.
@@ -137,88 +262,4 @@ function renderDecline(declined: boolean, handlers: ChooserHandlers): HTMLElemen
   cb.addEventListener('change', () => handlers.onDeclineToggle(!cb.checked));
   label.append(cb, document.createTextNode(' Add my free gift'));
   return label;
-}
-
-function tierFieldset(tier: ChooserTier, legendText: string): HTMLFieldSetElement {
-  const fieldset = document.createElement('fieldset');
-  fieldset.className = 'fge-tier';
-  fieldset.dataset['tierId'] = tier.tierId;
-  const legend = document.createElement('legend');
-  legend.textContent = legendText;
-  fieldset.append(legend);
-  const threshold = document.createElement('div');
-  threshold.className = 'fge-threshold';
-  threshold.textContent = `Spend ${formatMoney(tier.threshold)}`;
-  fieldset.append(threshold);
-  return fieldset;
-}
-
-function renderOrTier(tier: ChooserOrTier, handlers: ChooserHandlers): HTMLElement {
-  const fieldset = tierFieldset(tier, 'Choose your free gift');
-  for (const group of tier.groups) {
-    const groupEl = document.createElement('div');
-    groupEl.className = 'fge-group';
-    for (const opt of group.options) {
-      const label = document.createElement('label');
-      label.className = 'fge-option';
-      const radio = document.createElement('input');
-      radio.type = 'radio';
-      radio.name = `fge-tier-${tier.tierId}`;
-      radio.value = opt.optionId;
-      radio.checked = opt.optionId === tier.selected;
-      radio.disabled = !opt.available;
-      radio.addEventListener('change', () => handlers.onChoose(tier.tierId, opt.optionId));
-      if (!opt.available) {
-        label.classList.add('is-unavailable');
-      }
-      const text = opt.available ? opt.variantLabel : `${opt.variantLabel} — currently unavailable`;
-      label.append(radio, document.createTextNode(` ${text}`));
-      groupEl.append(label);
-    }
-    fieldset.append(groupEl);
-  }
-  return fieldset;
-}
-
-// AND: a bundled display of every gift (no radios, no selection). Both are granted by the backend.
-function renderAndTier(tier: ChooserAndTier): HTMLElement {
-  const fieldset = tierFieldset(tier, 'Your free gift');
-  const list = document.createElement('div');
-  list.className = 'fge-bundle';
-  const intro = document.createElement('span');
-  intro.className = 'fge-bundle-intro';
-  intro.textContent = tier.items.length > 1 ? 'Get all: ' : 'Get: ';
-  list.append(intro);
-  tier.items.forEach((item: GiftItemView, i) => {
-    if (i > 0) {
-      list.append(document.createTextNode(' + '));
-    }
-    const span = document.createElement('span');
-    span.className = 'fge-bundle-item';
-    if (!item.available) span.classList.add('is-unavailable');
-    span.textContent = item.available ? item.variantLabel : `${item.variantLabel} (unavailable)`;
-    list.append(span);
-  });
-  fieldset.append(list);
-  // Surface a partial bundle: an AND gift must be delivered in full, so if any item is unavailable
-  // the shopper is told it can't be fully added rather than silently getting one of two.
-  if (tier.incomplete) {
-    const note = document.createElement('p');
-    note.className = 'fge-note fge-note--unavailable';
-    note.textContent = 'This gift can’t be fully added right now — please check back.';
-    fieldset.append(note);
-  }
-  return fieldset;
-}
-
-// Currency-correct display: Intl knows each currency's fraction digits (2 for USD, 0 for JPY/KRW),
-// so minor units divide by 10^digits. Falls back to a raw render if the currency is unknown.
-function formatMoney(m: Money): string {
-  try {
-    const fmt = new Intl.NumberFormat(undefined, { style: 'currency', currency: m.currency });
-    const digits = fmt.resolvedOptions().maximumFractionDigits ?? 2;
-    return fmt.format(m.amountMinor / 10 ** digits);
-  } catch {
-    return `${m.amountMinor} ${m.currency}`;
-  }
 }
