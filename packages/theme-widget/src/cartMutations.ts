@@ -31,6 +31,7 @@ export type CartMutationFailure = {
 export type CartMutationResult = {
   readonly added: readonly string[]; // gift variant GIDs now in the cart
   readonly removed: readonly string[]; // line ids removed
+  readonly adjusted: readonly string[]; // line ids re-set to qty 1
   readonly failures: readonly CartMutationFailure[];
 };
 
@@ -48,10 +49,11 @@ export async function applyCartPlan(
 ): Promise<CartMutationResult> {
   const removed: string[] = [];
   const added: string[] = [];
+  const adjusted: string[] = [];
   const failures: CartMutationFailure[] = [];
 
   // Remove ALL undesired app-added gift lines (e.g. an AND tier dropping below threshold removes both
-  // its variants — plan.remove already lists every one). Per-line by key; fail-soft.
+  // its variants, or duplicate split lines — plan.remove already lists every one). Per-line by key; fail-soft.
   for (const r of plan.remove) {
     const res = await post('cart/change.js', { id: r.id, quantity: 0 });
     if (res.ok) {
@@ -60,6 +62,21 @@ export async function applyCartPlan(
       failures.push({
         kind: 'remove',
         variantId: r.variantId,
+        status: res.status,
+        body: await res.text(),
+      });
+    }
+  }
+
+  // Collapse any bumped gift line back to qty 1 (a rapid double-add inflated it). Per-line by key; fail-soft.
+  for (const a of plan.adjust) {
+    const res = await post('cart/change.js', { id: a.id, quantity: a.quantity });
+    if (res.ok) {
+      adjusted.push(a.id);
+    } else {
+      failures.push({
+        kind: 'remove',
+        variantId: a.variantId,
         status: res.status,
         body: await res.text(),
       });
@@ -89,7 +106,7 @@ export async function applyCartPlan(
     }
   }
 
-  return { added, removed, failures };
+  return { added, removed, adjusted, failures };
 }
 
 function logFailure(message: string, body: string): void {

@@ -9,15 +9,14 @@
 // code + Shopify discount do) and never trusts client state for eligibility (the server recomputes).
 import {
   GIFT_LINE_PROPERTY,
-  reconcileGiftLines,
   type CampaignConfigResponse,
   type CartLineView,
   type ValidateRequest,
 } from '@free-gift-engine/core';
-import { applyCartPlan } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
+import { reconcileGiftCart } from './reconcileLoop.js';
 import { postValidate } from './validateClient.js';
 
 const SOURCE = 'free-gift-engine';
@@ -95,61 +94,55 @@ async function postJson(path: string, body: unknown): Promise<void> {
   await cartPost(path, body);
 }
 
-async function reconcileOnce(config: WidgetConfig): Promise<void> {
+// Read the live cart as reconciler lines + presentment currency.
+async function readCartLines(): Promise<{ lines: CartLineView[]; currency: string }> {
   const cart = await getCart();
-
-  // Server-authoritative: send every line with its app-added claim; the server EXCLUDES app-added
-  // gift lines from the qualifying subtotal (so a gift never inflates the tier). Choices + decline
-  // come from the chooser state — the existing ValidateRequest shape, only a different source.
-  const request: ValidateRequest = {
-    cart: cart.items.map((item) => ({
-      variantId: toGid(item.variant_id),
-      quantity: item.quantity,
-      appAdded: isGiftLine(item),
-    })),
-    choices: choiceState,
-    declined,
-    presentmentCurrency: cart.currency,
-    countryCode: config.country,
-  };
-
-  const response = await postValidate(request, { proxyPath: config.proxyPath });
-  if (!response.ok) {
-    // Surface nothing here (no error UI in 5b-2a); leave the cart untouched on error.
-    return;
-  }
-
-  const lines: CartLineView[] = cart.items.map((item) => ({
+  const lines = cart.items.map((item) => ({
     id: item.key,
     variantId: toGid(item.variant_id),
     quantity: item.quantity,
     appAdded: isGiftLine(item),
   }));
-  const plan = reconcileGiftLines(lines, response.result);
+  return { lines, currency: cart.currency };
+}
 
-  const hasCartMutations = plan.add.length > 0 || plan.remove.length > 0;
-  const discountChanged = plan.applyCode !== lastDiscount;
-  if (!hasCartMutations && !discountChanged) {
-    return; // already reconciled — no flicker, no redundant writes
-  }
-
+async function reconcileOnce(config: WidgetConfig): Promise<void> {
+  // selfMutating wraps the WHOLE convergence loop: our own cart writes must not re-trigger reconciles
+  // (the loop already re-reads the live cart each pass), while a user's add that lands mid-loop is
+  // still picked up by the next pass's read + re-validate. getCart / /validate are not cart writes.
   selfMutating = true;
   try {
-    // Remove ALL undesired gift lines, then add ALL desired gifts in one cart/add.js (an AND tier
-    // adds both atomically; on a 422 it falls back per-item and surfaces the failure — fail-soft).
-    await applyCartPlan(plan, cartPost);
-    // Apply or clear the discount via the Cart AJAX API (empty string clears).
-    if (discountChanged) {
-      await postJson('cart/update.js', { discount: plan.applyCode ?? '' });
-      lastDiscount = plan.applyCode;
-    }
+    const outcome = await reconcileGiftCart(
+      {
+        readCart: readCartLines,
+        // Server-authoritative: every line carries its app-added claim; the server EXCLUDES app-added
+        // gift lines from the qualifying subtotal. Choices + decline are chooser-driven (same wire shape).
+        validate: async (lines, currency) => {
+          const request: ValidateRequest = {
+            cart: lines.map((l) => ({
+              variantId: l.variantId,
+              quantity: l.quantity,
+              appAdded: l.appAdded,
+            })),
+            choices: choiceState,
+            declined,
+            presentmentCurrency: currency,
+            countryCode: config.country,
+          };
+          const response = await postValidate(request, { proxyPath: config.proxyPath });
+          return response.ok ? response.result : null; // null => error: leave the cart untouched
+        },
+        post: cartPost,
+        setDiscount: (code) => postJson('cart/update.js', { discount: code ?? '' }),
+        // Nudge the theme to re-render its cart UI; tagged with our source so we ignore the echo.
+        nudge: () => w.publish?.(CART_UPDATE_EVENT, { source: SOURCE }),
+      },
+      { initialCode: lastDiscount },
+    );
+    lastDiscount = outcome.appliedCode;
   } finally {
     selfMutating = false;
   }
-
-  // Ask the theme to re-render its cart UI (drawer/sections) so the gift line appears. Tagged with
-  // our source so we ignore the echo. (Drawer-render polish is 5b-2b.)
-  w.publish?.(CART_UPDATE_EVENT, { source: SOURCE });
 }
 
 function schedule(config: WidgetConfig): void {

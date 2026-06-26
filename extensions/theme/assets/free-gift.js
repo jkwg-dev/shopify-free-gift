@@ -4,10 +4,26 @@
   var GIFT_LINE_PROPERTY = "_fge_gift";
   function reconcileGiftLines(cart, result) {
     const desired = result.status === "gift" ? result.giftVariantIds : [];
+    const desiredSet = new Set(desired);
     const appAddedGiftLines = cart.filter((line) => line.appAdded);
-    const presentVariantIds = new Set(appAddedGiftLines.map((line) => line.variantId));
-    const remove = appAddedGiftLines.filter((line) => !desired.includes(line.variantId)).map((line) => ({ id: line.id, variantId: line.variantId }));
-    const add = desired.filter((variantId) => !presentVariantIds.has(variantId)).map((variantId) => ({
+    const remove = [];
+    const adjust = [];
+    const kept = /* @__PURE__ */ new Set();
+    for (const line of appAddedGiftLines) {
+      if (!desiredSet.has(line.variantId)) {
+        remove.push({ id: line.id, variantId: line.variantId });
+        continue;
+      }
+      if (kept.has(line.variantId)) {
+        remove.push({ id: line.id, variantId: line.variantId });
+        continue;
+      }
+      kept.add(line.variantId);
+      if (line.quantity !== 1) {
+        adjust.push({ id: line.id, variantId: line.variantId, quantity: 1 });
+      }
+    }
+    const add = desired.filter((variantId) => !kept.has(variantId)).map((variantId) => ({
       variantId,
       quantity: 1,
       properties: { [GIFT_LINE_PROPERTY]: "1" }
@@ -15,61 +31,11 @@
     return {
       add,
       remove,
+      adjust,
       applyCode: result.status === "gift" ? result.code : null,
       status: result.status,
       reason: result.status === "no-gift" ? result.reason : null
     };
-  }
-
-  // src/cartMutations.ts
-  var toNumericId = (gid) => Number(gid.split("/").pop());
-  var addItem = (a) => ({
-    id: toNumericId(a.variantId),
-    quantity: a.quantity,
-    properties: a.properties
-  });
-  async function applyCartPlan(plan, post) {
-    const removed = [];
-    const added = [];
-    const failures = [];
-    for (const r of plan.remove) {
-      const res = await post("cart/change.js", { id: r.id, quantity: 0 });
-      if (res.ok) {
-        removed.push(r.id);
-      } else {
-        failures.push({
-          kind: "remove",
-          variantId: r.variantId,
-          status: res.status,
-          body: await res.text()
-        });
-      }
-    }
-    if (plan.add.length > 0) {
-      const res = await post("cart/add.js", { items: plan.add.map(addItem) });
-      if (res.ok) {
-        added.push(...plan.add.map((a) => a.variantId));
-      } else {
-        const body = await res.text();
-        logFailure(`batched cart/add.js failed (${res.status}); retrying per item`, body);
-        for (const a of plan.add) {
-          const one = await post("cart/add.js", { items: [addItem(a)] });
-          if (one.ok) {
-            added.push(a.variantId);
-          } else {
-            const oneBody = await one.text();
-            failures.push({ kind: "add", variantId: a.variantId, status: one.status, body: oneBody });
-            logFailure(`cart/add.js failed for ${a.variantId} (${one.status})`, oneBody);
-          }
-        }
-      }
-    }
-    return { added, removed, failures };
-  }
-  function logFailure(message, body) {
-    var _a2;
-    const c = globalThis.console;
-    (_a2 = c == null ? void 0 : c.warn) == null ? void 0 : _a2.call(c, `[free-gift] ${message}`, body.slice(0, 300));
   }
 
   // src/choices.ts
@@ -242,6 +208,109 @@
     return { ok: true, config: body };
   }
 
+  // src/cartMutations.ts
+  var toNumericId = (gid) => Number(gid.split("/").pop());
+  var addItem = (a) => ({
+    id: toNumericId(a.variantId),
+    quantity: a.quantity,
+    properties: a.properties
+  });
+  async function applyCartPlan(plan, post) {
+    const removed = [];
+    const added = [];
+    const adjusted = [];
+    const failures = [];
+    for (const r of plan.remove) {
+      const res = await post("cart/change.js", { id: r.id, quantity: 0 });
+      if (res.ok) {
+        removed.push(r.id);
+      } else {
+        failures.push({
+          kind: "remove",
+          variantId: r.variantId,
+          status: res.status,
+          body: await res.text()
+        });
+      }
+    }
+    for (const a of plan.adjust) {
+      const res = await post("cart/change.js", { id: a.id, quantity: a.quantity });
+      if (res.ok) {
+        adjusted.push(a.id);
+      } else {
+        failures.push({
+          kind: "remove",
+          variantId: a.variantId,
+          status: res.status,
+          body: await res.text()
+        });
+      }
+    }
+    if (plan.add.length > 0) {
+      const res = await post("cart/add.js", { items: plan.add.map(addItem) });
+      if (res.ok) {
+        added.push(...plan.add.map((a) => a.variantId));
+      } else {
+        const body = await res.text();
+        logFailure(`batched cart/add.js failed (${res.status}); retrying per item`, body);
+        for (const a of plan.add) {
+          const one = await post("cart/add.js", { items: [addItem(a)] });
+          if (one.ok) {
+            added.push(a.variantId);
+          } else {
+            const oneBody = await one.text();
+            failures.push({ kind: "add", variantId: a.variantId, status: one.status, body: oneBody });
+            logFailure(`cart/add.js failed for ${a.variantId} (${one.status})`, oneBody);
+          }
+        }
+      }
+    }
+    return { added, removed, adjusted, failures };
+  }
+  function logFailure(message, body) {
+    var _a2;
+    const c = globalThis.console;
+    (_a2 = c == null ? void 0 : c.warn) == null ? void 0 : _a2.call(c, `[free-gift] ${message}`, body.slice(0, 300));
+  }
+
+  // src/reconcileLoop.ts
+  async function reconcileGiftCart(io, opts = {}) {
+    var _a2, _b2, _c2;
+    const maxPasses = (_a2 = opts.maxPasses) != null ? _a2 : 4;
+    let appliedCode = (_b2 = opts.initialCode) != null ? _b2 : null;
+    const blockedAdds = /* @__PURE__ */ new Set();
+    const failures = [];
+    for (let pass = 1; pass <= maxPasses; pass += 1) {
+      const { lines, currency } = await io.readCart();
+      const result = await io.validate(lines, currency);
+      if (result === null) {
+        return { passes: pass, converged: false, appliedCode, failures };
+      }
+      const plan = reconcileGiftLines(lines, result);
+      const add = plan.add.filter((a) => !blockedAdds.has(a.variantId));
+      const cartNeedsChange = add.length > 0 || plan.remove.length > 0 || plan.adjust.length > 0;
+      const codeNeedsChange = plan.applyCode !== appliedCode;
+      if (!cartNeedsChange && !codeNeedsChange) {
+        return { passes: pass, converged: true, appliedCode, failures };
+      }
+      if (cartNeedsChange) {
+        const res = await applyCartPlan({ ...plan, add }, io.post);
+        for (const f of res.failures) {
+          failures.push(f);
+          if (f.kind === "add") {
+            blockedAdds.add(f.variantId);
+          }
+        }
+      }
+      if (codeNeedsChange) {
+        await io.setDiscount(plan.applyCode);
+        appliedCode = plan.applyCode;
+      }
+      (_c2 = io.nudge) == null ? void 0 : _c2.call(io);
+    }
+    return { passes: maxPasses, converged: false, appliedCode, failures };
+  }
+
   // src/validateClient.ts
   var DEFAULT_PROXY_PATH = "/apps/free-gift/validate";
   async function postValidate(request, options = {}) {
@@ -303,47 +372,53 @@
   async function postJson(path, body) {
     await cartPost(path, body);
   }
-  async function reconcileOnce(config) {
-    var _a2, _b2;
+  async function readCartLines() {
     const cart = await getCart();
-    const request = {
-      cart: cart.items.map((item) => ({
-        variantId: toGid(item.variant_id),
-        quantity: item.quantity,
-        appAdded: isGiftLine(item)
-      })),
-      choices: choiceState,
-      declined,
-      presentmentCurrency: cart.currency,
-      countryCode: config.country
-    };
-    const response = await postValidate(request, { proxyPath: config.proxyPath });
-    if (!response.ok) {
-      return;
-    }
     const lines = cart.items.map((item) => ({
       id: item.key,
       variantId: toGid(item.variant_id),
       quantity: item.quantity,
       appAdded: isGiftLine(item)
     }));
-    const plan = reconcileGiftLines(lines, response.result);
-    const hasCartMutations = plan.add.length > 0 || plan.remove.length > 0;
-    const discountChanged = plan.applyCode !== lastDiscount;
-    if (!hasCartMutations && !discountChanged) {
-      return;
-    }
+    return { lines, currency: cart.currency };
+  }
+  async function reconcileOnce(config) {
     selfMutating = true;
     try {
-      await applyCartPlan(plan, cartPost);
-      if (discountChanged) {
-        await postJson("cart/update.js", { discount: (_a2 = plan.applyCode) != null ? _a2 : "" });
-        lastDiscount = plan.applyCode;
-      }
+      const outcome = await reconcileGiftCart(
+        {
+          readCart: readCartLines,
+          // Server-authoritative: every line carries its app-added claim; the server EXCLUDES app-added
+          // gift lines from the qualifying subtotal. Choices + decline are chooser-driven (same wire shape).
+          validate: async (lines, currency) => {
+            const request = {
+              cart: lines.map((l) => ({
+                variantId: l.variantId,
+                quantity: l.quantity,
+                appAdded: l.appAdded
+              })),
+              choices: choiceState,
+              declined,
+              presentmentCurrency: currency,
+              countryCode: config.country
+            };
+            const response = await postValidate(request, { proxyPath: config.proxyPath });
+            return response.ok ? response.result : null;
+          },
+          post: cartPost,
+          setDiscount: (code) => postJson("cart/update.js", { discount: code != null ? code : "" }),
+          // Nudge the theme to re-render its cart UI; tagged with our source so we ignore the echo.
+          nudge: () => {
+            var _a2;
+            return (_a2 = w.publish) == null ? void 0 : _a2.call(w, CART_UPDATE_EVENT, { source: SOURCE });
+          }
+        },
+        { initialCode: lastDiscount }
+      );
+      lastDiscount = outcome.appliedCode;
     } finally {
       selfMutating = false;
     }
-    (_b2 = w.publish) == null ? void 0 : _b2.call(w, CART_UPDATE_EVENT, { source: SOURCE });
   }
   function schedule(config) {
     if (running) {

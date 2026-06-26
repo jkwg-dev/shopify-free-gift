@@ -42,6 +42,7 @@ function variants(r: GiftReconciliation) {
   return {
     add: r.add.map((a) => a.variantId),
     remove: r.remove.map((x) => x.variantId),
+    adjust: r.adjust.map((x) => x.variantId),
   };
 }
 
@@ -57,10 +58,28 @@ describe('reconcileGiftLines — adds the resolved gift', () => {
     expect(r.reason).toBeNull();
   });
 
-  it('AND tier adds both variants (one code)', () => {
+  it('AND tier adds both variants (one code), each at qty 1', () => {
     const r = reconcileGiftLines([paidLine('l1', PAID)], gift([BRUSH, TEE]));
     expect(variants(r).add).toEqual([BRUSH, TEE]);
+    expect(r.add.map((a) => a.quantity)).toEqual([1, 1]); // both at qty 1
     expect(r.applyCode).toBe('CODE-1');
+  });
+
+  it('AND tier already present is a no-op (both kept once at qty 1)', () => {
+    const r = reconcileGiftLines([giftLine('g1', BRUSH), giftLine('g2', TEE)], gift([BRUSH, TEE]));
+    expect(r.add).toEqual([]);
+    expect(r.remove).toEqual([]);
+    expect(r.adjust).toEqual([]);
+  });
+
+  it('crossing OUT of an AND tier (no-gift) removes BOTH AND variants', () => {
+    const r = reconcileGiftLines(
+      [giftLine('g1', BRUSH), giftLine('g2', TEE)],
+      noGift('below-threshold'),
+    );
+    expect(new Set(variants(r).remove)).toEqual(new Set([BRUSH, TEE]));
+    expect(r.add).toEqual([]);
+    expect(r.applyCode).toBeNull();
   });
 });
 
@@ -69,7 +88,58 @@ describe('reconcileGiftLines — idempotency', () => {
     const r = reconcileGiftLines([paidLine('l1', PAID), giftLine('g1', ICE)], gift([ICE]));
     expect(r.add).toEqual([]);
     expect(r.remove).toEqual([]);
+    expect(r.adjust).toEqual([]);
     expect(r.applyCode).toBe('CODE-1');
+  });
+});
+
+describe('reconcileGiftLines — normalization (BUG 1: no stacking / no qty bump)', () => {
+  it('collapses a bumped gift quantity back to exactly 1 (does NOT re-add)', () => {
+    // A rapid double-add bumped the gift line to qty 2; reconcile must fix it to 1, not add more.
+    const bumped: CartLineView = { id: 'g1', variantId: ICE, quantity: 2, appAdded: true };
+    const r = reconcileGiftLines([bumped], gift([ICE]));
+    expect(r.add).toEqual([]);
+    expect(r.remove).toEqual([]);
+    expect(r.adjust).toEqual([{ id: 'g1', variantId: ICE, quantity: 1 }]);
+  });
+
+  it('removes duplicate/split gift lines of the SAME desired variant, keeping exactly one', () => {
+    const r = reconcileGiftLines([giftLine('g1', ICE), giftLine('g2', ICE)], gift([ICE]));
+    expect(variants(r).remove).toEqual([ICE]); // the second (duplicate) line
+    expect(r.remove.map((x) => x.id)).toEqual(['g2']); // keep the first, remove the extra
+    expect(r.add).toEqual([]);
+    expect(r.adjust).toEqual([]);
+  });
+
+  it('keeps the first desired line at qty 1 and removes a bumped duplicate', () => {
+    const dupBumped: CartLineView = { id: 'g2', variantId: ICE, quantity: 3, appAdded: true };
+    const r = reconcileGiftLines([giftLine('g1', ICE), dupBumped], gift([ICE]));
+    expect(r.remove.map((x) => x.id)).toEqual(['g2']); // extra removed
+    expect(r.adjust).toEqual([]); // the kept first line is already qty 1
+    expect(r.add).toEqual([]);
+  });
+
+  it('running again on the normalized result is a no-op (convergent)', () => {
+    // After the fix above is applied, the cart is one ICE line at qty 1 -> reconcile yields nothing.
+    const r = reconcileGiftLines([giftLine('g1', ICE)], gift([ICE]));
+    expect(r.add).toEqual([]);
+    expect(r.remove).toEqual([]);
+    expect(r.adjust).toEqual([]);
+  });
+});
+
+describe('reconcileGiftLines — highest-tier-only across stacked gifts (BUG 2)', () => {
+  it('crossing into tier 3 removes ALL previous-tier gift lines and adds only tier 3', () => {
+    // Live bug: tier-2 AND gifts (BRUSH+TEE) AND a stale tier-3 line all present; desired is tier-3.
+    const cart = [
+      giftLine('g1', BRUSH), // tier-2 AND
+      giftLine('g2', TEE), // tier-2 AND
+      giftLine('g3', ICE), // a stale lower-tier gift
+      paidLine('l1', PAID),
+    ];
+    const r = reconcileGiftLines(cart, gift([DAWN])); // tier-3 OR resolved to DAWN
+    expect(new Set(variants(r).remove)).toEqual(new Set([BRUSH, TEE, ICE]));
+    expect(variants(r).add).toEqual([DAWN]);
   });
 });
 

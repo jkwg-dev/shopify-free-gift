@@ -17,6 +17,7 @@ function addPlan(variantIds: string[]): GiftReconciliation {
       properties: { _fge_gift: '1' },
     })),
     remove: [],
+    adjust: [],
     applyCode: 'CODE-AND',
     status: 'gift',
     reason: null,
@@ -76,6 +77,28 @@ describe('applyCartPlan — AND tier adds ALL variants', () => {
   });
 });
 
+describe('applyCartPlan — adjust path (collapse a bumped gift qty to 1)', () => {
+  it('re-sets a bumped gift line to qty 1 via cart/change.js (no re-add)', async () => {
+    const plan: GiftReconciliation = {
+      add: [],
+      remove: [],
+      adjust: [{ id: 'lineHidden', variantId: HIDDEN, quantity: 1 }],
+      applyCode: 'CODE-AND',
+      status: 'gift',
+      reason: null,
+    };
+    const { post, calls } = recordingPost(() => res(true));
+
+    const result = await applyCartPlan(plan, post);
+
+    const changes = calls.filter((c) => c.path === 'cart/change.js');
+    expect(changes).toHaveLength(1);
+    expect(changes[0]!.body).toEqual({ id: 'lineHidden', quantity: 1 });
+    expect(calls.filter((c) => c.path === 'cart/add.js')).toHaveLength(0); // never re-adds
+    expect(result.adjusted).toEqual(['lineHidden']);
+  });
+});
+
 describe('applyCartPlan — remove path', () => {
   it('removes ALL undesired gift lines (e.g. AND drop-below removes both) and is fail-soft', async () => {
     const plan: GiftReconciliation = {
@@ -84,6 +107,7 @@ describe('applyCartPlan — remove path', () => {
         { id: 'lineHidden', variantId: HIDDEN },
         { id: 'lineMulti', variantId: MULTI },
       ],
+      adjust: [],
       applyCode: null,
       status: 'no-gift',
       reason: 'below-threshold',

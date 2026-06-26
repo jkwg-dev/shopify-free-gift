@@ -40,6 +40,9 @@ export {
   type ChooserAndTier,
 } from './chooser.js';
 
+// Convergent reconcile loop (re-read -> re-validate -> apply until stable) — Phase 5b-2a fix.
+export { reconcileGiftCart, type GiftCartIo, type ReconcileOutcome } from './reconcileLoop.js';
+
 // Re-export the reconciler + contract from core so 5b imports a single widget surface.
 export {
   reconcileGiftLines,
@@ -48,6 +51,7 @@ export {
   type GiftReconciliation,
   type GiftLineAdd,
   type GiftLineRemoval,
+  type GiftLineQuantityFix,
   type ValidateRequest,
   type ValidateResult,
 } from '@free-gift-engine/core';

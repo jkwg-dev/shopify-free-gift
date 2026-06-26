@@ -31,9 +31,19 @@ export type GiftLineRemoval = {
   readonly variantId: string;
 };
 
+// A present-and-desired gift line whose quantity drifted from 1 (a duplicate-add race bumped it);
+// correct it back to exactly 1 unit. The `id` is the theme line key to target.
+export type GiftLineQuantityFix = {
+  readonly id: string;
+  readonly variantId: string;
+  readonly quantity: 1;
+};
+
 export type GiftReconciliation = {
   readonly add: readonly GiftLineAdd[];
   readonly remove: readonly GiftLineRemoval[];
+  // Present-and-desired gift lines to re-set to qty 1 (a rapid double-add bumped the quantity).
+  readonly adjust: readonly GiftLineQuantityFix[];
   // The discount code to apply (status 'gift') or null — null SIGNALS the previously-applied code no
   // longer applies (declined, dropped below threshold, unavailable, etc.) and should be cleared.
   readonly applyCode: string | null;
@@ -42,28 +52,46 @@ export type GiftReconciliation = {
   readonly reason: ValidateNoGiftReason | null;
 };
 
-// Compute the cart mutations needed to make the cart match the server result.
-// - Desired app-added gift lines = the resolved giftVariantIds (or none when no-gift).
-// - REMOVE any app-added gift line whose variant is not desired (tier change, OR/variant change,
-//   decline, dropped below threshold, gift-unavailable, cumulative-unsupported).
-// - ADD any desired gift variant not already present as an app-added line.
-// Variant-granular: matching is by variant GID, so Ice->Dawn (siblings of one product) removes Ice
-// and adds Dawn, never collapsing by product. Idempotent: when the cart already matches, both lists
-// are empty.
+// Compute the cart mutations needed to NORMALIZE the cart to EXACTLY the server's desired gift set —
+// one app-added line per desired variant at qty 1, and nothing else app-added. The desired set is the
+// resolved (highest) tier's gift(s) only (`giftVariantIds`), or none when no-gift — so a previous
+// tier's gift is always removed (highest-tier-only). Specifically, for the app-added gift lines:
+//   - variant NOT desired           -> REMOVE (tier change, OR/variant change, decline, drop, etc.)
+//   - variant desired, FIRST seen   -> KEEP; if qty != 1, ADJUST to 1 (undo a double-add quantity bump)
+//   - variant desired, DUPLICATE    -> REMOVE the extra line (a rapid race split it into >1 line)
+//   - desired variant with NO line  -> ADD it (qty 1)
+// Variant-granular (by GID): Ice->Dawn removes Ice + adds Dawn, never collapsing by product. Fully
+// IDEMPOTENT and convergent: applied to an already-normalized cart, all of add/remove/adjust are empty;
+// applied to a messy cart (stacked qty, split lines, stale tier gifts) it converges it in one pass.
 export function reconcileGiftLines(
   cart: readonly CartLineView[],
   result: ValidateResult,
 ): GiftReconciliation {
   const desired = result.status === 'gift' ? result.giftVariantIds : [];
+  const desiredSet = new Set(desired);
   const appAddedGiftLines = cart.filter((line) => line.appAdded);
-  const presentVariantIds = new Set(appAddedGiftLines.map((line) => line.variantId));
 
-  const remove = appAddedGiftLines
-    .filter((line) => !desired.includes(line.variantId))
-    .map((line) => ({ id: line.id, variantId: line.variantId }));
+  const remove: GiftLineRemoval[] = [];
+  const adjust: GiftLineQuantityFix[] = [];
+  const kept = new Set<string>(); // desired variants already covered by a kept line (dedup)
+
+  for (const line of appAddedGiftLines) {
+    if (!desiredSet.has(line.variantId)) {
+      remove.push({ id: line.id, variantId: line.variantId }); // undesired (e.g. previous tier)
+      continue;
+    }
+    if (kept.has(line.variantId)) {
+      remove.push({ id: line.id, variantId: line.variantId }); // duplicate/split line of a desired gift
+      continue;
+    }
+    kept.add(line.variantId);
+    if (line.quantity !== 1) {
+      adjust.push({ id: line.id, variantId: line.variantId, quantity: 1 }); // collapse a bumped qty
+    }
+  }
 
   const add = desired
-    .filter((variantId) => !presentVariantIds.has(variantId))
+    .filter((variantId) => !kept.has(variantId))
     .map((variantId) => ({
       variantId,
       quantity: 1 as const,
@@ -73,6 +101,7 @@ export function reconcileGiftLines(
   return {
     add,
     remove,
+    adjust,
     applyCode: result.status === 'gift' ? result.code : null,
     status: result.status,
     reason: result.status === 'no-gift' ? result.reason : null,

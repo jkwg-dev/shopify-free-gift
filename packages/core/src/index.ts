@@ -73,5 +73,6 @@ export {
   type CartLineView,
   type GiftLineAdd,
   type GiftLineRemoval,
+  type GiftLineQuantityFix,
   type GiftReconciliation,
 } from './reconcile.js';
