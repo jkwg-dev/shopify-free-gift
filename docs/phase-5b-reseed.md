@@ -156,13 +156,32 @@ On success it returns `{ collectionId, taggedProductIds, qualifyingProductCount,
 > (OR **and** AND) must be channel-published to be cart-addable.
 >
 > - **Manual for now**; **when 3b wires `provisionGifts`, it must also ensure each gift product is
->   published to the Online Store channel** (via `publishablePublish`), alongside tag + collection
->   exclusion — else cart/add 422s on the storefront.
+>   published to the Online Store channel**, alongside tag + collection exclusion — else cart/add
+>   422s on the storefront.
 > - **Tension to resolve in 3b:** channel-publishing a gift-only product makes it directly
 >   browsable/purchasable. Decide how real gift products stay hidden from search/collections (e.g. no
 >   collections, SEO/sitemap suppression, a "hidden" template) while remaining channel-published so
 >   cart/add works. (The widget is fail-soft as of 5b-2a: a 422 on one gift is surfaced + retried
 >   per-item so the publishable gifts still add — but the unpublished one won't appear until fixed.)
+>
+> **Authoritative API + scope (verified against Shopify Admin GraphQL 2026-04 docs, 5b-2a):**
+>
+> - **Publish (write):** `publishablePublish(id: ID!, input: [PublicationInput!]!)` where each input is
+>   `{ publicationId: <Online Store publication GID>, publishDate? }`. `productPublish` is **deprecated**.
+>   Requires the **`write_publications`** scope (NOT currently in `GIFT_ENGINE_SCOPES`; adding it is a
+>   scope change → reinstall, same as `write_products`). The product must also be **ACTIVE** to be
+>   purchasable once published.
+> - **Read publication status:** `Product.publishedOnPublication(publicationId:)` against the Online
+>   Store publication, or `resourcePublicationsV2 { isPublished publication { id name } }`. **No new
+>   scope needed** — `read_products` (already held) grants the publication graph (the `Publication`
+>   union requires `read_products` OR `read_publications`). Do **NOT** use `publishedOnCurrentPublication`
+>   / **`read_product_listings`** — that legacy scope is for an app querying its OWN channel, wrong here.
+> - **Availability must incorporate publication, not just stock.** Today `config`'s `GiftOptionView.available`
+>   and the `/validate` `gift-unavailable` backstop are derived from `contextualPricing`/`availableForSale`
+>   only (stock/price) — so a 100%-off code can mint for an unpublished variant that then 422s at
+>   `/cart/add`. 3b must AND-in `publishedOnPublication(<Online Store>)` so an unpublished gift is treated
+>   as unavailable (and `provisionGifts` should **re-publish** a gift a merchant unpublished after a
+>   sell-out, or flag it). Reading this needs no new scope.
 
 ## Step 3 — verify, then PRINT (collection id + membership + tagged products)
 
