@@ -1,7 +1,8 @@
 # Design: flip to "gift products INCLUDED in the qualifying collection" (model C)
 
-**Status: Stage 0 DONE. Stage 1 IMPLEMENTED behind `FGE_GIFTS_INCLUDED` (default OFF — inert, all
-tests green). NOT yet activated on dev (flag OFF). Turn-on + live checks pending (see end).**
+**Status: Stage 0 DONE. Stage 1 IMPLEMENTED + VALIDATED LIVE on dev (flag ON on dev; default OFF in
+code, inert, all tests green). Model C works. Stage 2 (tests + docs) DONE. Stages 3 (drop
+`write_products`) + 4 (admin scope UI) remain future. Live results + accepted issue #6 at the end.**
 
 ## Premise (validated)
 
@@ -248,3 +249,47 @@ Set `FGE_GIFTS_INCLUDED` OFF (unset / `false`) + redeploy, then re-provision OFF
 `collectionUpdate` rule back to `NOT_EQUALS app:fge_gift` + `tagsAdd app:fge_gift` to the gift products
 
 - wait for exclusion). Live codes are immutable; superseding re-mints under the restored exclusion scope.
+
+---
+
+## Stage 1 live results (dev, FGE_GIFTS_INCLUDED=true) — model C VALIDATED
+
+Migration run by hand on dev (= exactly what `provisionGifts` ON reproduces): `collectionUpdate` flipped
+the `fge-qualifying` rule to `TAG NOT_EQUALS app:fge-nonqualifying`, un-tagged all 9 gift products,
+collection count 8→17 with gifts `hasProduct=true`.
+
+PASSED:
+
+1. **Full-price gift-product purchase qualifies** — Multi-managed alone at $629.95 → tier-1 unlocked,
+   Ice gifted at $0; subtotal $629.95 (the gift product's full-price purchase counted). The core
+   model-C win that failed before.
+2. **$0 gift excluded** — subtotal always reflected only full-price lines.
+3. **Drop-below reverts** — removing the qualifying item removed the gift.
+4. **Multi-tier gating correct** — at qualifying $1949.95 the widget applied the **tier-3** code
+   (customerBuys $1500), confirmed via Admin GraphQL (not a lower tier).
+5. **Tier-swap clean** — 1→2→3 by raising qty: Ice → Hidden+Multi (AND) → tier-3 single, no
+   full-price-gift window, no double-count, highest-tier-only held.
+
+### Accepted issue #6 — `appAdded` vs the buys/gets line split (do NOT fix now)
+
+When the SAME gift product is bought full-price AND received as the gift, Shopify splits the variant
+into two lines and assigns the $0 to whichever unit IT picks — observed: the `_fge_gift:"1"` property
+landed on the **full-price** line ($749.95) and the $0 line had no property.
+
+- **Functional impact: NONE** — verified: correct checkout total ($1949.95, one Liquid free), correct
+  tier-3 code applied, gift granted. Payment, tier decision, and gift grant are all correct (same
+  variant, so which line is $0 doesn't matter to any of them).
+- **The only misalignment** is the cart.js `_fge_gift` property pointing at the wrong line — harmless
+  today. **Decision: accept as-is.**
+- **The one place it will matter:** the deferred two-line **visual grouping** feature MUST classify
+  lines by Shopify's buys/gets allocation (the $0 line is the gift), **not** by the `_fge_gift`
+  property.
+
+## Stage 2 (tests + docs) — DONE
+
+- Tests (added in Stage 1, green): `collections.test.ts` (all-products rule on create, in-place
+  `collectionUpdate` reconcile, no-update-by-default, `waitForGiftProductsIncluded`); `discounts.test.ts`
+  (guard skip → [count, create]; empty-scope guard still fires); `giftLifecycle.test.ts` (un-tag +
+  wait-for-inclusion, fail-on-not-included, teardown no-op). `/validate` tests unchanged (already model C).
+- Docs: this file; CLAUDE.md ("Decision: qualifying scope is a smart collection; gift products are
+  INCLUDED"); `docs/phase-5b-reseed.md` (superseded banner + inclusion provisioning); the model-C memory.

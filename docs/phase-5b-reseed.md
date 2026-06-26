@@ -1,5 +1,22 @@
 # Phase 5b — re-seed / re-provision runbook (BXGY + write_products)
 
+> **SUPERSEDED for model C (2026-06-26).** This runbook describes the EXCLUSION provisioning (tag gifts
+> `app:fge_gift` → `TAG NOT_EQUALS` rule → wait for **exclusion**). Stage-1 validated the **inclusion**
+> model (model C): gift products are **MEMBERS** of the qualifying collection so a full-price gift
+> purchase counts toward the tier, while Shopify BXGY's buys/gets split keeps the $0 gift from
+> self-qualifying (no leak). The steps below remain accurate as the **OFF / rollback** path
+> (`FGE_GIFTS_INCLUDED` unset). For the inclusion model + the live migration, see
+> `docs/model-c-include-gifts-design.md`.
+>
+> **Inclusion provisioning (`FGE_GIFTS_INCLUDED=true`, the ON path):** gifts are **NOT** tagged. The
+> qualifying collection rule is the tautology `TAG NOT_EQUALS app:fge-nonqualifying` (a sentinel no
+> product carries → all products incl. gifts). `provisionGifts(.., { giftsIncluded: true })` =
+> ensure-collection (flip rule in place via `collectionUpdate`) → **un-tag** the gift products →
+> `waitForGiftProductsIncluded` (poll `hasProduct=true`) → confirm non-empty. The empty-scope guard and
+> the Online-Store publish step are kept; `GiftNotExcludedError` is skipped. The dev migration already
+> run by hand (flip rule + un-tag 9 gifts; collection count 8→17, gifts `hasProduct=true`) is exactly
+> what `provisionGifts` ON reproduces.
+
 This runbook recovers from the **$0 leak** and switches the gift primitive to **BXGY** with a real,
 verified qualifying scope. It is the corrected ordering: **reinstall → deactivate old codes →
 provision (hard-fails) → verify → only then mint.**
