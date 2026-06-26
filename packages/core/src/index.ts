@@ -57,6 +57,15 @@ export type {
   ValidateErrorCode,
 } from './validate.js';
 
+// Read-only campaign-config contract for the perception UI (Phase 5b-2); separate from /validate.
+export type {
+  GiftOptionView,
+  GiftItemView,
+  TierConfig,
+  CampaignConfigResponse,
+  CampaignConfigRequest,
+} from './campaignConfig.js';
+
 // Pure storefront gift-line reconciliation (Phase 5a).
 export {
   reconcileGiftLines,

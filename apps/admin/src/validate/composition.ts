@@ -14,6 +14,7 @@ import {
   collectionProductCount,
   ensureQualifyingCollection,
   exchangeAccessToken,
+  fetchVariantMeta,
   fetchVariantPricing,
   giftProductIdsForVariants,
   giftProductsMissingTag,
@@ -35,6 +36,7 @@ import type { OAuthTokenExchanger, ShopifyDiscountGateway } from '../ports.js';
 import { decryptToken } from '../security/crypto.js';
 import { GiftCodeMappingStore } from '../store/giftCodeMapping.js';
 import type { WebhookDeps } from '../webhooks/handlers.js';
+import type { ConfigHandlerDeps } from './configHandler.js';
 import type { ValidateHandlerDeps } from './handler.js';
 import { PostgresRateLimiter, type WindowCounter } from './rateLimitPostgres.js';
 import type { ActiveCampaignContext } from './service.js';
@@ -129,30 +131,14 @@ export async function isShopInstalled(shopDomain: string): Promise<boolean> {
   }
 }
 
-// --- /validate -----------------------------------------------------------------------------------
+// --- shared storefront wiring (used by both /validate and /config) -------------------------------
 
-let validateDeps: ValidateHandlerDeps | null = null;
-
-export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
-  if (validateDeps !== null) {
-    return validateDeps;
-  }
-  const prisma = getPrisma();
-  const shopDomain = requireEnv('SHOPIFY_SHOP_DOMAIN');
-  const baseCurrency = requireEnv('SHOPIFY_BASE_CURRENCY');
-
+// Resolve the single active campaign for a verified shop domain (+ the shop's base currency).
+function makeResolveActiveCampaign(
+  baseCurrency: string,
+): (domain: string) => Promise<ActiveCampaignContext | null> {
   const campaignRepo = new PrismaCampaignRepository(prismaLike());
-  const mappingTable = new PrismaGiftCodeMappingTable(prismaLike());
-  const client = await adminClientForShop(shopDomain);
-  const mappingStore = new GiftCodeMappingStore(
-    mappingTable,
-    new ShopifyDiscountGatewayAdapter(client),
-  );
-  // The BXGY codes reference the shared qualifying collection; ensure it exists. (Gift products are
-  // tagged + membership confirmed at campaign provisioning — see services/giftLifecycle.)
-  const qualifyingCollection = await ensureQualifyingCollection(client);
-
-  const resolveActiveCampaign = async (domain: string): Promise<ActiveCampaignContext | null> => {
+  return async (domain: string): Promise<ActiveCampaignContext | null> => {
     const shop = await shopRepo().findByDomain(domain);
     if (shop === null) {
       return null;
@@ -164,8 +150,10 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
     }
     return { shopId: shop.id, baseCurrency, campaign: active };
   };
+}
 
-  // Atomic fixed-window increment in one statement — the DB's ON CONFLICT makes it race-safe.
+// Shared Postgres-backed rate limiter (atomic fixed-window increment; ON CONFLICT makes it race-safe).
+function makeRateLimiter(prisma: PrismaClient): PostgresRateLimiter {
   const counter: WindowCounter = {
     async increment(bucketKey, windowStart) {
       const rows = await prisma.$queryRaw<{ count: number }[]>`
@@ -178,22 +166,69 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
       return rows[0]?.count ?? 1;
     },
   };
+  return new PostgresRateLimiter({
+    limit: RATE_LIMIT,
+    windowMs: RATE_WINDOW_MS,
+    now: () => Date.now(),
+    counter,
+  });
+}
+
+// --- /validate -----------------------------------------------------------------------------------
+
+let validateDeps: ValidateHandlerDeps | null = null;
+
+export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
+  if (validateDeps !== null) {
+    return validateDeps;
+  }
+  const prisma = getPrisma();
+  const shopDomain = requireEnv('SHOPIFY_SHOP_DOMAIN');
+  const baseCurrency = requireEnv('SHOPIFY_BASE_CURRENCY');
+
+  const mappingTable = new PrismaGiftCodeMappingTable(prismaLike());
+  const client = await adminClientForShop(shopDomain);
+  const mappingStore = new GiftCodeMappingStore(
+    mappingTable,
+    new ShopifyDiscountGatewayAdapter(client),
+  );
+  // The BXGY codes reference the shared qualifying collection; ensure it exists. (Gift products are
+  // tagged + membership confirmed at campaign provisioning — see services/giftLifecycle.)
+  const qualifyingCollection = await ensureQualifyingCollection(client);
 
   validateDeps = {
     apiSecret: requireEnv('SHOPIFY_API_SECRET'),
-    rateLimiter: new PostgresRateLimiter({
-      limit: RATE_LIMIT,
-      windowMs: RATE_WINDOW_MS,
-      now: () => Date.now(),
-      counter,
-    }),
-    resolveActiveCampaign,
+    rateLimiter: makeRateLimiter(prisma),
+    resolveActiveCampaign: makeResolveActiveCampaign(baseCurrency),
     priceVariants: (ids, ctx) => fetchVariantPricing(client, ids, ctx),
     mappingStore,
     qualifyingCollectionId: qualifyingCollection.id,
     now: () => new Date(),
   };
   return validateDeps;
+}
+
+// --- /config (read-only campaign structure for the perception UI) --------------------------------
+
+let configDeps: ConfigHandlerDeps | null = null;
+
+export async function getConfigDeps(): Promise<ConfigHandlerDeps> {
+  if (configDeps !== null) {
+    return configDeps;
+  }
+  const prisma = getPrisma();
+  const shopDomain = requireEnv('SHOPIFY_SHOP_DOMAIN');
+  const baseCurrency = requireEnv('SHOPIFY_BASE_CURRENCY');
+  const client = await adminClientForShop(shopDomain);
+
+  configDeps = {
+    apiSecret: requireEnv('SHOPIFY_API_SECRET'),
+    rateLimiter: makeRateLimiter(prisma),
+    resolveActiveCampaign: makeResolveActiveCampaign(baseCurrency),
+    priceVariants: (ids, ctx) => fetchVariantPricing(client, ids, ctx),
+    fetchVariantMeta: (ids) => fetchVariantMeta(client, ids),
+  };
+  return configDeps;
 }
 
 // --- Gift-product tag lifecycle (BXGY provisioning) ----------------------------------------------

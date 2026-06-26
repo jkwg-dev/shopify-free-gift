@@ -87,7 +87,7 @@ function giftSetVariantIds(campaign: Campaign): Set<string> {
 // The threshold actually enforced for a tier in this market: the base-currency threshold when the
 // buyer is in the base currency, otherwise the market's pre-resolved presentment threshold. Returns
 // null when a non-base market has no configured threshold for this tier (campaign not sold there).
-function presentmentThreshold(
+export function presentmentThreshold(
   tier: Tier,
   presentmentCurrency: string,
   baseCurrency: string,
