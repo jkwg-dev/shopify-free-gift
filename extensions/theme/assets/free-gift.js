@@ -337,13 +337,10 @@
     const productSelected = selectedOpt !== void 0;
     const anyAvailable = options.some((o) => o.available);
     const defaultPick = (_e = selectedOpt != null ? selectedOpt : options.find((o) => o.available)) != null ? _e : options[0];
-    const wrap = document.createElement("div");
-    wrap.className = "fge-product";
-    if (!anyAvailable) wrap.classList.add("is-unavailable");
-    const head = document.createElement("label");
-    head.className = "fge-card";
-    if (productSelected) head.classList.add("is-selected");
-    if (!anyAvailable) head.classList.add("is-unavailable");
+    const card = document.createElement("label");
+    card.className = "fge-card";
+    if (productSelected) card.classList.add("is-selected");
+    if (!anyAvailable) card.classList.add("is-unavailable");
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.className = "fge-card__radio";
@@ -357,44 +354,45 @@
     const name = document.createElement("div");
     name.className = "fge-card__name";
     name.textContent = productLabel;
-    const status = document.createElement("div");
-    status.className = "fge-card__status";
+    body.append(name);
     if (!anyAvailable) {
-      status.classList.add("is-unavailable");
+      const status = document.createElement("div");
+      status.className = "fge-card__status is-unavailable";
       status.textContent = "Currently unavailable";
+      body.append(status);
     } else if (productSelected) {
-      status.classList.add("is-unlocked");
-      status.textContent = `${selectedOpt.variantLabel} \xB7 added free`;
+      body.append(renderVariantChips(tierId, options, selectedOptionId, productLabel, handlers));
     } else {
+      const status = document.createElement("div");
+      status.className = "fge-card__status";
       status.textContent = `Choose this gift \xB7 ${options.length} options`;
+      body.append(status);
     }
-    body.append(name, status);
-    head.append(radio, giftImage((selectedOpt != null ? selectedOpt : defaultPick).imageUrl, productLabel), body);
-    wrap.append(head);
-    if (productSelected) {
-      const picker = document.createElement("div");
-      picker.className = "fge-variants";
-      picker.setAttribute("role", "group");
-      picker.setAttribute("aria-label", `Choose a ${productLabel} option`);
-      for (const opt of options) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "fge-variant";
-        btn.textContent = opt.variantLabel;
-        const isSel = opt.optionId === selectedOptionId;
-        if (isSel) btn.classList.add("is-selected");
-        btn.setAttribute("aria-pressed", String(isSel));
-        if (!opt.available) {
-          btn.disabled = true;
-          btn.classList.add("is-unavailable");
-        } else {
-          btn.addEventListener("click", () => handlers.onChoose(tierId, opt.optionId));
-        }
-        picker.append(btn);
+    card.append(radio, giftImage((selectedOpt != null ? selectedOpt : defaultPick).imageUrl, productLabel), body);
+    return card;
+  }
+  function renderVariantChips(tierId, options, selectedOptionId, productLabel, handlers) {
+    const picker = document.createElement("div");
+    picker.className = "fge-variants";
+    picker.setAttribute("role", "group");
+    picker.setAttribute("aria-label", `Choose a ${productLabel} option`);
+    for (const opt of options) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "fge-variant";
+      btn.textContent = opt.variantLabel;
+      const isSel = opt.optionId === selectedOptionId;
+      if (isSel) btn.classList.add("is-selected");
+      btn.setAttribute("aria-pressed", String(isSel));
+      if (!opt.available) {
+        btn.disabled = true;
+        btn.classList.add("is-unavailable");
+      } else {
+        btn.addEventListener("click", () => handlers.onChoose(tierId, opt.optionId));
       }
-      wrap.append(picker);
+      picker.append(btn);
     }
-    return wrap;
+    return picker;
   }
   function renderOptionCard(tierId, opt, selected, handlers) {
     const available = opt.available;
@@ -807,12 +805,6 @@ cart-drawer .title--primary,
 .fge-gift__title{ margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.01em; }
 .fge-gift__hint{ margin:0; font-size:13px; color:var(--fge-muted); }
 
-/* A product group: the header card + (when selected) an inner variant picker, as one unit. */
-.fge-product{ margin:0 0 8px; }
-.fge-product > .fge-card{ margin:0; }
-.fge-product.is-selected > .fge-card{ border-bottom-left-radius:0; border-bottom-right-radius:0; }
-.fge-product.is-unavailable{ opacity:.55; }
-
 .fge-card{
   display:flex; align-items:center; gap:11px; width:100%; text-align:left;
   background:var(--fge-subtle); border:1.5px solid var(--fge-line);
@@ -832,14 +824,14 @@ cart-drawer .title--primary,
 .fge-card__status.is-unlocked{ color:var(--fge-ink); font-weight:700; }
 .fge-card__status.is-unavailable{ color:#8a8a8a; }
 
-/* Inner variant picker (Ice/Dawn, S/M/L) inside a selected product card \u2014 pill buttons. */
-.fge-variants{
-  display:flex; flex-wrap:wrap; gap:6px;
-  padding:9px 10px 10px; border:1.5px solid var(--fge-brand); border-top:0;
-  border-radius:0 0 var(--fge-card-radius) var(--fge-card-radius); background:#f0f0f0;
-}
+/* Variant chips (Ice/Dawn, S/M/L) INSIDE the card body, directly under the product title. A row of
+   small rounded pills. The theme forces block/full-width on buttons in the cart form, so display +
+   width are overridden with !important so each pill shrink-wraps its label (S / M / L). */
+.fge-variants{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
 .fge-variant{
-  font:inherit; font-size:12px; line-height:1; padding:6px 11px; cursor:pointer;
+  display:inline-flex !important; width:auto !important; flex:0 0 auto;
+  align-items:center; justify-content:center;
+  font:inherit; font-size:12px; line-height:1; padding:6px 11px; min-width:34px; cursor:pointer;
   background:#fff; color:var(--fge-ink); border:1.5px solid var(--fge-line); border-radius:999px;
 }
 .fge-variant.is-selected{ background:var(--fge-brand); color:#fff; border-color:var(--fge-brand); }

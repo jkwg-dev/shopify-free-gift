@@ -192,10 +192,12 @@ function giftImage(imageUrl: string | null | undefined, alt: string): HTMLElemen
   return ph;
 }
 
-// One PRODUCT as a card. A single-variant product is a plain card (no inner picker). A multi-variant
-// product (Ice/Dawn, S/M/L) is ONE card: selecting it picks a default variant, and a variant picker
-// inside the selected card switches between siblings (out-of-stock variants disabled). The chosen
-// variant flows into `choices` as that variant's optionId — identical wiring to single options.
+// One PRODUCT as a card. A single-variant product is a plain card (no chips). A multi-variant product
+// (Ice/Dawn, S/M/L) is ONE card whose TITLE is the PRODUCT name; selecting it picks a default variant,
+// and a row of variant chips INSIDE the card body (under the title) switches between siblings (OOS
+// variants disabled). The chosen variant flows into `choices` as that variant's optionId — identical
+// wiring to single options. The chips are <button>s: as interactive content inside the <label>, the
+// HTML spec says a click on them does NOT toggle the product radio, so they switch variant cleanly.
 function renderProductGroup(
   tierId: string,
   group: GiftProductGroup,
@@ -208,6 +210,7 @@ function renderProductGroup(
     return renderOptionCard(tierId, opt, opt.optionId === selectedOptionId, handlers);
   }
 
+  // Title is the PRODUCT name (variantLabel is the per-variant value chosen via the chips, not a title).
   const productLabel = options[0]?.productLabel ?? options[0]?.variantLabel ?? '';
   const selectedOpt = options.find((o) => o.optionId === selectedOptionId);
   const productSelected = selectedOpt !== undefined;
@@ -215,14 +218,10 @@ function renderProductGroup(
   // Selecting the product defaults to the currently-chosen variant, else the first available one.
   const defaultPick = selectedOpt ?? options.find((o) => o.available) ?? options[0]!;
 
-  const wrap = document.createElement('div');
-  wrap.className = 'fge-product';
-  if (!anyAvailable) wrap.classList.add('is-unavailable');
-
-  const head = document.createElement('label');
-  head.className = 'fge-card';
-  if (productSelected) head.classList.add('is-selected');
-  if (!anyAvailable) head.classList.add('is-unavailable');
+  const card = document.createElement('label');
+  card.className = 'fge-card';
+  if (productSelected) card.classList.add('is-selected');
+  if (!anyAvailable) card.classList.add('is-unavailable');
 
   const radio = document.createElement('input');
   radio.type = 'radio';
@@ -238,47 +237,56 @@ function renderProductGroup(
   const name = document.createElement('div');
   name.className = 'fge-card__name';
   name.textContent = productLabel;
-  const status = document.createElement('div');
-  status.className = 'fge-card__status';
-  if (!anyAvailable) {
-    status.classList.add('is-unavailable');
-    status.textContent = 'Currently unavailable';
-  } else if (productSelected) {
-    status.classList.add('is-unlocked');
-    status.textContent = `${selectedOpt.variantLabel} · added free`;
-  } else {
-    status.textContent = `Choose this gift · ${options.length} options`;
-  }
-  body.append(name, status);
-  head.append(radio, giftImage((selectedOpt ?? defaultPick).imageUrl, productLabel), body);
-  wrap.append(head);
+  body.append(name);
 
-  // Reveal the variant picker only once the product is selected (kept outside the <label> so a button
-  // click switches variant without toggling the product radio).
-  if (productSelected) {
-    const picker = document.createElement('div');
-    picker.className = 'fge-variants';
-    picker.setAttribute('role', 'group');
-    picker.setAttribute('aria-label', `Choose a ${productLabel} option`);
-    for (const opt of options) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'fge-variant';
-      btn.textContent = opt.variantLabel;
-      const isSel = opt.optionId === selectedOptionId;
-      if (isSel) btn.classList.add('is-selected');
-      btn.setAttribute('aria-pressed', String(isSel));
-      if (!opt.available) {
-        btn.disabled = true;
-        btn.classList.add('is-unavailable');
-      } else {
-        btn.addEventListener('click', () => handlers.onChoose(tierId, opt.optionId));
-      }
-      picker.append(btn);
-    }
-    wrap.append(picker);
+  if (!anyAvailable) {
+    const status = document.createElement('div');
+    status.className = 'fge-card__status is-unavailable';
+    status.textContent = 'Currently unavailable';
+    body.append(status);
+  } else if (productSelected) {
+    // Chips INSIDE the body, directly under the title (visible when this product is the selected radio).
+    body.append(renderVariantChips(tierId, options, selectedOptionId, productLabel, handlers));
+  } else {
+    const status = document.createElement('div');
+    status.className = 'fge-card__status';
+    status.textContent = `Choose this gift · ${options.length} options`;
+    body.append(status);
   }
-  return wrap;
+
+  card.append(radio, giftImage((selectedOpt ?? defaultPick).imageUrl, productLabel), body);
+  return card;
+}
+
+// The row of small variant pills (S / M / L) inside a selected product card.
+function renderVariantChips(
+  tierId: string,
+  options: readonly GiftOptionView[],
+  selectedOptionId: string | undefined,
+  productLabel: string,
+  handlers: ChooserHandlers,
+): HTMLElement {
+  const picker = document.createElement('div');
+  picker.className = 'fge-variants';
+  picker.setAttribute('role', 'group');
+  picker.setAttribute('aria-label', `Choose a ${productLabel} option`);
+  for (const opt of options) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fge-variant';
+    btn.textContent = opt.variantLabel;
+    const isSel = opt.optionId === selectedOptionId;
+    if (isSel) btn.classList.add('is-selected');
+    btn.setAttribute('aria-pressed', String(isSel));
+    if (!opt.available) {
+      btn.disabled = true;
+      btn.classList.add('is-unavailable');
+    } else {
+      btn.addEventListener('click', () => handlers.onChoose(tierId, opt.optionId));
+    }
+    picker.append(btn);
+  }
+  return picker;
 }
 
 // One selectable OR option as a card row: image + name + status, with a radio (auto-add on change).

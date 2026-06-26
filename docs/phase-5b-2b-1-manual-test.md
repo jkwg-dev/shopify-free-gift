@@ -191,3 +191,20 @@ Root causes fixed this round:
 | D1  | One "Your cart"        | Only the theme's drawer header "Your cart" shows; the duplicate H1.title--primary inside the drawer is hidden (cart PAGE title unaffected)                                |
 | X1  | Decline persists       | Unchecking "Add my free gift" removes the gift BUT the checkbox stays visible (with a note); re-checking re-adds the gift                                                 |
 | X2  | Toggle responsive      | The checkbox reflects its new state immediately on click even though the cart removal/re-add takes a moment (latency itself is 5b-2b-2)                                   |
+
+## Round 9 checks (product title; inline chips; chips inside the card)
+
+> IMPORTANT for V1: the product TITLE comes from `productLabel`, added to the /config response in
+> round 8 (server-side). That endpoint runs in the Next app (App Proxy on Vercel) — it must be
+> REDEPLOYED, not just `shopify app deploy` (which only ships the theme widget). Until the server is
+> redeployed, the widget falls back to the variant label ("S"). The widget code already prefers the
+> product title; this row verifies it after the server deploy.
+
+| #   | Check             | Expected                                                                                                                                                      |
+| --- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1  | Product title     | A grouped multi-variant card's title is the PRODUCT name (e.g. "The Collection Snowboard: Liquid"), NOT a variant ("S"). [needs the config server redeployed] |
+| V2  | Chips are pills   | The S/M/L chips are small inline rounded pills in a row (computed `display: inline-flex`, width auto) — not full-width blocks with broken borders             |
+| V3  | Chips inside card | The chips sit INSIDE the selected card's body, directly under the product title: [radio] [image] Product Name / (S M L). Not outside the card                 |
+| V4  | OOS chip          | An out-of-stock variant (Liquid L) is a disabled, struck-through pill; the card stays selectable if any sibling is in stock                                   |
+| V5  | Single-variant    | A single-variant product is still a plain card with no chips                                                                                                  |
+| V6  | Choice wiring     | Tapping a chip swaps the gift line + code (one optionId per tier), unchanged                                                                                  |
