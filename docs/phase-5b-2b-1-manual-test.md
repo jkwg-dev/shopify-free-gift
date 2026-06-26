@@ -140,3 +140,23 @@ Root causes fixed this round:
 | S5  | Top is compact | The top section is a slim row (~one small line + the bar); no big headline; cart line items below have clear visible space    |
 | S6  | Hierarchy      | "Your cart" (theme header) reads as the top; our row blends under it as progress                                              |
 | S7  | Cart usable    | Cart lines, subtotal, and checkout are visible/usable; the chooser scrolls internally (≤42vh) below the items                 |
+
+## Round 6 checks (theme :empty immunity; banner card; init-timing)
+
+> ROOT CAUSE (theme, not our CSS): Dawn's base.css has `div:empty{display:none}`. Our track, fill,
+> and tier dots are intentionally EMPTY divs, so the theme's `:empty` rule (it outranks a plain class)
+> hid them — only the text labels (non-empty) survived. The no-image card placeholder hit the same rule.
+> Fixed with a `display:block !important` immunity rule on those four selectors. Verify the COMPUTED
+> style (not just authored CSS): the bar/dots must read `display: block`, not `none`.
+
+| #   | Check          | Expected                                                                                                                                                                                  |
+| --- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E1  | Track computed | `.fge-stepper__track` computed `display` = block (grey line visible)                                                                                                                      |
+| E2  | Fill computed  | `.fge-stepper__fill` computed `display` = block; black, overlaps the track from the left, width = reached %                                                                               |
+| E3  | Dots computed  | `.fge-step__dot` computed `display` = block; a circle at EACH tier (CA$500 / CA$1,000 / CA$1,500)                                                                                         |
+| E4  | Dot states     | Reached/current = solid black (current has a soft ring); not-yet-reached = white w/ grey outline                                                                                          |
+| E5  | No-image card  | An OR option with no image still shows its placeholder box (not collapsed by `:empty`)                                                                                                    |
+| B1  | Banner card    | The progress section is a subtle outlined card (1px border, light `#fafafa` fill, 12px radius, no heavy shadow)                                                                           |
+| B2  | Headline       | "Spend CA$X more to unlock <gift>" (or "You've unlocked…" at top tier); NOT "Your cart" (that's the theme's header above ours)                                                            |
+| B3  | Height         | The card has room for headline + bar + dots + labels (bar area 16px, dots 14px); nothing clipped                                                                                          |
+| T1  | No tier flash  | On fresh drawer open the banner shows "Checking your cart…" (neutral), then snaps to the real tier once /validate resolves — it must NOT briefly show a wrong lower tier ("Reach CA$500") |

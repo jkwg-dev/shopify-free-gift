@@ -34,6 +34,10 @@ export type ProgressModel = {
   readonly tiers: readonly ProgressTierView[];
   readonly next: ProgressNext | null; // lowest unreached tier, or null when all reached
   readonly allUnlocked: boolean;
+  // True until /validate confirms a result (no result yet). While pending we show a NEUTRAL headline,
+  // never a specific lower tier — otherwise a cart that already qualifies for tier 2/3 flashes "Reach
+  // CA$500" on open before the server resolves. Distinct from a confirmed below-tier-1 (lastResult set).
+  readonly pending: boolean;
 };
 
 type ActiveConfig = Extract<CampaignConfigResponse, { status: 'active' }>;
@@ -94,6 +98,7 @@ export function buildProgressModel(
     tiers,
     next,
     allUnlocked: next === null && tiers.length > 0,
+    pending: lastResult === null, // no server result yet → neutral headline (see ProgressModel)
   };
 }
 
@@ -159,12 +164,14 @@ export function renderProgress(mount: HTMLElement, model: ProgressModel | null):
     return;
   }
 
-  // Compact single line (no eyebrow, no big headline) so it blends UNDER the theme's "Your cart"
-  // header as a slim progress row rather than competing with it.
+  // One headline line inside the banner. While PENDING (no server result yet) show a neutral state,
+  // never a specific lower tier — a cart that already qualifies must not flash "Reach CA$500" on open.
   const headline = document.createElement('p');
   headline.className = 'fge-headline';
-  if (model.allUnlocked) {
-    headline.textContent = 'Free gift unlocked';
+  if (model.pending) {
+    headline.textContent = 'Checking your cart…';
+  } else if (model.allUnlocked) {
+    headline.textContent = 'You’ve unlocked your free gift';
   } else if (model.next !== null) {
     const amt = document.createElement('span');
     amt.className = 'fge-amt';

@@ -134,11 +134,19 @@ describe('buildProgressModel', () => {
     expect(m.next?.threshold).toEqual(money(50000, 'CAD'));
   });
 
-  it('null lastResult (initial load): ladder shown, next=tier1, no reached', () => {
+  it('null lastResult (initial load): ladder shown, next=tier1, no reached, PENDING', () => {
     const m = buildProgressModel(config, null)!;
     expect(m.subtotal).toBeNull();
     expect(m.next?.tierId).toBe('t1');
     expect(m.allUnlocked).toBe(false);
+    expect(m.pending).toBe(true); // no server result yet → neutral headline, not a wrong lower tier
+  });
+
+  it('pending is false once a result is confirmed (gift OR below-threshold)', () => {
+    expect(buildProgressModel(config, gift('t1', 60000))!.pending).toBe(false);
+    expect(
+      buildProgressModel(config, { status: 'no-gift', reason: 'below-threshold' })!.pending,
+    ).toBe(false);
   });
 });
 

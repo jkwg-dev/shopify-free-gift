@@ -455,7 +455,9 @@
       subtotal,
       tiers,
       next,
-      allUnlocked: next === null && tiers.length > 0
+      allUnlocked: next === null && tiers.length > 0,
+      pending: lastResult2 === null
+      // no server result yet → neutral headline (see ProgressModel)
     };
   }
   var major = (m) => {
@@ -499,8 +501,10 @@
     }
     const headline = document.createElement("p");
     headline.className = "fge-headline";
-    if (model.allUnlocked) {
-      headline.textContent = "Free gift unlocked";
+    if (model.pending) {
+      headline.textContent = "Checking your cart\u2026";
+    } else if (model.allUnlocked) {
+      headline.textContent = "You\u2019ve unlocked your free gift";
     } else if (model.next !== null) {
       const amt = document.createElement("span");
       amt.className = "fge-amt";
@@ -587,30 +591,33 @@
 }
 .fge *{ box-sizing:border-box; }
 
-/* --- top: COMPACT progress row (blended, no box/shadow). Deliberately slim: one small headline +
-   a visible bar, so the cart items below keep real space and the theme's own "Your cart" header
-   stays the top of the drawer. No eyebrow, no big headline competing with it. --- */
-.fge-stepper-wrap{ padding:4px 2px 2px; color:var(--fge-ink); }
+/* --- top: a compact BANNER CARD (subtle outline + light fill, no heavy shadow). The headline is
+   only "Spend CA$X more to unlock <gift>" (or "You've unlocked\u2026"); the theme's own "Your cart" drawer
+   header sits separately above and is NOT restated here. Kept slim so cart items below keep space. --- */
+.fge-stepper-wrap{
+  margin:6px 0 4px; padding:11px 14px 8px; color:var(--fge-ink);
+  border:1px solid var(--fge-line); border-radius:12px; background-color:#fafafa;
+}
 
-.fge-headline{ margin:0 0 2px; font-size:12px; font-weight:600; color:var(--fge-ink); }
+.fge-headline{ margin:0 0 2px; font-size:12.5px; font-weight:600; color:var(--fge-ink); }
 .fge-headline .fge-amt{ color:var(--fge-brand-strong); font-weight:750; }
 .fge-subnote{ margin:6px 0 0; font-size:10px; line-height:1.3; color:var(--fge-muted); }
 
 /* --- the progress stepper: a clearly visible slim bar. Explicit px geometry (NOT inset:0 + parent
-   height) so the track/fill/dots render reliably regardless of the host theme's resets. The bar area
-   is 14px tall; the track is a 4px line centred in it; dots (12px) sit on the track; labels hang below. */
-.fge-stepper{ position:relative; height:14px; margin:10px 6px 26px; }
+   height) so the track/fill/dots render reliably regardless of the host theme's resets. Bar area 16px;
+   a 4px track centred in it; a 14px dot per tier on the track; labels hang below (room via margin). */
+.fge-stepper{ position:relative; height:16px; margin:14px 8px 30px; }
 .fge-stepper__track{
-  position:absolute; left:0; right:0; top:5px; height:4px;
+  position:absolute; left:0; right:0; top:6px; height:4px;
   background-color:var(--fge-line); border-radius:999px;
 }
 .fge-stepper__fill{
-  position:absolute; left:0; top:5px; height:4px; min-width:0;
+  position:absolute; left:0; top:6px; height:4px; min-width:0;
   background-color:var(--fge-brand); border-radius:999px; transition:width .35s ease;
 }
-.fge-step{ position:absolute; top:7px; transform:translate(-50%,-50%); }
+.fge-step{ position:absolute; top:8px; transform:translate(-50%,-50%); }
 .fge-step__dot{
-  width:12px; height:12px; border-radius:50%; display:block;
+  width:14px; height:14px; border-radius:50%;
   background-color:#ffffff; border:2px solid var(--fge-line);
 }
 .fge-step.is-reached .fge-step__dot{
@@ -621,13 +628,21 @@
   box-shadow:0 0 0 4px rgba(17,17,17,.16);
 }
 .fge-step__label{
-  position:absolute; top:13px; left:50%; transform:translateX(-50%);
+  position:absolute; top:16px; left:50%; transform:translateX(-50%);
   white-space:nowrap; font-size:10.5px; font-weight:600; color:var(--fge-muted);
 }
 /* Edge-aware label alignment so the first/last labels stay inside the track (no right-edge clip). */
 .fge-step--start .fge-step__label{ left:0; transform:none; text-align:left; }
 .fge-step--end .fge-step__label{ left:auto; right:0; transform:none; text-align:right; }
 .fge-step.is-reached .fge-step__label{ color:var(--fge-brand-strong); }
+
+/* THEME-OVERRIDE: Dawn's base.css hides empty block elements (div:empty{display:none}). Our bar, its
+   fill, each tier dot, and the no-image card placeholder are intentionally EMPTY visual divs \u2014 without
+   this they vanish and only the text labels survive. !important beats the theme's :empty rule. */
+.fge-stepper__track,
+.fge-stepper__fill,
+.fge-step__dot,
+.fge-card__img{ display:block !important; }
 
 /* --- gift panel (below the cart items; capped so a tall OR tier doesn't push checkout off-screen) --- */
 .fge-gift{
