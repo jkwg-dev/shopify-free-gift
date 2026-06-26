@@ -70,7 +70,7 @@ class FakeCart {
 function makeIo(
   cart: FakeCart,
   result: () => ValidateResult | null,
-  opts: { add422?: Set<string>; discounts?: string[] } = {},
+  opts: { add422?: Set<string>; discounts?: string[]; swallowAdds?: boolean } = {},
 ): GiftCartIo & { posts: { path: string; body: unknown }[] } {
   const posts: { path: string; body: unknown }[] = [];
   const post: CartPost = (path, body) => {
@@ -81,7 +81,9 @@ function makeIo(
       ).items;
       const blocked = items.find((it) => opts.add422?.has(gidOf(it.id)));
       if (blocked) return Promise.resolve(res(false, 422, 'not published'));
-      for (const it of items) cart.add(gidOf(it.id), it.quantity, it.properties);
+      // swallowAdds models add-merge LAG: the add "succeeds" but is not yet visible on the next read.
+      if (!opts.swallowAdds)
+        for (const it of items) cart.add(gidOf(it.id), it.quantity, it.properties);
       return Promise.resolve(res(true));
     }
     if (path === 'cart/change.js') {
@@ -174,6 +176,41 @@ describe('reconcileGiftCart — BUG 1: no stacking, converges to one line @ qty 
     await reconcileGiftCart(io);
 
     expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 });
+  });
+
+  it('issues the gift add at most ONCE per run even under add-merge lag (no add/fix churn)', async () => {
+    // The add "succeeds" but is not yet visible on subsequent reads (swallowAdds). Without the
+    // once-per-run guard the loop would re-add each pass (-> Shopify merges/splits -> visible churn).
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 3);
+    const io = makeIo(cart, () => giftResult([ICE], 'CODE-ICE'), { swallowAdds: true });
+
+    const outcome = await reconcileGiftCart(io, { maxPasses: 4 });
+
+    expect(io.posts.filter((p) => p.path === 'cart/add.js')).toHaveLength(1); // exactly one add
+    expect(outcome.converged).toBe(true); // stops re-adding once attempted (not maxPasses)
+  });
+});
+
+describe('reconcileGiftCart — never resets a non-gift line (regression)', () => {
+  it('leaves the qualifying (non-gift) line at qty 6 untouched through the whole loop', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 6); // qualifying product, no _fge_gift, qty 6
+    const io = makeIo(cart, () => giftResult([ICE], 'CODE-ICE'));
+
+    await reconcileGiftCart(io);
+    await reconcileGiftCart(io); // run twice
+
+    const paid = cart.lines.find((l) => l.variantId === PAID && !l.appAdded);
+    expect(paid?.quantity).toBe(6); // never reset
+    // no cart/change.js ever targeted the paid line's key
+    const paidKey = paid!.key;
+    expect(
+      io.posts.some(
+        (p) => p.path === 'cart/change.js' && (p.body as { id: string }).id === paidKey,
+      ),
+    ).toBe(false);
+    expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 }); // gift added correctly, separate line
   });
 });
 

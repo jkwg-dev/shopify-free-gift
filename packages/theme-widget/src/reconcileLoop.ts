@@ -37,7 +37,11 @@ export async function reconcileGiftCart(
 ): Promise<ReconcileOutcome> {
   const maxPasses = opts.maxPasses ?? 4;
   let appliedCode: string | null = opts.initialCode ?? null;
-  const blockedAdds = new Set<string>(); // variants that failed to add this run — don't retry (no flap)
+  // Each desired gift variant is ADDED at most once per run. This is what stops the visible churn:
+  // if a just-added gift isn't yet reflected in the next pass's read (add-merge lag), we DON'T issue
+  // a second add (which Shopify would merge/split into qty 2 then we'd collapse back) — we simply wait
+  // for it to appear. Also covers a failed add (e.g. 422): attempted once, not retried -> no flap.
+  const addAttempted = new Set<string>();
   const failures: CartMutationFailure[] = [];
 
   for (let pass = 1; pass <= maxPasses; pass += 1) {
@@ -48,7 +52,7 @@ export async function reconcileGiftCart(
     }
 
     const plan = reconcileGiftLines(lines, result);
-    const add = plan.add.filter((a) => !blockedAdds.has(a.variantId));
+    const add = plan.add.filter((a) => !addAttempted.has(a.variantId));
     const cartNeedsChange = add.length > 0 || plan.remove.length > 0 || plan.adjust.length > 0;
     const codeNeedsChange = plan.applyCode !== appliedCode;
 
@@ -57,13 +61,11 @@ export async function reconcileGiftCart(
     }
 
     if (cartNeedsChange) {
-      const res = await applyCartPlan({ ...plan, add }, io.post);
-      for (const f of res.failures) {
-        failures.push(f);
-        if (f.kind === 'add') {
-          blockedAdds.add(f.variantId); // unaddable (e.g. 422) — stop retrying it this run
-        }
+      for (const a of add) {
+        addAttempted.add(a.variantId); // add this variant at most once per run (no re-add churn)
       }
+      const res = await applyCartPlan({ ...plan, add }, io.post);
+      failures.push(...res.failures);
     }
     if (codeNeedsChange) {
       await io.setDiscount(plan.applyCode);

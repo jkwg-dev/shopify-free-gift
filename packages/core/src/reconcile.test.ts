@@ -93,6 +93,40 @@ describe('reconcileGiftLines — idempotency', () => {
   });
 });
 
+describe('reconcileGiftLines — NEVER touches a non-gift line (regression guard)', () => {
+  it('leaves a non-gift line at qty 6 completely untouched while still normalizing a gift line', () => {
+    // The qualifying product (no _fge_gift) at qty 6 must NEVER be adjusted/removed; a stacked gift
+    // line (qty 2) is still normalized to 1. Quantity-fix applies ONLY to app-added gift lines.
+    const cart: CartLineView[] = [
+      { id: 'hyd', variantId: PAID, quantity: 6, appAdded: false }, // qualifying, qty 6
+      { id: 'g1', variantId: ICE, quantity: 2, appAdded: true }, // gift, bumped
+    ];
+    const r = reconcileGiftLines(cart, gift([ICE]));
+
+    // the non-gift line never appears in ANY mutation
+    expect([...r.remove, ...r.adjust].some((x) => x.variantId === PAID)).toBe(false);
+    expect(r.add.some((a) => a.variantId === PAID)).toBe(false);
+    expect(r.remove.some((x) => x.id === 'hyd')).toBe(false);
+    expect(r.adjust.some((x) => x.id === 'hyd')).toBe(false);
+    // the gift line is normalized to qty 1
+    expect(r.adjust).toEqual([{ id: 'g1', variantId: ICE, quantity: 1 }]);
+  });
+
+  it('even when the SAME variant exists as both a paid line (qty 6) and the desired gift, only the gift line is normalized', () => {
+    // Pathological config (a variant that is both qualifying-purchased AND a gift): the paid line is
+    // still never touched; the gift line (app-added) is the only one normalized.
+    const cart: CartLineView[] = [
+      { id: 'paidICE', variantId: ICE, quantity: 6, appAdded: false }, // paid, qty 6 — must stay
+      { id: 'giftICE', variantId: ICE, quantity: 3, appAdded: true }, // app-added gift, bumped
+    ];
+    const r = reconcileGiftLines(cart, gift([ICE]));
+    expect(r.remove.some((x) => x.id === 'paidICE')).toBe(false);
+    expect(r.adjust.some((x) => x.id === 'paidICE')).toBe(false);
+    expect(r.adjust).toEqual([{ id: 'giftICE', variantId: ICE, quantity: 1 }]); // only the gift
+    expect(r.add).toEqual([]); // gift already present (app-added)
+  });
+});
+
 describe('reconcileGiftLines — normalization (BUG 1: no stacking / no qty bump)', () => {
   it('collapses a bumped gift quantity back to exactly 1 (does NOT re-add)', () => {
     // A rapid double-add bumped the gift line to qty 2; reconcile must fix it to 1, not add more.

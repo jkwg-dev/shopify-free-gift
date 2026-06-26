@@ -278,7 +278,7 @@
     var _a2, _b2, _c2;
     const maxPasses = (_a2 = opts.maxPasses) != null ? _a2 : 4;
     let appliedCode = (_b2 = opts.initialCode) != null ? _b2 : null;
-    const blockedAdds = /* @__PURE__ */ new Set();
+    const addAttempted = /* @__PURE__ */ new Set();
     const failures = [];
     for (let pass = 1; pass <= maxPasses; pass += 1) {
       const { lines, currency } = await io.readCart();
@@ -287,20 +287,18 @@
         return { passes: pass, converged: false, appliedCode, failures };
       }
       const plan = reconcileGiftLines(lines, result);
-      const add = plan.add.filter((a) => !blockedAdds.has(a.variantId));
+      const add = plan.add.filter((a) => !addAttempted.has(a.variantId));
       const cartNeedsChange = add.length > 0 || plan.remove.length > 0 || plan.adjust.length > 0;
       const codeNeedsChange = plan.applyCode !== appliedCode;
       if (!cartNeedsChange && !codeNeedsChange) {
         return { passes: pass, converged: true, appliedCode, failures };
       }
       if (cartNeedsChange) {
-        const res = await applyCartPlan({ ...plan, add }, io.post);
-        for (const f of res.failures) {
-          failures.push(f);
-          if (f.kind === "add") {
-            blockedAdds.add(f.variantId);
-          }
+        for (const a of add) {
+          addAttempted.add(a.variantId);
         }
+        const res = await applyCartPlan({ ...plan, add }, io.post);
+        failures.push(...res.failures);
       }
       if (codeNeedsChange) {
         await io.setDiscount(plan.applyCode);
