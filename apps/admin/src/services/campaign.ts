@@ -59,6 +59,10 @@ function toNewCampaignInput(input: CampaignInputDTO, hash: string): NewCampaignI
   };
 }
 
+export function campaignToResponse(campaign: Campaign): CampaignResponse {
+  return toResponse(campaign);
+}
+
 function toResponse(campaign: Campaign): CampaignResponse {
   return {
     id: campaign.id,

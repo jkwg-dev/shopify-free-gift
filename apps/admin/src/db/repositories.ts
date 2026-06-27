@@ -203,6 +203,20 @@ export class PrismaCampaignRepository implements CampaignRepository {
   async updateConfigVersionHash(id: string, configVersionHash: string): Promise<void> {
     await this.prisma.campaign.update({ where: { id }, data: { configVersionHash } });
   }
+
+  async setActive(id: string, active: boolean): Promise<void> {
+    await this.prisma.campaign.update({ where: { id }, data: { active } });
+  }
+
+  async findActiveByShop(shopId: string): Promise<Campaign | null> {
+    // The ≤ 1-active invariant means at most one row matches; take the first defensively.
+    const rows = await this.prisma.campaign.findMany({
+      where: { shopId, active: true },
+      include: campaignInclude,
+    });
+    const row = rows[0];
+    return row === undefined ? null : toCampaign(row);
+  }
 }
 
 export class PrismaGiftCodeMappingTable implements GiftCodeMappingTable {

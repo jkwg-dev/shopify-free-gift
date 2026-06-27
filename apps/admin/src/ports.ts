@@ -39,6 +39,11 @@ export interface CampaignRepository {
   findById(id: string): Promise<Campaign | null>;
   listByShop(shopId: string): Promise<readonly Campaign[]>;
   updateConfigVersionHash(id: string, configVersionHash: string): Promise<void>;
+  // Flip the activation boolean (Phase 3c). create/update never touch `active`; this is the only
+  // supported activation path. Mutual exclusion (≤ 1 active) is enforced by the caller.
+  setActive(id: string, active: boolean): Promise<void>;
+  // The single active FGE campaign for a shop (or null). Used to enforce mutual exclusion at activate.
+  findActiveByShop(shopId: string): Promise<Campaign | null>;
 }
 
 // --- Gift-code mapping (low-level table the store arbitrates over) -------------------------------

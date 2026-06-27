@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiError } from '../contract.js';
 import { SessionTokenError } from '../security/sessionToken.js';
+import { AnotherCampaignActiveError } from '../services/activation.js';
 import { CampaignValidationError } from '../services/campaign.js';
 import { ActiveCampaignNotEditableError, CampaignConfigError } from './campaignValidation.js';
 import { EditorParseError } from './editorMapping.js';
@@ -40,6 +41,12 @@ describe('toErrorResponse', () => {
 
   it('maps editing an active campaign to 400 VALIDATION', async () => {
     const res = toErrorResponse(new ActiveCampaignNotEditableError('c1'));
+    expect(res.status).toBe(400);
+    expect((await body(res)).error.code).toBe('VALIDATION');
+  });
+
+  it('maps activating while another is active to 400 VALIDATION', async () => {
+    const res = toErrorResponse(new AnotherCampaignActiveError('c2', 'Smoke Test'));
     expect(res.status).toBe(400);
     expect((await body(res)).error.code).toBe('VALIDATION');
   });

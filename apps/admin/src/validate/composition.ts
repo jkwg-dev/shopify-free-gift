@@ -45,6 +45,7 @@ import {
   PrismaShopRepository,
 } from '../db/repositories.js';
 import { ShopifyDiscountGatewayAdapter } from '../gateways/shopifyDiscountGateway.js';
+import { activateCampaign, deactivateCampaign } from '../services/activation.js';
 import {
   createCampaign,
   getCampaign,
@@ -372,6 +373,36 @@ export async function updateCampaignDraft(
   }
   const dto = editorInputToCampaignInput(input); // may throw EditorParseError
   return updateCampaign(campaignId, dto, deps);
+}
+
+// --- embedded admin: activation (Phase 3c Stage C1, flip-only) -----------------------------------
+
+// Activate a campaign for a (session-verified) shop. Ownership-checked (null -> 404). Throws
+// AnotherCampaignActiveError when a different FGE campaign is active (Stage C1 rejects; C3 swaps).
+export async function activateCampaignForDomain(
+  shopDomain: string,
+  campaignId: string,
+): Promise<CampaignResponse | null> {
+  const shop = await shopRepo().findByDomain(shopDomain);
+  if (shop === null) {
+    return null;
+  }
+  return activateCampaign(shop.id, campaignId, {
+    campaignRepo: new PrismaCampaignRepository(prismaLike()),
+  });
+}
+
+export async function deactivateCampaignForDomain(
+  shopDomain: string,
+  campaignId: string,
+): Promise<CampaignResponse | null> {
+  const shop = await shopRepo().findByDomain(shopDomain);
+  if (shop === null) {
+    return null;
+  }
+  return deactivateCampaign(shop.id, campaignId, {
+    campaignRepo: new PrismaCampaignRepository(prismaLike()),
+  });
 }
 
 // --- /config (read-only campaign structure for the perception UI) --------------------------------

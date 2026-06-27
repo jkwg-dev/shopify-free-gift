@@ -212,6 +212,20 @@ export class FakeCampaignRepository implements CampaignRepository {
     return Promise.resolve();
   }
 
+  setActive(id: string, active: boolean): Promise<void> {
+    const existing = this.store.get(id);
+    if (existing !== undefined) {
+      this.store.set(id, { ...existing, active });
+    }
+    return Promise.resolve();
+  }
+
+  findActiveByShop(shopId: string): Promise<Campaign | null> {
+    return Promise.resolve(
+      [...this.store.values()].find((c) => c.shopId === shopId && c.active) ?? null,
+    );
+  }
+
   private materialize(id: string, shopId: string, input: NewCampaignInput): Campaign {
     return {
       id,

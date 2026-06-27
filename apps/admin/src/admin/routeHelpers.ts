@@ -5,6 +5,7 @@
 import type { ApiError } from '../contract.js';
 import { SessionTokenError } from '../security/sessionToken.js';
 import { getAdminSessionConfig } from '../validate/composition.js';
+import { AnotherCampaignActiveError } from '../services/activation.js';
 import { CampaignValidationError } from '../services/campaign.js';
 import { ActiveCampaignNotEditableError, CampaignConfigError } from './campaignValidation.js';
 import { EditorParseError } from './editorMapping.js';
@@ -44,6 +45,9 @@ export function toErrorResponse(err: unknown): Response {
     return apiError(400, 'VALIDATION', err.message, err.invalidVariantIds);
   }
   if (err instanceof ActiveCampaignNotEditableError) {
+    return apiError(400, 'VALIDATION', err.message);
+  }
+  if (err instanceof AnotherCampaignActiveError) {
     return apiError(400, 'VALIDATION', err.message);
   }
   throw err;
