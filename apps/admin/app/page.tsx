@@ -27,5 +27,8 @@ export default async function Page({
   if (entry.kind === 'bad-request' || shop === null) {
     return <main style={{ padding: 24 }}>{entry.body}</main>;
   }
-  return <AdminApp />;
+  // The editor enters thresholds in the shop's single BASE currency (multi-currency is FX-converted on
+  // a separate track). Read it server-side and pass it down so the client never guesses the currency.
+  const baseCurrency = process.env['SHOPIFY_BASE_CURRENCY'] ?? 'CAD';
+  return <AdminApp baseCurrency={baseCurrency} />;
 }

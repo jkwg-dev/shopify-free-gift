@@ -288,19 +288,32 @@ function variantLabel(meta: { productTitle: string; variantTitle: string }): str
     : `${meta.productTitle} – ${meta.variantTitle}`;
 }
 
-// Resolve display titles for a campaign's gift variants (best-effort; a deleted variant is omitted
-// and the view falls back to its id). Uses fetchVariantMeta, which does NOT throw on dead variants.
+// Resolve gift variant GIDs to display labels (best-effort; a deleted/unresolvable variant is simply
+// omitted so the caller can fall back to the id). Uses fetchVariantMeta, which does NOT throw on dead
+// variants. This is the ONE label source — both the editor's variant picker (via /api/admin/
+// variant-labels) and the edit view use it, so picker-added and edit-loaded labels always match.
+export async function resolveVariantLabels(
+  shopDomain: string,
+  variantIds: readonly string[],
+): Promise<Record<string, string>> {
+  if (variantIds.length === 0) {
+    return {};
+  }
+  const client = await adminClientForShop(shopDomain);
+  const meta = await fetchVariantMeta(client, variantIds);
+  const labels: Record<string, string> = {};
+  for (const m of meta) {
+    labels[m.id] = variantLabel(m);
+  }
+  return labels;
+}
+
 async function giftVariantTitles(
   shopDomain: string,
   campaign: CampaignResponse,
 ): Promise<Map<string, string>> {
-  const ids = giftVariantIdsOfCampaign(campaign);
-  if (ids.length === 0) {
-    return new Map();
-  }
-  const client = await adminClientForShop(shopDomain);
-  const meta = await fetchVariantMeta(client, ids);
-  return new Map(meta.map((m) => [m.id, variantLabel(m)]));
+  const labels = await resolveVariantLabels(shopDomain, giftVariantIdsOfCampaign(campaign));
+  return new Map(Object.entries(labels));
 }
 
 // Create an inactive draft campaign for a (session-verified) shop. The service validates shape +

@@ -727,12 +727,16 @@
       return `${m.amountMinor} ${m.currency}`;
     }
   }
-  var STEPPER_FILL_MAX = 2e3;
+  var STEPPER_HEADROOM = 4 / 3;
+  var STEPPER_FALLBACK_MAX = 1;
   function stepperLayout(model) {
+    var _a2;
     const ordered = [...model.tiers].sort(
       (a, b) => a.threshold.amountMinor - b.threshold.amountMinor
     );
-    const pct = (m) => Math.max(0, Math.min(100, major(m) / STEPPER_FILL_MAX * 100));
+    const highest = (_a2 = ordered[ordered.length - 1]) == null ? void 0 : _a2.threshold;
+    const fillMax = highest !== void 0 && major(highest) > 0 ? major(highest) * STEPPER_HEADROOM : STEPPER_FALLBACK_MAX;
+    const pct = (m) => Math.max(0, Math.min(100, major(m) / fillMax * 100));
     const fillPct = model.subtotal === null ? 0 : pct(model.subtotal);
     const nodes = ordered.map((t) => {
       const posPct = pct(t.threshold);

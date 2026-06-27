@@ -162,11 +162,42 @@ describe('buildProgressModel', () => {
   });
 });
 
-describe('stepperLayout (linear 0–2000 fill, pure)', () => {
-  it('nodes sit at threshold / 2000 (CA$500/1000/1500 -> 25/50/75%), labels centered', () => {
+describe('stepperLayout (linear auto-scaled fill, pure)', () => {
+  it('nodes sit at threshold / (highest x 4/3) — CA$500/1000/1500 over max 2000 -> 25/50/75%', () => {
     const { nodes } = stepperLayout(buildProgressModel(config, gift('t1', 60000))!);
-    expect(nodes.map((n) => Math.round(n.posPct))).toEqual([25, 50, 75]); // headroom past 75% to $2000
+    expect(nodes.map((n) => Math.round(n.posPct))).toEqual([25, 50, 75]); // top tier at 75%, 25% headroom
     expect(nodes.map((n) => n.align)).toEqual(['center', 'center', 'center']);
+  });
+
+  it('auto-scales to ANY tier amounts: a 400/800/1200 campaign still lands 25/50/75% (max 1600)', () => {
+    const scaled: CampaignConfigResponse = {
+      status: 'active',
+      currency: 'CAD',
+      declineEnabled: true,
+      tiers: [
+        {
+          tierId: 'a',
+          position: 1,
+          threshold: money(40000, 'CAD'),
+          gift: config.status === 'active' ? config.tiers[0]!.gift : ({} as never),
+        },
+        {
+          tierId: 'b',
+          position: 2,
+          threshold: money(80000, 'CAD'),
+          gift: config.status === 'active' ? config.tiers[0]!.gift : ({} as never),
+        },
+        {
+          tierId: 'c',
+          position: 3,
+          threshold: money(120000, 'CAD'),
+          gift: config.status === 'active' ? config.tiers[0]!.gift : ({} as never),
+        },
+      ],
+    };
+    const { fillPct, nodes } = stepperLayout(buildProgressModel(scaled, gift('c', 120000))!);
+    expect(nodes.map((n) => Math.round(n.posPct))).toEqual([25, 50, 75]);
+    expect(fillPct).toBe(75); // subtotal at the top tier (CA$1200) -> 1200 / 1600 = 75%
   });
 
   it('fill is subtotal / 2000: CA$250 -> 12.5% (partially filled below tier 1)', () => {

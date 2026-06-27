@@ -3,14 +3,11 @@
 // authenticated fetch so every embedded screen uses one helper — and so the Window augmentation is
 // declared exactly ONCE (declaring it per-component would clash). Runs client-side only.
 
-// The subset of the resource-picker result we read. A picked variant carries its GID and a label
-// (displayName is "Product - Variant"); other fields are ignored.
-type PickedResource = {
-  readonly id: string;
-  readonly title?: string;
-  readonly displayName?: string;
-  readonly product?: { readonly title?: string };
-};
+// The resource-picker variant payload only guarantees the GID; its label fields are inconsistent
+// (e.g. blank/"Default Title" for single-variant products), so we read just `id` and resolve the
+// display label server-side (resolveVariantLabels) — the same fetchVariantMeta path the edit view
+// uses, so picker-added and edit-loaded labels always match.
+type PickedResource = { readonly id: string };
 
 type ResourcePickerOptions = {
   readonly type: 'product' | 'variant' | 'collection';
@@ -31,8 +28,6 @@ declare global {
   }
 }
 
-export type PickedVariant = { readonly variantId: string; readonly title: string };
-
 function bridge(): AppBridge {
   const b = window.shopify;
   if (b === undefined) {
@@ -41,27 +36,14 @@ function bridge(): AppBridge {
   return b;
 }
 
-function variantLabel(r: PickedResource): string {
-  if (r.displayName !== undefined && r.displayName.length > 0) {
-    return r.displayName;
-  }
-  if (r.product?.title !== undefined && r.title !== undefined) {
-    return `${r.product.title} – ${r.title}`;
-  }
-  return r.title ?? r.id;
-}
-
-// Open the variant resource picker; returns the picked variants ([] if cancelled).
-export async function pickVariants(): Promise<PickedVariant[]> {
+// Open the variant resource picker; returns the picked variant GIDs ([] if cancelled).
+export async function pickVariantIds(): Promise<string[]> {
   const selected = await bridge().resourcePicker({
     type: 'variant',
     multiple: true,
     action: 'select',
   });
-  if (selected === undefined) {
-    return [];
-  }
-  return selected.map((r) => ({ variantId: r.id, title: variantLabel(r) }));
+  return selected === undefined ? [] : selected.map((r) => r.id);
 }
 
 // fetch() with the App Bridge session token attached as a Bearer header (the embedded admin's JWT
@@ -85,4 +67,22 @@ export async function authedFetch(path: string, init: RequestInit = {}): Promise
     throw new Error(message);
   }
   return res;
+}
+
+// Resolve gift variant GIDs to their display labels ("Product — Variant", or just "Product" for a
+// single-variant product) via the JWT-authed admin endpoint. Authoritative + consistent with the
+// edit view; falls back to the GID for any id the server couldn't resolve.
+export async function resolveVariantLabels(
+  ids: readonly string[],
+): Promise<Record<string, string>> {
+  if (ids.length === 0) {
+    return {};
+  }
+  const res = await authedFetch('/api/admin/variant-labels', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ variantIds: ids }),
+  });
+  const data = (await res.json()) as { labels: Record<string, string> };
+  return data.labels;
 }

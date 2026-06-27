@@ -349,6 +349,13 @@ Anchor map (drawer → /cart page): `.drawer__header` → `h1.title--primary`; `
 ## Round 18 checks (subtotal-proportional fill, fixed 0–2000 scale)
 
 > Redeploy the theme widget. STEPPER_FILL_MAX = 2000 (presentment major units, e.g. CA$).
+>
+> **SUPERSEDED (3b refinement):** the fixed `STEPPER_FILL_MAX = 2000` is now AUTO-DERIVED as
+> `highest tier threshold × STEPPER_HEADROOM` (4/3 ≈ 1.33), so the top tier always lands at ~75% with
+> ~25% headroom for ANY tier amounts. The linear absolute-amount fill model below is unchanged; only
+> the max is derived. For the CA$500/1000/1500 campaign the derived max is still exactly 2000, so all
+> W1–W6 numbers below still hold. Needs a theme `free-gift.js` redeploy; no `/config` change (the
+> widget already reads tier thresholds).
 
 | #   | Check                | Expected                                                                                                     |
 | --- | -------------------- | ------------------------------------------------------------------------------------------------------------ |

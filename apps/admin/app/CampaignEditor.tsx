@@ -1,11 +1,12 @@
 'use client';
 
 // Campaign + tier editor (Phase 3b Stage B). Creates or edits an INACTIVE draft — there is no
-// activate/provision here (Stage C). Speaks the editor wire shape (decimal amount strings); the
-// server applies the currency exponent and validates. Suppression is fixed to highest-tier-only and
-// shown read-only. Gift variants are chosen with the App Bridge variant resource picker. Saving POSTs
-// (create) or PUTs (edit) with the App Bridge session token; the server is the source of truth for
-// validation, so this surfaces server errors rather than duplicating the rules.
+// activate/provision here (Stage C). Each tier has ONE threshold in the shop's BASE currency (the
+// multi-currency FX track is separate); the server applies the currency exponent and validates.
+// Suppression is fixed to highest-tier-only and shown read-only. Gift variants are chosen with the
+// App Bridge variant resource picker, and their display labels are resolved server-side (so they
+// match the edit view). Saving POSTs (create) or PUTs (edit) with the App Bridge session token; the
+// server is the source of truth for validation, so this surfaces server errors.
 import {
   Badge,
   Banner,
@@ -13,7 +14,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Divider,
   FormLayout,
   InlineStack,
   Page,
@@ -23,16 +23,14 @@ import {
   TextField,
 } from '@shopify/polaris';
 import { useEffect, useState } from 'react';
-import { authedFetch, pickVariants } from './appBridge.js';
+import { authedFetch, pickVariantIds, resolveVariantLabels } from './appBridge.js';
 import type {
   CampaignEditorInput,
   CampaignEditorView,
   EditorGiftVariant,
-  EditorMarketThreshold,
   EditorTier,
   GiftKind,
 } from '../src/admin/editorTypes.js';
-import type { RoundingRule } from '../src/domain.js';
 
 // Local row identity for React keys (the wire types carry no id).
 let keySeq = 0;
@@ -43,11 +41,6 @@ type TierForm = EditorTier & { readonly key: string };
 const GIFT_KIND_OPTIONS = [
   { label: 'Choose one (OR)', value: 'OR' },
   { label: 'Get all (AND)', value: 'AND' },
-];
-const ROUNDING_OPTIONS: { label: string; value: RoundingRule }[] = [
-  { label: 'No rounding', value: 'none' },
-  { label: 'Up to nearest 100 minor units', value: 'up-to-nearest-minor-100' },
-  { label: 'Up to nearest major unit', value: 'up-to-nearest-major' },
 ];
 
 // datetime-local <-> ISO(UTC). The form treats the wall-clock value as UTC (labelled so).
@@ -72,16 +65,6 @@ function blankTier(currency: string): TierForm {
   };
 }
 
-function blankMarket(): EditorMarketThreshold {
-  return {
-    market: '',
-    presentmentCurrency: '',
-    amount: '',
-    manualFxRate: null,
-    roundingRule: 'none',
-  };
-}
-
 function defaultStart(): string {
   return isoToLocal(new Date().toISOString());
 }
@@ -91,14 +74,15 @@ function defaultEnd(): string {
 
 export function CampaignEditor({
   campaignId,
+  baseCurrency,
   onDone,
   onCancel,
 }: {
   readonly campaignId?: string;
+  readonly baseCurrency: string;
   readonly onDone: () => void;
   readonly onCancel: () => void;
 }): React.JSX.Element {
-  const baseCurrency = 'USD'; // default for new tiers; editable per tier (shop base currency: 3C)
   const [loading, setLoading] = useState(campaignId !== undefined);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +93,8 @@ export function CampaignEditor({
   const [declineEnabled, setDeclineEnabled] = useState(true);
   const [tiers, setTiers] = useState<readonly TierForm[]>([blankTier(baseCurrency)]);
 
-  // Load the existing draft for editing.
+  // Load the existing draft for editing. Threshold is forced to the base currency and per-market rows
+  // are dropped (the editor is now single-base-currency); the loaded amount string is kept.
   useEffect(() => {
     if (campaignId === undefined) {
       return;
@@ -126,7 +111,14 @@ export function CampaignEditor({
         setStartsLocal(isoToLocal(view.startsAt));
         setEndsLocal(isoToLocal(view.endsAt));
         setDeclineEnabled(view.declineEnabled);
-        setTiers(view.tiers.map((t) => ({ ...t, key: nextKey() })));
+        setTiers(
+          view.tiers.map((t) => ({
+            ...t,
+            key: nextKey(),
+            thresholdCurrency: baseCurrency,
+            marketThresholds: [],
+          })),
+        );
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err));
@@ -140,7 +132,7 @@ export function CampaignEditor({
     return () => {
       cancelled = true;
     };
-  }, [campaignId]);
+  }, [campaignId, baseCurrency]);
 
   const patchTier = (key: string, patch: Partial<EditorTier>): void =>
     setTiers((prev) => prev.map((t) => (t.key === key ? { ...t, ...patch } : t)));
@@ -150,19 +142,23 @@ export function CampaignEditor({
 
   const removeTier = (key: string): void => setTiers((prev) => prev.filter((t) => t.key !== key));
 
+  // Pick variants (GIDs), resolve their labels server-side, append (dedup by variant id).
   const addGifts = async (key: string): Promise<void> => {
     try {
-      const picked = await pickVariants();
-      if (picked.length === 0) {
+      const ids = await pickVariantIds();
+      if (ids.length === 0) {
         return;
       }
+      const labels = await resolveVariantLabels(ids);
       setTiers((prev) =>
         prev.map((t) => {
           if (t.key !== key) {
             return t;
           }
           const have = new Set(t.gifts.map((g) => g.variantId));
-          const added: EditorGiftVariant[] = picked.filter((p) => !have.has(p.variantId));
+          const added: EditorGiftVariant[] = ids
+            .filter((id) => !have.has(id))
+            .map((id) => ({ variantId: id, title: labels[id] ?? id }));
           return { ...t, gifts: [...t.gifts, ...added] };
         }),
       );
@@ -178,22 +174,6 @@ export function CampaignEditor({
       ),
     );
 
-  const patchTierMarkets = (
-    key: string,
-    fn: (markets: readonly EditorMarketThreshold[]) => readonly EditorMarketThreshold[],
-  ): void =>
-    setTiers((prev) =>
-      prev.map((t) => (t.key === key ? { ...t, marketThresholds: fn(t.marketThresholds) } : t)),
-    );
-  const patchMarket = (key: string, index: number, patch: Partial<EditorMarketThreshold>): void =>
-    patchTierMarkets(key, (markets) =>
-      markets.map((m, i) => (i === index ? { ...m, ...patch } : m)),
-    );
-  const addMarket = (key: string): void =>
-    patchTierMarkets(key, (markets) => [...markets, blankMarket()]);
-  const removeMarket = (key: string, index: number): void =>
-    patchTierMarkets(key, (markets) => markets.filter((_, i) => i !== index));
-
   const save = async (): Promise<void> => {
     setSaving(true);
     setError(null);
@@ -203,13 +183,14 @@ export function CampaignEditor({
       endsAt: localToIso(endsLocal),
       declineEnabled,
       suppression: 'highest-only',
+      // Single base-currency threshold per tier; no per-market rows (FX track is separate).
       tiers: tiers.map((t) => ({
         position: t.position,
         thresholdAmount: t.thresholdAmount,
-        thresholdCurrency: t.thresholdCurrency,
+        thresholdCurrency: baseCurrency,
         giftKind: t.giftKind,
         gifts: t.gifts,
-        marketThresholds: t.marketThresholds,
+        marketThresholds: [],
       })),
     };
     try {
@@ -319,17 +300,12 @@ export function CampaignEditor({
                     autoComplete="off"
                   />
                   <TextField
-                    label="Base threshold"
+                    label={`Threshold (${baseCurrency})`}
                     value={tier.thresholdAmount}
                     onChange={(v) => patchTier(tier.key, { thresholdAmount: v })}
                     autoComplete="off"
-                    placeholder="50.00"
-                  />
-                  <TextField
-                    label="Currency"
-                    value={tier.thresholdCurrency}
-                    onChange={(v) => patchTier(tier.key, { thresholdCurrency: v.toUpperCase() })}
-                    autoComplete="off"
+                    placeholder="500.00"
+                    suffix={baseCurrency}
                   />
                 </FormLayout.Group>
                 <Select
@@ -368,72 +344,6 @@ export function CampaignEditor({
                 )}
                 <InlineStack>
                   <Button onClick={() => void addGifts(tier.key)}>Add gift variants</Button>
-                </InlineStack>
-              </BlockStack>
-
-              <Divider />
-
-              <BlockStack gap="200">
-                <Text as="h3" variant="headingSm">
-                  Per-market thresholds
-                </Text>
-                {tier.marketThresholds.map((m, i) => (
-                  <FormLayout key={`${tier.key}-m${i}`}>
-                    <FormLayout.Group>
-                      <TextField
-                        label="Market"
-                        value={m.market}
-                        onChange={(v) => patchMarket(tier.key, i, { market: v })}
-                        autoComplete="off"
-                        placeholder="gid://shopify/Market/123 or handle"
-                      />
-                      <TextField
-                        label="Currency"
-                        value={m.presentmentCurrency}
-                        onChange={(v) =>
-                          patchMarket(tier.key, i, { presentmentCurrency: v.toUpperCase() })
-                        }
-                        autoComplete="off"
-                      />
-                      <TextField
-                        label="Amount"
-                        value={m.amount}
-                        onChange={(v) => patchMarket(tier.key, i, { amount: v })}
-                        autoComplete="off"
-                      />
-                    </FormLayout.Group>
-                    <FormLayout.Group>
-                      <TextField
-                        label="Manual FX rate (optional)"
-                        value={m.manualFxRate ?? ''}
-                        onChange={(v) =>
-                          patchMarket(tier.key, i, { manualFxRate: v.length === 0 ? null : v })
-                        }
-                        autoComplete="off"
-                      />
-                      <Select
-                        label="Rounding"
-                        options={ROUNDING_OPTIONS}
-                        value={m.roundingRule}
-                        onChange={(v) =>
-                          patchMarket(tier.key, i, { roundingRule: v as RoundingRule })
-                        }
-                      />
-                      <div style={{ alignSelf: 'end' }}>
-                        <Button
-                          variant="plain"
-                          tone="critical"
-                          onClick={() => removeMarket(tier.key, i)}
-                        >
-                          Remove market
-                        </Button>
-                      </div>
-                    </FormLayout.Group>
-                    <Divider />
-                  </FormLayout>
-                ))}
-                <InlineStack>
-                  <Button onClick={() => addMarket(tier.key)}>Add market threshold</Button>
                 </InlineStack>
               </BlockStack>
             </BlockStack>

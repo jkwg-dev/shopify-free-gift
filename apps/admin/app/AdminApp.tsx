@@ -12,7 +12,7 @@ type View =
   | { readonly name: 'new' }
   | { readonly name: 'edit'; readonly id: string };
 
-export function AdminApp(): React.JSX.Element {
+export function AdminApp({ baseCurrency }: { readonly baseCurrency: string }): React.JSX.Element {
   const [view, setView] = useState<View>({ name: 'list' });
   // Bump to force the list to remount and refetch after a save.
   const [listKey, setListKey] = useState(0);
@@ -34,8 +34,13 @@ export function AdminApp(): React.JSX.Element {
   const onCancel = (): void => setView({ name: 'list' });
 
   return view.name === 'edit' ? (
-    <CampaignEditor campaignId={view.id} onDone={onDone} onCancel={onCancel} />
+    <CampaignEditor
+      campaignId={view.id}
+      baseCurrency={baseCurrency}
+      onDone={onDone}
+      onCancel={onCancel}
+    />
   ) : (
-    <CampaignEditor onDone={onDone} onCancel={onCancel} />
+    <CampaignEditor baseCurrency={baseCurrency} onDone={onDone} onCancel={onCancel} />
   );
 }

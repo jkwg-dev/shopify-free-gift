@@ -144,27 +144,37 @@ function fmt(m: Money, compact = false): string {
 export type StepAlign = 'start' | 'center' | 'end';
 export type StepNode = {
   readonly tierId: string;
-  readonly posPct: number; // node position along the track (threshold / STEPPER_FILL_MAX)
+  readonly posPct: number; // node position along the track (threshold / auto-computed fill max)
   readonly align: StepAlign; // label alignment so edge labels don't clip off the track
   readonly reached: boolean;
   readonly isCurrent: boolean;
 };
 
-// The stepper's fill scale: a FIXED 0–STEPPER_FILL_MAX track (presentment major units, e.g. CA$2000),
-// so the bar shows absolute progress (CA$250 already reads ~1/8 full) rather than tier-relative. Single
-// constant for now; revisit if multi-currency tuning is ever needed.
-export const STEPPER_FILL_MAX = 2000;
+// The stepper auto-scales: the fill track runs 0 -> (highest tier threshold x STEPPER_HEADROOM), so the
+// top tier always lands at ~75% with ~25% headroom regardless of the tier AMOUNTS — no hardcoded cap.
+// 4/3 = 1.33...: highest / (highest x 4/3) = 0.75 exactly. The fill model is unchanged from 5b-2b
+// (LINEAR, absolute-amount proportional, 0 = unknown subtotal); only the max is now derived.
+export const STEPPER_HEADROOM = 4 / 3;
+// Degenerate guard (no tiers, or a zero highest threshold) → avoid divide-by-zero. The stepper has
+// nothing meaningful to show in that case anyway.
+const STEPPER_FALLBACK_MAX = 1;
 
-// Pure stepper geometry (unit-tested). Fill % and each node sit at amount/STEPPER_FILL_MAX (clamped
-// 0–100): the fill is the confirmed subtotal on the fixed scale (0 when unknown — never optimistic),
-// and nodes sit at their thresholds (CA$500/1000/1500 -> 25/50/75%), leaving headroom up to the cap. A
-// node reads filled when the fill reaches it (fill% >= its position% iff subtotal >= threshold, which is
-// exactly `reached`). Labels align start/center/end so an edge label can't clip off the track.
+// Pure stepper geometry (unit-tested). The track max = highest tier threshold x STEPPER_HEADROOM; fill %
+// and each node sit at amount/max (clamped 0–100). The fill is the confirmed subtotal on that scale
+// (0 when unknown — never optimistic); nodes sit at their thresholds (evenly-spaced tiers -> 25/50/75%),
+// leaving ~25% headroom past the top. A node reads filled when the fill reaches it (fill% >= its
+// position% iff subtotal >= threshold, exactly `reached`). Labels align start/center/end so an edge
+// label can't clip off the track.
 export function stepperLayout(model: ProgressModel): { fillPct: number; nodes: StepNode[] } {
   const ordered = [...model.tiers].sort(
     (a, b) => a.threshold.amountMinor - b.threshold.amountMinor,
   );
-  const pct = (m: Money): number => Math.max(0, Math.min(100, (major(m) / STEPPER_FILL_MAX) * 100));
+  const highest = ordered[ordered.length - 1]?.threshold;
+  const fillMax =
+    highest !== undefined && major(highest) > 0
+      ? major(highest) * STEPPER_HEADROOM
+      : STEPPER_FALLBACK_MAX;
+  const pct = (m: Money): number => Math.max(0, Math.min(100, (major(m) / fillMax) * 100));
   const fillPct = model.subtotal === null ? 0 : pct(model.subtotal);
   const nodes = ordered.map((t): StepNode => {
     const posPct = pct(t.threshold);

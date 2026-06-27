@@ -137,14 +137,23 @@ campaign list. **Stage B = the campaign + tier EDITOR (create/edit INACTIVE draf
   ascending by position, AND ≥2 gifts, OR ≥1 option, no duplicate variant/option-id, single currency)
   - admin `validateCampaignInput` (suppression policy, schedule order, non-empty name, no duplicate
     market per tier). The service runs it before any persist.
+- **One base-currency threshold per tier** (editor refinement): the form takes a SINGLE amount per
+  tier in the shop's base currency (from `SHOPIFY_BASE_CURRENCY`, passed server→client via `page.tsx`)
+  — NO currency dropdown, NO per-market rows. The editor writes `marketThresholds: []`; the schema +
+  frozen `contract.ts` (which still model per-market rows) are unchanged. The base→presentment FX model
+  (replacing the manual per-market table above) is the NEXT track, designed separately — this is only
+  the form simplification.
 - **Currency exponent stays server-side**: the editor speaks decimal amount strings; the route maps
   them to/from Money minor units via `packages/shopify`'s `decimalToMinorUnits`/`minorUnitsToDecimal`
   (`apps/admin/src/admin/editorMapping.ts`) — the browser never does currency math, so a JPY/KRW
-  threshold is never off by 100×. The frozen `contract.ts` DTOs (Money) are unchanged; the editor DTO
-  is a 3b-owned shape the route maps into them, so 3a is not reopened.
+  threshold is never off by 100×. The editor DTO is a 3b-owned shape the route maps into the frozen
+  Money DTOs, so 3a is not reopened.
 - **Gift variant selection** uses the App Bridge variant resource picker
-  (`window.shopify.resourcePicker({ type: 'variant' })`); the server re-validates the picked variant
-  GIDs are live (`fetchGiftVariants`) on save. No new scope (`read_products`).
+  (`window.shopify.resourcePicker({ type: 'variant' })`), which only reliably returns the variant GID;
+  display labels ("Product — Variant", or just "Product" for a single-variant product) are resolved
+  SERVER-side (`POST /api/admin/variant-labels` → `fetchVariantMeta`) — the ONE label source shared
+  with the edit view, so picker-added and edit-loaded labels always match. The server re-validates the
+  picked GIDs are live (`fetchGiftVariants`) on save. No new scope (`read_products`).
 
 Locked decisions (unchanged from Stage A):
 
