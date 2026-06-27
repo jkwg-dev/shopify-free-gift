@@ -3,23 +3,26 @@
 // authenticated fetch so every embedded screen uses one helper — and so the Window augmentation is
 // declared exactly ONCE (declaring it per-component would clash). Runs client-side only.
 
-// The resource-picker variant payload only guarantees the GID; its label fields are inconsistent
-// (e.g. blank/"Default Title" for single-variant products), so we read just `id` and resolve the
-// display label server-side (resolveVariantLabels) — the same fetchVariantMeta path the edit view
-// uses, so picker-added and edit-loaded labels always match.
-type PickedResource = { readonly id: string };
+// We pick gifts with the PRODUCT resource picker (filter.variants: true), NOT the variant picker: the
+// variant picker renders rows with only the variant title/price (blank or "$10" for single-variant
+// "Default Title" products), so the merchant can't tell which product a row is. The product picker
+// shows product-name rows and returns each selected product with its selected variants, which we
+// flatten to per-variant GIDs (flattenPickedVariantIds). Display labels are still resolved server-side
+// (resolveVariantLabels) so picker-added and edit-loaded labels match.
+import { flattenPickedVariantIds, type PickedProduct } from '../src/admin/pickedVariants.js';
 
 type ResourcePickerOptions = {
   readonly type: 'product' | 'variant' | 'collection';
   readonly multiple?: boolean | number;
   readonly action?: 'add' | 'select';
+  readonly filter?: { readonly variants?: boolean };
 };
 
 type AppBridge = {
   readonly idToken: () => Promise<string>;
   readonly resourcePicker: (
     options: ResourcePickerOptions,
-  ) => Promise<readonly PickedResource[] | undefined>;
+  ) => Promise<readonly PickedProduct[] | undefined>;
 };
 
 declare global {
@@ -36,14 +39,16 @@ function bridge(): AppBridge {
   return b;
 }
 
-// Open the variant resource picker; returns the picked variant GIDs ([] if cancelled).
+// Open the PRODUCT resource picker with variant selection on; returns the picked variant GIDs (the
+// selected variants across the chosen products, de-duplicated; [] if cancelled).
 export async function pickVariantIds(): Promise<string[]> {
   const selected = await bridge().resourcePicker({
-    type: 'variant',
+    type: 'product',
+    filter: { variants: true },
     multiple: true,
     action: 'select',
   });
-  return selected === undefined ? [] : selected.map((r) => r.id);
+  return selected === undefined ? [] : flattenPickedVariantIds(selected);
 }
 
 // fetch() with the App Bridge session token attached as a Bearer header (the embedded admin's JWT

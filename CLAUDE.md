@@ -148,12 +148,16 @@ campaign list. **Stage B = the campaign + tier EDITOR (create/edit INACTIVE draf
   (`apps/admin/src/admin/editorMapping.ts`) — the browser never does currency math, so a JPY/KRW
   threshold is never off by 100×. The editor DTO is a 3b-owned shape the route maps into the frozen
   Money DTOs, so 3a is not reopened.
-- **Gift variant selection** uses the App Bridge variant resource picker
-  (`window.shopify.resourcePicker({ type: 'variant' })`), which only reliably returns the variant GID;
-  display labels ("Product — Variant", or just "Product" for a single-variant product) are resolved
-  SERVER-side (`POST /api/admin/variant-labels` → `fetchVariantMeta`) — the ONE label source shared
-  with the edit view, so picker-added and edit-loaded labels always match. The server re-validates the
-  picked GIDs are live (`fetchGiftVariants`) on save. No new scope (`read_products`).
+- **Gift variant selection** uses the App Bridge **PRODUCT** resource picker
+  (`resourcePicker({ type: 'product', filter: { variants: true } })`), NOT the variant picker: the
+  variant picker renders rows with only the variant title/price (blank or "$10" for single-variant
+  "Default Title" products), so the merchant can't tell which product a row is. The product picker
+  shows product-name rows and returns each selected product with its selected variants, which we
+  flatten to per-variant GIDs (`flattenPickedVariantIds`, pure + tested) — our storage stays per
+  variant. Display labels ("Product — Variant", or just "Product" for a single-variant product) are
+  resolved SERVER-side (`POST /api/admin/variant-labels` → `fetchVariantMeta`) — the ONE label source
+  shared with the edit view, so picker-added and edit-loaded labels always match. The server
+  re-validates the picked GIDs are live (`fetchGiftVariants`) on save. No new scope (`read_products`).
 
 Locked decisions (unchanged from Stage A):
 

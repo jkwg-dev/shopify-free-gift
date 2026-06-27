@@ -342,8 +342,11 @@ export function CampaignEditor({
                     ))}
                   </BlockStack>
                 )}
-                <InlineStack>
+                <InlineStack gap="200" blockAlign="center">
                   <Button onClick={() => void addGifts(tier.key)}>Add gift variants</Button>
+                  <Text as="span" tone="subdued">
+                    Tip: expand a product in the picker to choose specific variants.
+                  </Text>
                 </InlineStack>
               </BlockStack>
             </BlockStack>
