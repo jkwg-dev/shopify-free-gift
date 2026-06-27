@@ -171,6 +171,42 @@ describe('handleValidate', () => {
     expect(res.status).toBe(405);
   });
 
+  it('accepts an optional valid presentmentRate (base-currency request still 200)', async () => {
+    const body = JSON.stringify({
+      cart: [{ variantId: P1, quantity: 1, appAdded: false }],
+      choices: {},
+      declined: false,
+      presentmentCurrency: 'USD',
+      countryCode: 'US',
+      presentmentRate: '0.71866446',
+    });
+    const res = await handleValidate(httpReq({ rawBody: body }), makeDeps());
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 400 for a present-but-invalid presentmentRate', async () => {
+    const base = {
+      cart: [{ variantId: P1, quantity: 1, appAdded: false }],
+      choices: {},
+      declined: false,
+      presentmentCurrency: 'USD',
+      countryCode: 'US',
+    };
+    for (const bad of ['0', '-1', 'abc', '']) {
+      const res = await handleValidate(
+        httpReq({ rawBody: JSON.stringify({ ...base, presentmentRate: bad }) }),
+        makeDeps(),
+      );
+      expect(res.status, `rate=${bad}`).toBe(400);
+    }
+    // non-string is also rejected
+    const nonString = await handleValidate(
+      httpReq({ rawBody: JSON.stringify({ ...base, presentmentRate: 1.5 }) }),
+      makeDeps(),
+    );
+    expect(nonString.status).toBe(400);
+  });
+
   it('maps an invalid OR choice to 400', async () => {
     const deps = makeDeps({
       resolveActiveCampaign: () =>

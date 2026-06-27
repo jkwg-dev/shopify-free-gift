@@ -19,6 +19,7 @@ import {
   type Tier as CoreTier,
 } from '@free-gift-engine/core';
 import {
+  convertBaseToPresentmentCeil,
   decimalToMinorUnits,
   type DiscountCombinesWith,
   type VariantPricing,
@@ -84,19 +85,36 @@ function giftSetVariantIds(campaign: Campaign): Set<string> {
   return ids;
 }
 
-// The threshold actually enforced for a tier in this market: the base-currency threshold when the
-// buyer is in the base currency, otherwise the market's pre-resolved presentment threshold. Returns
-// null when a non-base market has no configured threshold for this tier (campaign not sold there).
+// Parse the client-claimed FX rate string to a usable factor, or null when absent/invalid. Shared by
+// the handler (to 400 a present-but-invalid value) and the services (to derive). A non-positive or
+// non-finite rate is rejected (null).
+export function parsePresentmentRate(value: string | undefined): number | null {
+  if (value === undefined) {
+    return null;
+  }
+  const rate = Number(value);
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
+// The threshold actually enforced for a tier in this market. In the BASE currency it is the
+// base-currency threshold (rate ignored). Otherwise it is DERIVED from Shopify's own market rate —
+// ceil(baseThreshold x rate) — the SAME rate Shopify uses to convert the BXGY minimum at checkout, so
+// the displayed/compared threshold equals the enforced floor. Stored manual marketThresholds rows are
+// intentionally IGNORED (single source of truth = Shopify's rate). Returns null when a non-base market
+// has no valid rate — the campaign is simply not offered there (never priced against an unknown floor).
 export function presentmentThreshold(
   tier: Tier,
   presentmentCurrency: string,
   baseCurrency: string,
+  rate: number | null,
 ): Money | null {
   if (presentmentCurrency === baseCurrency) {
     return tier.baseThreshold;
   }
-  const match = tier.marketThresholds.find((m) => m.presentmentCurrency === presentmentCurrency);
-  return match?.resolvedThreshold ?? null;
+  if (rate === null) {
+    return null;
+  }
+  return convertBaseToPresentmentCeil(tier.baseThreshold, presentmentCurrency, rate);
 }
 
 export async function resolveValidate(
@@ -110,13 +128,14 @@ export async function resolveValidate(
   }
   const { campaign, baseCurrency } = context;
   const presentment = request.presentmentCurrency;
+  const rate = parsePresentmentRate(request.presentmentRate);
 
-  // Resolve every tier's threshold in the presentment currency up front. If a non-base market is
-  // missing any threshold, the campaign is not offered there — treat as inactive (all-or-nothing,
-  // never a partial offer).
+  // Resolve every tier's threshold in the presentment currency up front. In a non-base market without
+  // a valid Shopify rate the campaign is not offered there — treat as inactive (all-or-nothing, never
+  // a partial offer).
   const thresholdByTier = new Map<string, Money>();
   for (const tier of campaign.tiers) {
-    const threshold = presentmentThreshold(tier, presentment, baseCurrency);
+    const threshold = presentmentThreshold(tier, presentment, baseCurrency, rate);
     if (threshold === null) {
       return { status: 'no-gift', reason: 'inactive' };
     }

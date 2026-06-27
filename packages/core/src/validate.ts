@@ -29,6 +29,13 @@ export type ValidateRequest = {
   // validated against the resolved market; the country drives authoritative presentment pricing.
   readonly presentmentCurrency: string;
   readonly countryCode: string;
+  // Shopify's market FX rate (base -> presentment), from window.Shopify.currency.rate, as a decimal
+  // STRING (preserve Shopify's precision). Additive + OPTIONAL. The server derives each tier's
+  // presentment threshold = ceil(baseThreshold x rate) — the SAME rate Shopify uses for the BXGY
+  // minimum, so display == enforced. CLAIMED but harmless: it only scales the displayed/compared
+  // threshold, never the server-priced cart or the CAD discount floor, so a spoofed rate is a
+  // self-inflicted UX glitch, never a leak. Absent/invalid in a non-base market => no gift there.
+  readonly presentmentRate?: string;
 };
 
 // A qualifying result yields EXACTLY ONE reusable code (only 'highest-only' suppression is

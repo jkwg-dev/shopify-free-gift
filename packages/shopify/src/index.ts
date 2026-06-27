@@ -24,6 +24,7 @@ export {
 } from './errors.js';
 
 export {
+  convertBaseToPresentmentCeil,
   currencyExponent,
   decimalToMinorUnits,
   minorUnitsToDecimal,

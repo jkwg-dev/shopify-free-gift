@@ -288,8 +288,8 @@ describe('resolveValidate — OR choice', () => {
   });
 });
 
-describe('resolveValidate — markets', () => {
-  it('uses the market resolved threshold (presentment), not the base value', async () => {
+describe('resolveValidate — markets (FX-derived thresholds)', () => {
+  it('derives the presentment threshold from the Shopify rate (base USD x rate)', async () => {
     const { deps } = makeDeps();
     const result = await resolveValidate(
       'shop.myshopify.com',
@@ -297,6 +297,7 @@ describe('resolveValidate — markets', () => {
         cart: [{ variantId: P1, quantity: 1, appAdded: false }], // $80 CAD
         presentmentCurrency: 'CAD',
         countryCode: 'CA',
+        presentmentRate: '1.4', // base $50.00 x 1.4 -> CA$70.00
       }),
       deps,
     );
@@ -306,12 +307,32 @@ describe('resolveValidate — markets', () => {
     expect(result.currency).toBe('CAD');
     expect(result.subtotal).toEqual(money(8000, 'CAD'));
     expect(result.tierId).toBe('t1');
-    expect(result.appliedThreshold).toEqual(money(7000, 'CAD')); // resolved, not 5000 USD
+    expect(result.appliedThreshold).toEqual(money(7000, 'CAD')); // ceil(5000 x 1.4), not base USD
+  });
+
+  it('IGNORES stored marketThresholds rows — derives purely from the rate', async () => {
+    // The fixture's t1 stores resolvedThreshold CA$70.00 (rate 1.4). A different rate must produce a
+    // different threshold, proving the stored row is not consulted.
+    const { deps } = makeDeps();
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [{ variantId: P1, quantity: 1, appAdded: false }], // $80 CAD
+        presentmentCurrency: 'CAD',
+        countryCode: 'CA',
+        presentmentRate: '1.5', // ceil(5000 x 1.5) = CA$75.00, NOT the stored CA$70.00
+      }),
+      deps,
+    );
+
+    expect(result.status).toBe('gift');
+    if (result.status !== 'gift') return;
+    expect(result.appliedThreshold).toEqual(money(7500, 'CAD'));
   });
 
   it('rejects when the claimed currency does not match the country pricing', async () => {
-    // CAD is a configured market (thresholds resolve), but country US prices come back in USD —
-    // the claimed presentment currency is inconsistent with the authoritative country pricing.
+    // With a rate the CAD thresholds resolve, but country US prices come back in USD — the claimed
+    // presentment currency is inconsistent with the authoritative country pricing.
     const { deps } = makeDeps();
     await expect(
       resolveValidate(
@@ -320,25 +341,144 @@ describe('resolveValidate — markets', () => {
           cart: [{ variantId: P1, quantity: 1, appAdded: false }],
           presentmentCurrency: 'CAD',
           countryCode: 'US', // priced in USD
+          presentmentRate: '1.4',
         }),
         deps,
       ),
     ).rejects.toBeInstanceOf(ValidateBadRequestError);
   });
 
-  it('returns inactive for a market with no configured threshold', async () => {
+  it('returns inactive in a non-base market with NO rate (cannot price against the floor)', async () => {
     const { deps } = makeDeps();
     const result = await resolveValidate(
       'shop.myshopify.com',
       req({
         cart: [{ variantId: P1, quantity: 2, appAdded: false }],
         presentmentCurrency: 'GBP',
-        countryCode: 'GB',
+        countryCode: 'GB', // no presentmentRate
       }),
       deps,
     );
 
     expect(result).toEqual({ status: 'no-gift', reason: 'inactive' });
+  });
+
+  it('returns inactive in a non-base market when the rate is invalid (<= 0)', async () => {
+    const { deps } = makeDeps();
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [{ variantId: P1, quantity: 2, appAdded: false }],
+        presentmentCurrency: 'CAD',
+        countryCode: 'CA',
+        presentmentRate: '0', // invalid -> parsePresentmentRate null -> no threshold -> inactive
+      }),
+      deps,
+    );
+
+    expect(result).toEqual({ status: 'no-gift', reason: 'inactive' });
+  });
+
+  it('derives a ZERO-DECIMAL (JPY) threshold end-to-end (exponent shift, no x100 error)', async () => {
+    // The whole reason zero-decimal currencies are dangerous: base USD (exp 2) -> JPY (exp 0) exercises
+    // the shift = -2 branch through the FULL path (rate parse -> derive -> JPY-priced cart -> compare).
+    const prices: PriceTable = {
+      JP: {
+        [P1]: { amount: '8000', currencyCode: 'JPY' }, // whole yen, no decimals
+        [G1]: { amount: '3000', currencyCode: 'JPY' },
+        [G2]: { amount: '4500', currencyCode: 'JPY' },
+      },
+    };
+    const { deps } = makeDeps({ prices });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [{ variantId: P1, quantity: 1, appAdded: false }], // JPY 8000
+        presentmentCurrency: 'JPY',
+        countryCode: 'JP',
+        presentmentRate: '110.567',
+      }),
+      deps,
+    );
+
+    expect(result.status).toBe('gift');
+    if (result.status !== 'gift') return;
+    expect(result.currency).toBe('JPY');
+    expect(result.subtotal).toEqual(money(8000, 'JPY')); // integer yen
+    expect(result.tierId).toBe('t1'); // 8000 >= 5529 (t1) but < 11057 (t2)
+    // ceil($50.00 x 110.567) = ceil(5528.35) = JPY 5529 — NOT 552835 (missing shift) nor 55 (wrong way)
+    expect(result.appliedThreshold).toEqual(money(5529, 'JPY'));
+  });
+
+  it('qualifies a cart EXACTLY at the derived threshold (inclusive boundary)', async () => {
+    const prices: PriceTable = {
+      CA: {
+        [P1]: { amount: '70.00', currencyCode: 'CAD' },
+        [G1]: { amount: '28.00', currencyCode: 'CAD' },
+      },
+    };
+    const { deps } = makeDeps({ prices });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [{ variantId: P1, quantity: 1, appAdded: false }], // exactly CA$70.00 = 7000 minor
+        presentmentCurrency: 'CAD',
+        countryCode: 'CA',
+        presentmentRate: '1.4', // derived t1 = ceil(5000 x 1.4) = 7000
+      }),
+      deps,
+    );
+
+    expect(result.status).toBe('gift');
+    if (result.status !== 'gift') return;
+    expect(result.subtotal).toEqual(money(7000, 'CAD'));
+    expect(result.tierId).toBe('t1');
+    expect(result.appliedThreshold).toEqual(money(7000, 'CAD'));
+  });
+
+  it('does NOT qualify one minor unit below the derived threshold', async () => {
+    const prices: PriceTable = {
+      CA: {
+        [P1]: { amount: '69.99', currencyCode: 'CAD' },
+        [G1]: { amount: '28.00', currencyCode: 'CAD' },
+      },
+    };
+    const { deps } = makeDeps({ prices });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [{ variantId: P1, quantity: 1, appAdded: false }], // CA$69.99 = 6999, one below 7000
+        presentmentCurrency: 'CAD',
+        countryCode: 'CA',
+        presentmentRate: '1.4',
+      }),
+      deps,
+    );
+
+    expect(result).toEqual({
+      status: 'no-gift',
+      reason: 'below-threshold',
+      subtotal: money(6999, 'CAD'),
+    });
+  });
+
+  it('IGNORES the rate entirely in the base currency (presentment === base)', async () => {
+    const { deps } = makeDeps();
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [{ variantId: P1, quantity: 1, appAdded: false }], // $60 USD
+        presentmentCurrency: 'USD',
+        countryCode: 'US',
+        presentmentRate: '2.5', // absurd; if (wrongly) applied -> threshold 12500 -> no gift
+      }),
+      deps,
+    );
+
+    expect(result.status).toBe('gift');
+    if (result.status !== 'gift') return;
+    expect(result.tierId).toBe('t1');
+    expect(result.appliedThreshold).toEqual(money(5000, 'USD')); // base, NOT ceil(5000 x 2.5)
   });
 });
 

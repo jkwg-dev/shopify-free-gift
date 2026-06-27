@@ -597,6 +597,9 @@
       currency: request.presentmentCurrency,
       country: request.countryCode
     });
+    if (request.presentmentRate !== void 0) {
+      params.set("rate", request.presentmentRate);
+    }
     const response = await fetchFn(`${path}?${params.toString()}`, {
       headers: { Accept: "application/json" }
     });
@@ -1132,6 +1135,10 @@ body.fge-checkout-pending .cart__checkout-button::after{
   var w = window;
   var _a, _b, _c;
   var root = (_c = (_b = (_a = w.Shopify) == null ? void 0 : _a.routes) == null ? void 0 : _b.root) != null ? _c : "/";
+  var presentmentRate = () => {
+    var _a2, _b2;
+    return (_b2 = (_a2 = w.Shopify) == null ? void 0 : _a2.currency) == null ? void 0 : _b2.rate;
+  };
   var toGid = (variantId) => `gid://shopify/ProductVariant/${variantId}`;
   var isGiftLine = (item) => item.properties != null && item.properties[GIFT_LINE_PROPERTY] != null;
   function readConfig() {
@@ -1195,6 +1202,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
           // Server-authoritative: every line carries its app-added claim; the server EXCLUDES app-added
           // gift lines from the qualifying subtotal. Choices + decline are chooser-driven (same wire shape).
           validate: async (lines, currency) => {
+            const rate = presentmentRate();
             const request = {
               cart: lines.map((l) => ({
                 variantId: l.variantId,
@@ -1204,7 +1212,8 @@ body.fge-checkout-pending .cart__checkout-button::after{
               choices: choiceState,
               declined,
               presentmentCurrency: currency,
-              countryCode: config.country
+              countryCode: config.country,
+              ...rate !== void 0 ? { presentmentRate: rate } : {}
             };
             const response = await postValidate(request, { proxyPath: config.proxyPath });
             if (!response.ok) {
@@ -1340,9 +1349,11 @@ body.fge-checkout-pending .cart__checkout-button::after{
   async function initPerception(config) {
     injectStyles();
     sections = mountCartContexts({ drawerSelector: config.drawerSelector });
+    const rate = presentmentRate();
     const result = await getConfig({
       presentmentCurrency: config.presentmentCurrency,
-      countryCode: config.country
+      countryCode: config.country,
+      ...rate !== void 0 ? { presentmentRate: rate } : {}
     });
     if (!result.ok || result.config.status !== "active") {
       return;

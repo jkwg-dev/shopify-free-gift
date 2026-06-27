@@ -9,7 +9,12 @@ import { InvalidGiftChoiceError } from '@free-gift-engine/core';
 import { verifyAppProxyHmac } from '../security/hmac.js';
 import type { ValidateError, ValidateRequest, ValidateResult } from './contract.js';
 import type { RateLimiter } from './rateLimit.js';
-import { resolveValidate, ValidateBadRequestError, type ValidateServiceDeps } from './service.js';
+import {
+  parsePresentmentRate,
+  resolveValidate,
+  ValidateBadRequestError,
+  type ValidateServiceDeps,
+} from './service.js';
 
 export type ValidateHttpRequest = {
   readonly method: string;
@@ -75,7 +80,7 @@ function parseRequest(rawBody: string): ValidateRequest {
   if (!isObject(parsed)) {
     throw new ValidateBadRequestError('Body must be a JSON object');
   }
-  const { cart, choices, declined, presentmentCurrency, countryCode } = parsed;
+  const { cart, choices, declined, presentmentCurrency, countryCode, presentmentRate } = parsed;
 
   if (!Array.isArray(cart)) {
     throw new ValidateBadRequestError('cart must be an array');
@@ -105,6 +110,15 @@ function parseRequest(rawBody: string): ValidateRequest {
   if (typeof countryCode !== 'string' || countryCode.length === 0) {
     throw new ValidateBadRequestError('countryCode must be a non-empty string');
   }
+  // presentmentRate is OPTIONAL; when present it must be a string parseable to a finite > 0 number.
+  if (presentmentRate !== undefined) {
+    if (typeof presentmentRate !== 'string') {
+      throw new ValidateBadRequestError('presentmentRate must be a string');
+    }
+    if (parsePresentmentRate(presentmentRate) === null) {
+      throw new ValidateBadRequestError('presentmentRate must be a positive number');
+    }
+  }
 
   return {
     cart: lines,
@@ -112,6 +126,7 @@ function parseRequest(rawBody: string): ValidateRequest {
     declined,
     presentmentCurrency,
     countryCode,
+    ...(presentmentRate !== undefined ? { presentmentRate: presentmentRate as string } : {}),
   };
 }
 

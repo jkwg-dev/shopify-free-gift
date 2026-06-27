@@ -14,7 +14,11 @@ import type {
 } from '@free-gift-engine/core';
 import type { VariantMeta, VariantPricing } from '@free-gift-engine/shopify';
 import type { Tier } from '../domain.js';
-import { type ActiveCampaignContext, presentmentThreshold } from './service.js';
+import {
+  type ActiveCampaignContext,
+  parsePresentmentRate,
+  presentmentThreshold,
+} from './service.js';
 
 export type ConfigServiceDeps = {
   readonly resolveActiveCampaign: (shopDomain: string) => Promise<ActiveCampaignContext | null>;
@@ -60,12 +64,14 @@ export async function resolveCampaignConfig(
   }
   const { campaign, baseCurrency } = context;
   const presentment = request.presentmentCurrency;
+  const rate = parsePresentmentRate(request.presentmentRate);
 
-  // Resolve every tier's enforced threshold in the presentment currency. If a non-base market is
-  // missing any tier threshold, the campaign is not offered there — inactive (never a partial offer).
+  // Resolve every tier's enforced threshold in the presentment currency — DERIVED from Shopify's rate
+  // via the shared presentmentThreshold, so the widget shows exactly what /validate enforces. A
+  // non-base market with no valid rate is not offered (inactive, never a partial offer).
   const thresholdByTier = new Map<string, Money>();
   for (const tier of campaign.tiers) {
-    const threshold = presentmentThreshold(tier, presentment, baseCurrency);
+    const threshold = presentmentThreshold(tier, presentment, baseCurrency, rate);
     if (threshold === null) {
       return { status: 'inactive' };
     }

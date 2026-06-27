@@ -79,3 +79,25 @@ export function minorUnitsToDecimal(minorUnits: number, currencyCode: string): s
 export function moneyToDecimalString(money: Money): string {
   return minorUnitsToDecimal(money.amountMinor, money.currency);
 }
+
+// Convert a BASE-currency amount to a presentment-currency amount using Shopify's market FX rate
+// (the SAME rate Shopify applies to the BXGY minimum at checkout; sourced client-side from
+// window.Shopify.currency.rate). `rate` multiplies the MAJOR base amount to the MAJOR presentment
+// amount (Shopify's convention: 570 * 0.7187 = 409.64); the exponent DIFFERENCE re-expresses the
+// result in presentment minor units (so JPY/KRW with 0 decimals are handled), and we round UP
+// (ceil) to the presentment minor unit. Rounding up guarantees the derived threshold is >= Shopify's
+// converted minimum, so /validate can only UNDER-offer at the boundary, never over-offer (no broken
+// promise from rounding/timing skew). The caller validates `rate` is finite and > 0; this is pure.
+export function convertBaseToPresentmentCeil(
+  base: Money,
+  presentmentCurrency: string,
+  rate: number,
+): Money {
+  const shift = currencyExponent(presentmentCurrency) - currencyExponent(base.currency);
+  const scaled = base.amountMinor * rate;
+  // Apply the exponent shift by integer divide/multiply (NOT * 10**-n, whose 0.01 constant is
+  // inexact and could mis-ceil an exact result by one minor unit).
+  const factor = 10 ** Math.abs(shift);
+  const presentmentMinor = Math.ceil(shift >= 0 ? scaled * factor : scaled / factor);
+  return { amountMinor: presentmentMinor, currency: presentmentCurrency };
+}

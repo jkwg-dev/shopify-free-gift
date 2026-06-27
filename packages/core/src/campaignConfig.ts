@@ -58,4 +58,8 @@ export type CampaignConfigResponse =
 export type CampaignConfigRequest = {
   readonly presentmentCurrency: string;
   readonly countryCode: string;
+  // Shopify's market FX rate (base -> presentment) as a decimal string, from the `rate` query param
+  // (window.Shopify.currency.rate). Additive + OPTIONAL. /config derives the same presentment
+  // threshold as /validate (ceil(baseThreshold x rate)), so the widget shows what /validate enforces.
+  readonly presentmentRate?: string;
 };

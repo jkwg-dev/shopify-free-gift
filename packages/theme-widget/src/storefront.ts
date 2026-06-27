@@ -36,7 +36,12 @@ const CART_UPDATE_EVENT = 'cart-update'; // Dawn PUB_SUB_EVENTS.cartUpdate
 const DEBOUNCE_MS = 300;
 
 type ThemeWindow = Window & {
-  readonly Shopify?: { readonly routes?: { readonly root?: string } };
+  readonly Shopify?: {
+    readonly routes?: { readonly root?: string };
+    // Live presentment currency + base->presentment FX rate, updated by Shopify when the shopper
+    // switches currency. Read at REQUEST-build time so a live switch is honored.
+    readonly currency?: { readonly active?: string; readonly rate?: string };
+  };
   readonly subscribe?: (event: string, cb: (data?: unknown) => void) => () => void;
   readonly publish?: (event: string, data?: unknown) => void;
 };
@@ -59,6 +64,10 @@ type WidgetConfig = {
 
 const w = window as ThemeWindow;
 const root = w.Shopify?.routes?.root ?? '/';
+
+// Shopify's live base->presentment FX rate, read FRESH per request so a storefront currency switch is
+// honored. The server derives each tier's presentment threshold from it (display == enforced).
+const presentmentRate = (): string | undefined => w.Shopify?.currency?.rate;
 
 const toGid = (variantId: number): string => `gid://shopify/ProductVariant/${variantId}`;
 const isGiftLine = (item: AjaxCartItem): boolean =>
@@ -154,6 +163,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
         // Server-authoritative: every line carries its app-added claim; the server EXCLUDES app-added
         // gift lines from the qualifying subtotal. Choices + decline are chooser-driven (same wire shape).
         validate: async (lines, currency) => {
+          const rate = presentmentRate();
           const request: ValidateRequest = {
             cart: lines.map((l) => ({
               variantId: l.variantId,
@@ -164,6 +174,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
             declined,
             presentmentCurrency: currency,
             countryCode: config.country,
+            ...(rate !== undefined ? { presentmentRate: rate } : {}),
           };
           const response = await postValidate(request, { proxyPath: config.proxyPath });
           if (!response.ok) {
@@ -335,9 +346,11 @@ async function initPerception(config: WidgetConfig): Promise<void> {
   // Blended, in-flow sections per context (drawer and/or /cart page); re-attached on every re-render.
   sections = mountCartContexts({ drawerSelector: config.drawerSelector });
 
+  const rate = presentmentRate();
   const result = await getConfig({
     presentmentCurrency: config.presentmentCurrency,
     countryCode: config.country,
+    ...(rate !== undefined ? { presentmentRate: rate } : {}),
   });
   if (!result.ok || result.config.status !== 'active') {
     return;

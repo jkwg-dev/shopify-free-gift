@@ -110,6 +110,19 @@ describe('handleConfig', () => {
     expect(noCountry.status).toBe(400);
   });
 
+  it('accepts an optional valid rate and 400s a present-but-invalid one', async () => {
+    const ok = await handleConfig(
+      httpReq({ query: { shop: 's.myshopify.com', currency: 'USD', country: 'US', rate: '0.72' } }),
+      makeDeps(),
+    );
+    expect(ok.status).toBe(200);
+    const bad = await handleConfig(
+      httpReq({ query: { shop: 's.myshopify.com', currency: 'USD', country: 'US', rate: '0' } }),
+      makeDeps(),
+    );
+    expect(bad.status).toBe(400);
+  });
+
   // The GET/query auth path: country + currency are part of the SIGNED input (not trusted unsigned).
   it('verifies the real App Proxy HMAC over the GET query (incl. country/currency)', async () => {
     const query: Record<string, string> = {

@@ -179,19 +179,32 @@ describe('resolveCampaignConfig', () => {
     ]);
   });
 
-  it('resolves presentment thresholds for a non-base market', async () => {
+  it('derives presentment thresholds from the rate (== what /validate enforces)', async () => {
     const res = await resolveCampaignConfig(
       's.myshopify.com',
-      { presentmentCurrency: 'CAD', countryCode: 'CA' },
+      { presentmentCurrency: 'CAD', countryCode: 'CA', presentmentRate: '1.4' },
       deps(ctx),
     );
     expect(res.status).toBe('active');
     if (res.status !== 'active') return;
-    expect(res.tiers[0]!.threshold).toEqual(money(7000, 'CAD'));
-    expect(res.tiers[1]!.threshold).toEqual(money(14000, 'CAD'));
+    expect(res.tiers[0]!.threshold).toEqual(money(7000, 'CAD')); // ceil(5000 x 1.4)
+    expect(res.tiers[1]!.threshold).toEqual(money(14000, 'CAD')); // ceil(10000 x 1.4)
   });
 
-  it('returns inactive when a market lacks a configured threshold (campaign not sold there)', async () => {
+  it('derives ZERO-DECIMAL (JPY) thresholds through the full config path (exponent shift)', async () => {
+    const res = await resolveCampaignConfig(
+      's.myshopify.com',
+      { presentmentCurrency: 'JPY', countryCode: 'JP', presentmentRate: '110.567' },
+      deps(ctx),
+    );
+    expect(res.status).toBe('active');
+    if (res.status !== 'active') return;
+    // ceil($50.00 x 110.567) = ceil(5528.35) = JPY 5529 ; ceil($100.00 x 110.567) = JPY 11057
+    expect(res.tiers[0]!.threshold).toEqual(money(5529, 'JPY'));
+    expect(res.tiers[1]!.threshold).toEqual(money(11057, 'JPY'));
+  });
+
+  it('returns inactive in a non-base market with no rate (campaign not offerable there)', async () => {
     const res = await resolveCampaignConfig(
       's.myshopify.com',
       { presentmentCurrency: 'EUR', countryCode: 'FR' },

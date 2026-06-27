@@ -25,6 +25,11 @@ export async function getConfig(
     currency: request.presentmentCurrency,
     country: request.countryCode,
   });
+  // Shopify's market FX rate (base -> presentment); the server derives the presentment threshold from
+  // it. Signed-as-forwarded by the App Proxy like the other params.
+  if (request.presentmentRate !== undefined) {
+    params.set('rate', request.presentmentRate);
+  }
 
   const response = await fetchFn(`${path}?${params.toString()}`, {
     headers: { Accept: 'application/json' },

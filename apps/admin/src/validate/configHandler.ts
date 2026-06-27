@@ -11,6 +11,7 @@ import type {
 import { verifyAppProxyHmac } from '../security/hmac.js';
 import type { RateLimiter } from './rateLimit.js';
 import { type ConfigServiceDeps, resolveCampaignConfig } from './configService.js';
+import { parsePresentmentRate } from './service.js';
 
 export type ConfigHttpRequest = {
   readonly method: string;
@@ -81,8 +82,17 @@ export async function handleConfig(
   if (countryCode === undefined || countryCode.length === 0) {
     return err(400, 'INVALID_REQUEST', 'country is required');
   }
+  // `rate` is OPTIONAL; when present it must parse to a finite > 0 number (else 400).
+  const rate = single(req.query['rate']);
+  if (rate !== undefined && parsePresentmentRate(rate) === null) {
+    return err(400, 'INVALID_REQUEST', 'rate must be a positive number');
+  }
 
-  const request: CampaignConfigRequest = { presentmentCurrency, countryCode };
+  const request: CampaignConfigRequest = {
+    presentmentCurrency,
+    countryCode,
+    ...(rate !== undefined ? { presentmentRate: rate } : {}),
+  };
   const result = await resolveCampaignConfig(shop, request, deps);
   return { status: 200, body: result };
 }
