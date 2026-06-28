@@ -52,13 +52,20 @@ export async function pickVariantIds(): Promise<string[]> {
 }
 
 // fetch() with the App Bridge session token attached as a Bearer header (the embedded admin's JWT
-// boundary). Throws on a non-2xx response, surfacing the ApiError message when present.
-export async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+// boundary). Does NOT throw — the caller inspects the Response (used by flows that must read a
+// non-2xx body, e.g. the 409 confirm-and-replace signal).
+export async function authedFetchRaw(path: string, init: RequestInit = {}): Promise<Response> {
   const token = await bridge().idToken();
-  const res = await fetch(path, {
+  return fetch(path, {
     ...init,
     headers: { ...init.headers, Authorization: `Bearer ${token}` },
   });
+}
+
+// authedFetchRaw + throw on a non-2xx response, surfacing the ApiError message when present. For the
+// common "succeed or show the error" flows (list, deactivate).
+export async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const res = await authedFetchRaw(path, init);
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {

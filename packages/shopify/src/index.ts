@@ -34,6 +34,7 @@ export {
 export {
   createScopedGiftDiscount,
   deactivateDiscount,
+  deleteDiscount,
   type CreatedDiscount,
   type DiscountCombinesWith,
   type ScopedGiftDiscountInput,

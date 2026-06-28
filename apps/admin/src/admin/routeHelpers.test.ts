@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiError } from '../contract.js';
 import { SessionTokenError } from '../security/sessionToken.js';
-import { AnotherCampaignActiveError } from '../services/activation.js';
+import { ActivationWindowError, ReplaceConfirmationRequiredError } from '../services/activation.js';
 import { CampaignValidationError } from '../services/campaign.js';
 import { ActiveCampaignNotEditableError, CampaignConfigError } from './campaignValidation.js';
 import { EditorParseError } from './editorMapping.js';
@@ -45,8 +45,16 @@ describe('toErrorResponse', () => {
     expect((await body(res)).error.code).toBe('VALIDATION');
   });
 
-  it('maps activating while another is active to 400 VALIDATION', async () => {
-    const res = toErrorResponse(new AnotherCampaignActiveError('c2', 'Smoke Test'));
+  it('maps a replace-confirmation to 409 CONFIRM_REQUIRED with requiresConfirmation', async () => {
+    const res = toErrorResponse(new ReplaceConfirmationRequiredError('c2', 'Smoke Test'));
+    expect(res.status).toBe(409);
+    const b = await body(res);
+    expect(b.error.code).toBe('CONFIRM_REQUIRED');
+    expect(b.error.requiresConfirmation).toBe(true);
+  });
+
+  it('maps an ended-window activation to 400 VALIDATION', async () => {
+    const res = toErrorResponse(new ActivationWindowError(new Date('2026-01-01T00:00:00Z')));
     expect(res.status).toBe(400);
     expect((await body(res)).error.code).toBe('VALIDATION');
   });

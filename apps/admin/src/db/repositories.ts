@@ -217,6 +217,21 @@ export class PrismaCampaignRepository implements CampaignRepository {
     const row = rows[0];
     return row === undefined ? null : toCampaign(row);
   }
+
+  async setActiveExclusive(shopId: string, newActiveId: string, startsAt: Date): Promise<void> {
+    // ONE transaction: deactivate every OTHER active campaign for the shop, then activate the new one
+    // (persisting startsAt for "start now"). The DB is never observable as 0-active or 2-active.
+    await this.prisma.$transaction([
+      this.prisma.campaign.updateMany({
+        where: { shopId, active: true, NOT: { id: newActiveId } },
+        data: { active: false },
+      }),
+      this.prisma.campaign.update({
+        where: { id: newActiveId },
+        data: { active: true, startsAt },
+      }),
+    ]);
+  }
 }
 
 export class PrismaGiftCodeMappingTable implements GiftCodeMappingTable {

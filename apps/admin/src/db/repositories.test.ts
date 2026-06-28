@@ -21,6 +21,7 @@ function makePrisma(overrides: Partial<PrismaDelegate<GiftCodeMappingRow>>): Pri
     findMany: unused,
     create: unused,
     update: unused,
+    updateMany: unused,
     delete: unused,
     upsert: unused,
   };
@@ -32,10 +33,12 @@ function makePrisma(overrides: Partial<PrismaDelegate<GiftCodeMappingRow>>): Pri
       findMany: unused,
       create: unused,
       update: unused,
+      updateMany: unused,
       delete: unused,
       upsert: unused,
       ...overrides,
     },
+    $transaction: unused,
   };
 }
 

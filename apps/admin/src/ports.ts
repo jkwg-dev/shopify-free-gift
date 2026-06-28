@@ -40,10 +40,14 @@ export interface CampaignRepository {
   listByShop(shopId: string): Promise<readonly Campaign[]>;
   updateConfigVersionHash(id: string, configVersionHash: string): Promise<void>;
   // Flip the activation boolean (Phase 3c). create/update never touch `active`; this is the only
-  // supported activation path. Mutual exclusion (≤ 1 active) is enforced by the caller.
+  // supported activation path. Used for plain deactivate.
   setActive(id: string, active: boolean): Promise<void>;
   // The single active FGE campaign for a shop (or null). Used to enforce mutual exclusion at activate.
   findActiveByShop(shopId: string): Promise<Campaign | null>;
+  // ATOMIC swap (Phase 3c C3): in ONE transaction, deactivate every other active campaign for the
+  // shop and activate `newActiveId` (also persisting its start instant for "start now"). Enforces
+  // ≤ 1 active at the DB level — the swap is never observable as 0-active or 2-active.
+  setActiveExclusive(shopId: string, newActiveId: string, startsAt: Date): Promise<void>;
 }
 
 // --- Gift-code mapping (low-level table the store arbitrates over) -------------------------------
@@ -85,6 +89,9 @@ export interface ShopifyDiscountGateway {
     input: ScopedGiftDiscountInput,
   ): Promise<{ code: string; discountId: string }>;
   deactivateDiscount(discountId: string): Promise<void>;
+  // Permanently delete the discount (Phase 3c teardown). After delete, a re-activation mints a FRESH
+  // code under the same key — an expired/deactivated code can't be reused by the same-key dedup.
+  deleteDiscount(discountId: string): Promise<void>;
 }
 
 export type ValidatedGiftVariant = {

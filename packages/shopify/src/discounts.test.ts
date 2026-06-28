@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createScopedGiftDiscount,
   deactivateDiscount,
+  deleteDiscount,
   type ScopedGiftDiscountInput,
 } from './discounts.js';
 import { AdminGraphqlClient } from './client.js';
@@ -286,5 +287,43 @@ describe('deactivateDiscount (type-agnostic — handles BXGY and basic)', () => 
     await expect(
       deactivateDiscount(client, 'gid://shopify/DiscountCodeNode/1'),
     ).rejects.toBeInstanceOf(ShopifyUserError);
+  });
+});
+
+describe('deleteDiscount (teardown — type-agnostic)', () => {
+  it('deletes by id', async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        body: {
+          data: {
+            discountCodeDelete: {
+              deletedCodeDiscountId: 'gid://shopify/DiscountCodeNode/99',
+              userErrors: [],
+            },
+          },
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    await deleteDiscount(client, 'gid://shopify/DiscountCodeNode/99');
+
+    expect(parseBody(calls[0]!).variables).toEqual({ id: 'gid://shopify/DiscountCodeNode/99' });
+  });
+
+  it('throws ShopifyUserError on a delete userError', async () => {
+    const { fetch } = mockFetch([
+      {
+        body: {
+          data: {
+            discountCodeDelete: { deletedCodeDiscountId: null, userErrors: [{ message: 'Nope' }] },
+          },
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    await expect(deleteDiscount(client, 'gid://shopify/DiscountCodeNode/1')).rejects.toBeInstanceOf(
+      ShopifyUserError,
+    );
   });
 });

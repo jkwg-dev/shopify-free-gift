@@ -60,10 +60,13 @@ export type ValidateVariantsResponse = {
 };
 
 // Uniform error envelope. `invalid` lists offending ids (e.g. dead gift variants) when relevant.
+// `requiresConfirmation` (Phase 3c) signals the client to show a confirm dialog and re-send with
+// confirmReplace (activating a campaign that would replace the live one). Additive + optional.
 export type ApiError = {
   readonly error: {
-    readonly code: 'VALIDATION' | 'NOT_FOUND' | 'UNAUTHORIZED';
+    readonly code: 'VALIDATION' | 'NOT_FOUND' | 'UNAUTHORIZED' | 'CONFIRM_REQUIRED';
     readonly message: string;
     readonly invalid?: readonly string[];
+    readonly requiresConfirmation?: boolean;
   };
 };

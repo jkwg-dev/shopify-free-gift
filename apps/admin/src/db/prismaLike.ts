@@ -10,6 +10,8 @@ export interface PrismaDelegate<Row> {
   findMany(args: { where?: Args; include?: Args; orderBy?: Args }): Promise<Row[]>;
   create(args: { data: Args; include?: Args }): Promise<Row>;
   update(args: { where: Args; data: Args; include?: Args }): Promise<Row>;
+  // Returns a PrismaPromise (lazy); when passed un-awaited to $transaction it runs in the batch.
+  updateMany(args: { where: Args; data: Args }): Promise<{ count: number }>;
   delete(args: { where: Args }): Promise<Row>;
   upsert(args: { where: Args; create: Args; update: Args; include?: Args }): Promise<Row>;
 }
@@ -74,6 +76,9 @@ export interface PrismaLike {
   shop: PrismaDelegate<ShopRow>;
   campaign: PrismaDelegate<CampaignRow>;
   giftCodeMapping: PrismaDelegate<GiftCodeMappingRow>;
+  // Batch (all-or-nothing) transaction. Operations are PrismaPromises produced by the delegates above
+  // and passed UN-awaited (the real client runs them atomically). Typed loosely at this I/O boundary.
+  $transaction(operations: readonly Promise<unknown>[]): Promise<unknown[]>;
 }
 
 // Prisma raises P2002 on a unique-constraint violation.

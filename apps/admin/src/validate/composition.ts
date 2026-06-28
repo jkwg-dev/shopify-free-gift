@@ -48,6 +48,7 @@ import { ShopifyDiscountGatewayAdapter } from '../gateways/shopifyDiscountGatewa
 import {
   activateCampaign,
   deactivateCampaign,
+  type ActivateOptions,
   type ActivationDeps,
 } from '../services/activation.js';
 import {
@@ -397,22 +398,24 @@ async function activationDeps(shopDomain: string): Promise<ActivationDeps> {
     gateway: await getGiftTagGateway(),
     mappingStore,
     giftsIncluded: giftsIncludedFlag(),
+    now: () => new Date(),
   };
 }
 
-// Activate a campaign for a (session-verified) shop. Ownership-checked (null -> 404). Provisions the
-// qualifying scope + EAGER-MINTS every per-tier code before flipping active (C2); throws
-// AnotherCampaignActiveError (different campaign active — C3 swaps), GiftProvisioningError (broken
-// scope), or ActivationMintError (a code failed) — campaign stays inactive in all cases.
+// Activate a campaign for a (session-verified) shop. Ownership-checked (null -> 404). Provisions +
+// eager-mints, then the ATOMIC confirm-and-replace swap (C3), then tears down the replaced campaign's
+// codes. Throws ReplaceConfirmationRequiredError (needs confirmReplace), ActivationWindowError,
+// GiftProvisioningError, or ActivationMintError — campaign stays inactive (prior keeps serving).
 export async function activateCampaignForDomain(
   shopDomain: string,
   campaignId: string,
+  options: ActivateOptions = {},
 ): Promise<CampaignResponse | null> {
   const shop = await shopRepo().findByDomain(shopDomain);
   if (shop === null) {
     return null;
   }
-  return activateCampaign(shop.id, campaignId, await activationDeps(shopDomain));
+  return activateCampaign(shop.id, campaignId, await activationDeps(shopDomain), options);
 }
 
 export async function deactivateCampaignForDomain(
@@ -423,9 +426,7 @@ export async function deactivateCampaignForDomain(
   if (shop === null) {
     return null;
   }
-  return deactivateCampaign(shop.id, campaignId, {
-    campaignRepo: new PrismaCampaignRepository(prismaLike()),
-  });
+  return deactivateCampaign(shop.id, campaignId, await activationDeps(shopDomain));
 }
 
 // --- /config (read-only campaign structure for the perception UI) --------------------------------
@@ -527,6 +528,10 @@ export function getWebhookDeps(shopDomain: string): WebhookDeps {
     async deactivateDiscount(id) {
       const client = await adminClientForShop(shopDomain, { allowUninstalled: true });
       return new ShopifyDiscountGatewayAdapter(client).deactivateDiscount(id);
+    },
+    async deleteDiscount(id) {
+      const client = await adminClientForShop(shopDomain, { allowUninstalled: true });
+      return new ShopifyDiscountGatewayAdapter(client).deleteDiscount(id);
     },
   };
   return {

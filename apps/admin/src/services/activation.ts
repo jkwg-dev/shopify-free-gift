@@ -1,10 +1,12 @@
-// Campaign activation/deactivation. Phase 3c Stage C2 makes ACTIVATE the side-effecting hub: it
-// provisions the shared qualifying scope and EAGER-MINTS every per-tier BXGY code (bounded-parallel,
-// window-bounded with endsAt) BEFORE flipping `active` — so the first storefront /validate just READS a
-// stored code (never a synchronous mint on the checkout-click path), and a provisioning/mint failure
-// leaves the campaign INACTIVE (never half-live) with a precise error. Mutual exclusion is still
-// REJECT-if-another-active (the confirm-and-replace swap + code teardown are C3). Ownership is checked
-// here. Pure over the ports + injected gateway/mapping store — unit-tested with fakes.
+// Campaign activation/deactivation. Phase 3c Stage C3: ACTIVATE is the side-effecting hub with an
+// atomic confirm-and-replace SWAP. It provisions the shared qualifying scope and EAGER-MINTS every
+// per-tier BXGY code (bounded-parallel, window-bounded with endsAt) BEFORE the swap, then flips
+// activation in ONE transaction (setActiveExclusive: deactivate every other active campaign + activate
+// this one) so the DB is never 0-active or 2-active. Replacing a live campaign requires confirmation
+// (ReplaceConfirmationRequiredError unless options.confirmReplace). The replaced campaign's codes are
+// TORN DOWN (deleted) post-commit. "Start now": a future startsAt is overridden to now (no
+// auto-transition, so activation = serve now until endsAt). Ownership is checked here. Pure over the
+// ports + injected gateway/mapping store — unit-tested with fakes.
 import { resolvedGiftSetHash, type Gift, type Money } from '@free-gift-engine/core';
 import type { DiscountCombinesWith } from '@free-gift-engine/shopify';
 import type { CampaignResponse } from '../contract.js';
@@ -15,20 +17,28 @@ import { GIFT_COMBINES_WITH } from '../validate/service.js';
 import { campaignToResponse } from './campaign.js';
 import { provisionGifts, type GiftTagGateway } from './giftLifecycle.js';
 
-// Bounded concurrency for eager-minting: ~14 codes / 5 in flight ≈ 3 waves, well within the Vercel
-// function budget while not hammering the Shopify discounts API. Tunable; measure the real activate
-// round-trip on dev and raise/lower (or move to an async activation) if needed.
+// Bounded concurrency for eager-minting (~14 codes / 5 in flight ≈ 3 waves). Tunable.
 const MINT_CONCURRENCY = 5;
 
-// Thrown when activating while a DIFFERENT FGE campaign is already active (≤ 1 active invariant). The
-// route maps it to a 400; Stage C3 replaces this with confirm-and-replace.
-export class AnotherCampaignActiveError extends Error {
+// Thrown when activating B would replace a DIFFERENT active campaign A and the caller has not
+// confirmed. The route maps it to a 409 with requiresConfirmation so the UI shows a confirm dialog;
+// re-calling with confirmReplace=true performs the swap. No side effects when thrown.
+export class ReplaceConfirmationRequiredError extends Error {
   constructor(
     readonly activeId: string,
     readonly activeName: string,
   ) {
-    super(`Another campaign ("${activeName}") is already active — deactivate it first.`);
-    this.name = 'AnotherCampaignActiveError';
+    super(`Replace the active campaign "${activeName}"? It will stop offering its gift.`);
+    this.name = 'ReplaceConfirmationRequiredError';
+  }
+}
+
+// Thrown when activating a campaign whose window has already ended (endsAt <= now) — it could never
+// serve. The route maps it to a 400.
+export class ActivationWindowError extends Error {
+  constructor(readonly endsAt: Date) {
+    super(`Campaign window has already ended (${endsAt.toISOString()}); cannot activate.`);
+    this.name = 'ActivationWindowError';
   }
 }
 
@@ -39,9 +49,8 @@ export type MintFailure = {
   readonly message: string;
 };
 
-// Thrown when one or more per-tier codes fail to mint at activate. Carries the exact failing tiers +
-// variants + Shopify message so the merchant sees WHICH gift is the problem (the campaign stays
-// inactive). The route maps it to a 400.
+// Thrown when one or more per-tier codes fail to mint at activate. Names the failing tiers + variants
+// so the merchant sees WHICH gift is the problem (the campaign stays inactive). Mapped to 400.
 export class ActivationMintError extends Error {
   constructor(readonly failures: readonly MintFailure[]) {
     super(
@@ -60,11 +69,12 @@ export type ActivationDeps = {
   readonly mappingStore: GiftCodeMappingStore;
   // The model-C flag (gifts INCLUDED in the qualifying collection); drives provisioning + the mint guard.
   readonly giftsIncluded: boolean;
+  readonly now: () => Date;
   readonly combinesWith?: DiscountCombinesWith;
 };
 
-// One reusable code to mint: an AND tier is ONE set (all variants under one code); an OR tier is one
-// set PER option (each option keys its own code). Mirrors what /validate mints lazily per winning set.
+export type ActivateOptions = { readonly confirmReplace?: boolean };
+
 type MintTarget = {
   readonly tierId: string;
   readonly position: number;
@@ -72,6 +82,7 @@ type MintTarget = {
   readonly minimumSubtotal: Money;
 };
 
+// One reusable code per resolved gift-set: AND -> one set; OR -> one per option. Mirrors /validate.
 function mintTargets(campaign: Campaign): MintTarget[] {
   return campaign.tiers.flatMap((tier) => {
     const base = { tierId: tier.id, position: tier.position, minimumSubtotal: tier.baseThreshold };
@@ -93,8 +104,7 @@ function allGiftVariantIds(campaign: Campaign): string[] {
   return [...ids];
 }
 
-// Run `fn` over items with at most `limit` in flight; settle ALL (never short-circuit) so one failure
-// doesn't abandon other in-flight mints (each is idempotent + reused on retry).
+// Run `fn` over items with at most `limit` in flight; settle ALL (never short-circuit).
 async function runBounded<T, R>(
   items: readonly T[],
   limit: number,
@@ -122,14 +132,17 @@ function messageOf(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
+// Eager-mint every per-tier code with the campaign's window [startsAt, endsAt]. `startsAt` is the
+// effective (possibly start-now-overridden) instant. Throws ActivationMintError naming any failures.
 async function eagerMint(
   campaign: Campaign,
   collectionId: string,
+  startsAt: Date,
   deps: ActivationDeps,
 ): Promise<void> {
   const targets = mintTargets(campaign);
-  const startsAt = campaign.startsAt.toISOString();
-  const endsAt = campaign.endsAt.toISOString();
+  const startsAtIso = startsAt.toISOString();
+  const endsAtIso = campaign.endsAt.toISOString();
   const combinesWith = deps.combinesWith ?? GIFT_COMBINES_WITH;
 
   const settled = await runBounded(targets, MINT_CONCURRENCY, (t) => {
@@ -144,8 +157,8 @@ async function eagerMint(
       giftVariantIds: t.gifts.map((g) => g.variantId),
       minimumSubtotal: t.minimumSubtotal,
       qualifyingCollectionId: collectionId,
-      startsAt,
-      endsAt,
+      startsAt: startsAtIso,
+      endsAt: endsAtIso,
       combinesWith,
     };
     return deps.mappingStore.getOrCreate(key, spec);
@@ -172,42 +185,62 @@ async function eagerMint(
 }
 
 // Activate a campaign owned by `shopId`. null when not found / not owned (-> 404). Idempotent when
-// already active. Throws AnotherCampaignActiveError (different campaign active), GiftProvisioningError
-// (broken scope), or ActivationMintError (a code failed to mint) — in all of which the campaign stays
-// INACTIVE. The `active` flip is the LAST step (commit point), AFTER provision + every code is minted.
+// already active. Throws ReplaceConfirmationRequiredError (a different campaign is active and
+// confirmReplace wasn't set), ActivationWindowError (window ended), GiftProvisioningError (broken
+// scope), or ActivationMintError (a code failed) — in all of which the campaign stays INACTIVE and the
+// prior active campaign keeps serving. On success: provision + eager-mint, then the ATOMIC swap, then
+// tear down the replaced campaign's codes (post-commit, best-effort).
 export async function activateCampaign(
   shopId: string,
   campaignId: string,
   deps: ActivationDeps,
+  options: ActivateOptions = {},
 ): Promise<CampaignResponse | null> {
   const campaign = await deps.campaignRepo.findById(campaignId);
   if (campaign === null || campaign.shopId !== shopId) {
     return null;
   }
   if (campaign.active) {
-    return campaignToResponse(campaign); // already active — no-op (no re-provision/re-mint)
+    return campaignToResponse(campaign); // already active — no-op
   }
-  const other = await deps.campaignRepo.findActiveByShop(shopId);
-  if (other !== null && other.id !== campaignId) {
-    throw new AnotherCampaignActiveError(other.id, other.name);
+  const now = deps.now();
+  if (campaign.endsAt.getTime() <= now.getTime()) {
+    throw new ActivationWindowError(campaign.endsAt);
+  }
+  const prior = await deps.campaignRepo.findActiveByShop(shopId);
+  const replacing = prior !== null && prior.id !== campaignId;
+  if (replacing && options.confirmReplace !== true) {
+    throw new ReplaceConfirmationRequiredError(prior.id, prior.name);
   }
 
+  // Start now: a future startsAt is overridden to now (no auto-transition, so a future start would
+  // only create a serving gap). endsAt is unchanged and still closes the window (Shopify expires codes).
+  const startsAt = campaign.startsAt.getTime() > now.getTime() ? now : campaign.startsAt;
+
+  // Provision + eager-mint BEFORE the swap, so a failure leaves the prior campaign active (no gap).
   const provision = await provisionGifts(deps.gateway, allGiftVariantIds(campaign), {
     giftsIncluded: deps.giftsIncluded,
   });
-  await eagerMint(campaign, provision.collectionId, deps);
+  await eagerMint(campaign, provision.collectionId, startsAt, deps);
 
-  await deps.campaignRepo.setActive(campaignId, true); // commit LAST
-  return campaignToResponse({ ...campaign, active: true });
+  // Atomic swap (commit): exactly this campaign is active afterwards.
+  await deps.campaignRepo.setActiveExclusive(shopId, campaignId, startsAt);
+
+  // Post-commit teardown of the replaced campaign's codes (best-effort; B is already serving).
+  if (replacing && prior !== null) {
+    await deps.mappingStore.teardownCampaign(prior.id);
+  }
+  return campaignToResponse({ ...campaign, active: true, startsAt });
 }
 
 // Deactivate a campaign owned by `shopId`. null when not found / not owned. Idempotent when already
-// inactive. Stage C2 flips the flag only (the lazy /validate gate stops offering immediately, and the
-// minted codes carry endsAt so they expire with the schedule); explicit code teardown is C3.
+// inactive. Flips active off (the lazy /validate gate stops offering) AND tears down its codes
+// (deletes them so a held code stops working immediately). Touches only this campaign's codes — the
+// shared collection + gift tags are untouched (model-C).
 export async function deactivateCampaign(
   shopId: string,
   campaignId: string,
-  deps: Pick<ActivationDeps, 'campaignRepo'>,
+  deps: Pick<ActivationDeps, 'campaignRepo' | 'mappingStore'>,
 ): Promise<CampaignResponse | null> {
   const campaign = await deps.campaignRepo.findById(campaignId);
   if (campaign === null || campaign.shopId !== shopId) {
@@ -217,5 +250,6 @@ export async function deactivateCampaign(
     return campaignToResponse(campaign); // already inactive — no-op
   }
   await deps.campaignRepo.setActive(campaignId, false);
+  await deps.mappingStore.teardownCampaign(campaignId);
   return campaignToResponse({ ...campaign, active: false });
 }

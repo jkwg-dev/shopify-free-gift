@@ -158,6 +158,12 @@ export class FakeDiscountGateway implements ShopifyDiscountGateway {
     this.deactivated.push(discountId);
     return Promise.resolve();
   }
+
+  readonly deleted: string[] = [];
+  deleteDiscount(discountId: string): Promise<void> {
+    this.deleted.push(discountId);
+    return Promise.resolve();
+  }
 }
 
 export class FakeVariantGateway implements GiftVariantGateway {
@@ -224,6 +230,21 @@ export class FakeCampaignRepository implements CampaignRepository {
     return Promise.resolve(
       [...this.store.values()].find((c) => c.shopId === shopId && c.active) ?? null,
     );
+  }
+
+  setActiveExclusive(shopId: string, newActiveId: string, startsAt: Date): Promise<void> {
+    // Atomic in the fake (synchronous): deactivate every other active campaign for the shop, then
+    // activate the new one (+ persist startsAt). Mirrors the Prisma $transaction.
+    for (const [id, c] of this.store) {
+      if (c.shopId === shopId && c.active && id !== newActiveId) {
+        this.store.set(id, { ...c, active: false });
+      }
+    }
+    const target = this.store.get(newActiveId);
+    if (target !== undefined) {
+      this.store.set(newActiveId, { ...target, active: true, startsAt });
+    }
+    return Promise.resolve();
   }
 
   private materialize(id: string, shopId: string, input: NewCampaignInput): Campaign {

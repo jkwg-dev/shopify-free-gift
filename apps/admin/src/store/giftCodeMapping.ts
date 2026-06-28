@@ -180,4 +180,27 @@ export class GiftCodeMappingStore {
   private isAbandoned(row: GiftCodeMapping): boolean {
     return this.now().getTime() - row.createdAt.getTime() >= this.staleReservationMs;
   }
+
+  // Teardown (Phase 3c): permanently delete every active code of a campaign — the Shopify discount
+  // AND the mapping row — so held codes stop working and a later re-activation mints FRESH codes under
+  // the same key (a deleted row can't be reused by same-key dedup). Best-effort + idempotent: a code
+  // whose delete fails keeps its row and is retried on the next teardown. Returns counts for logging.
+  // Scoped to THIS campaign's codes only; the shared qualifying collection + gift tags are untouched.
+  async teardownCampaign(campaignId: string): Promise<{ deleted: number; failed: number }> {
+    const mappings = await this.table.findActiveByCampaign(campaignId);
+    let deleted = 0;
+    let failed = 0;
+    for (const mapping of mappings) {
+      try {
+        if (mapping.discountId !== null) {
+          await this.gateway.deleteDiscount(mapping.discountId);
+        }
+        await this.table.deletePending(mapping.id); // plain row delete; frees the key for a fresh mint
+        deleted += 1;
+      } catch {
+        failed += 1; // leave the row so the next teardown retries it
+      }
+    }
+    return { deleted, failed };
+  }
 }

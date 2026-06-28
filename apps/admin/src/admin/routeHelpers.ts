@@ -5,7 +5,11 @@
 import type { ApiError } from '../contract.js';
 import { SessionTokenError } from '../security/sessionToken.js';
 import { getAdminSessionConfig } from '../validate/composition.js';
-import { AnotherCampaignActiveError, ActivationMintError } from '../services/activation.js';
+import {
+  ActivationMintError,
+  ActivationWindowError,
+  ReplaceConfirmationRequiredError,
+} from '../services/activation.js';
 import { CampaignValidationError } from '../services/campaign.js';
 import { GiftProvisioningError } from '../services/giftLifecycle.js';
 import { ActiveCampaignNotEditableError, CampaignConfigError } from './campaignValidation.js';
@@ -48,7 +52,15 @@ export function toErrorResponse(err: unknown): Response {
   if (err instanceof ActiveCampaignNotEditableError) {
     return apiError(400, 'VALIDATION', err.message);
   }
-  if (err instanceof AnotherCampaignActiveError) {
+  // Confirm-and-replace (Stage C3): the activation would replace the live campaign. Signal the UI to
+  // confirm; re-sending with confirmReplace performs the swap. No side effects occurred.
+  if (err instanceof ReplaceConfirmationRequiredError) {
+    return Response.json(
+      { error: { code: 'CONFIRM_REQUIRED', message: err.message, requiresConfirmation: true } },
+      { status: 409 },
+    );
+  }
+  if (err instanceof ActivationWindowError) {
     return apiError(400, 'VALIDATION', err.message);
   }
   // Activation provisioning/mint failures (Stage C2): the campaign stayed inactive; surface the

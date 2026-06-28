@@ -1,6 +1,7 @@
 import {
   createScopedGiftDiscount,
   deactivateDiscount,
+  deleteDiscount,
   ShopifyUserError,
   type AdminGraphqlClient,
   type CreatedDiscount,
@@ -48,5 +49,9 @@ export class ShopifyDiscountGatewayAdapter implements ShopifyDiscountGateway {
 
   deactivateDiscount(discountId: string): Promise<void> {
     return deactivateDiscount(this.client, discountId);
+  }
+
+  deleteDiscount(discountId: string): Promise<void> {
+    return deleteDiscount(this.client, discountId);
   }
 }

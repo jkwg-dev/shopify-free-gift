@@ -71,6 +71,13 @@ const DEACTIVATE_MUTATION = `mutation DeactivateDiscount($id: ID!) {
   }
 }`;
 
+const DELETE_MUTATION = `mutation DeleteDiscount($id: ID!) {
+  discountCodeDelete(id: $id) {
+    deletedCodeDiscountId
+    userErrors { field message code }
+  }
+}`;
+
 type CreateResponse = {
   readonly discountCodeBxgyCreate: {
     readonly codeDiscountNode: { readonly id: string } | null;
@@ -81,6 +88,13 @@ type CreateResponse = {
 type DeactivateResponse = {
   readonly discountCodeDeactivate: {
     readonly codeDiscountNode: { readonly id: string } | null;
+    readonly userErrors: readonly UserErrorDetail[];
+  };
+};
+
+type DeleteResponse = {
+  readonly discountCodeDelete: {
+    readonly deletedCodeDiscountId: string | null;
     readonly userErrors: readonly UserErrorDetail[];
   };
 };
@@ -179,4 +193,16 @@ export async function deactivateDiscount(
 ): Promise<void> {
   const data = await client.request<DeactivateResponse>(DEACTIVATE_MUTATION, { id: discountId });
   throwOnUserErrors(data.discountCodeDeactivate.userErrors);
+}
+
+// Permanently DELETE a discount (discountCodeDelete) — used for campaign teardown (Phase 3c). Unlike
+// deactivate, this REMOVES the discount so a held code stops working and a later re-activation mints a
+// FRESH code under the same minting key (an expired/deactivated code can't be reused by same-key dedup).
+// Type-agnostic: handles BXGY and basic codes alike.
+export async function deleteDiscount(
+  client: AdminGraphqlClient,
+  discountId: string,
+): Promise<void> {
+  const data = await client.request<DeleteResponse>(DELETE_MUTATION, { id: discountId });
+  throwOnUserErrors(data.discountCodeDelete.userErrors);
 }
