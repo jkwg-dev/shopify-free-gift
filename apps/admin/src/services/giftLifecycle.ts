@@ -116,7 +116,9 @@ export async function provisionGifts(
       throw new GiftProvisioningError(
         'membership-not-confirmed',
         `Gift products are not yet excluded from collection ${collection.id} — membership did not ` +
-          `settle in time. Refusing to mint (a gift could self-qualify).`,
+          `settle in time. Refusing to mint (a gift could self-qualify). If this store runs the ` +
+          `inclusion model (model-C, gifts ARE members), set FGE_GIFTS_INCLUDED=true so provisioning ` +
+          `waits for INCLUSION instead of exclusion.`,
       );
     }
   }

@@ -92,7 +92,10 @@ function requireEnv(name: string): string {
 // + the mint guard skip + un-tag provisioning). Set FGE_GIFTS_INCLUDED=true to flip; re-provision to
 // apply (see docs/model-c-include-gifts-design.md).
 export function giftsIncludedFlag(): boolean {
-  return process.env['FGE_GIFTS_INCLUDED'] === 'true';
+  // Tolerant of common truthy spellings so a Vercel value of `1`/`True`/` true ` isn't silently read
+  // as OFF (which would run the EXCLUSION provisioning path against a model-C/include store and fail).
+  const raw = process.env['FGE_GIFTS_INCLUDED'];
+  return raw !== undefined && ['1', 'on', 'true', 'yes'].includes(raw.trim().toLowerCase());
 }
 function qualifyingRule(): QualifyingRule {
   return giftsIncludedFlag() ? ALL_PRODUCTS_RULE : EXCLUDE_GIFTS_RULE;
