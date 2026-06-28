@@ -5,8 +5,9 @@
 import type { ApiError } from '../contract.js';
 import { SessionTokenError } from '../security/sessionToken.js';
 import { getAdminSessionConfig } from '../validate/composition.js';
-import { AnotherCampaignActiveError } from '../services/activation.js';
+import { AnotherCampaignActiveError, ActivationMintError } from '../services/activation.js';
 import { CampaignValidationError } from '../services/campaign.js';
+import { GiftProvisioningError } from '../services/giftLifecycle.js';
 import { ActiveCampaignNotEditableError, CampaignConfigError } from './campaignValidation.js';
 import { EditorParseError } from './editorMapping.js';
 import { shopFromBearer } from './session.js';
@@ -49,6 +50,19 @@ export function toErrorResponse(err: unknown): Response {
   }
   if (err instanceof AnotherCampaignActiveError) {
     return apiError(400, 'VALIDATION', err.message);
+  }
+  // Activation provisioning/mint failures (Stage C2): the campaign stayed inactive; surface the
+  // precise cause (e.g. which gift variant couldn't mint) so the merchant can fix it.
+  if (err instanceof GiftProvisioningError) {
+    return apiError(400, 'VALIDATION', err.message);
+  }
+  if (err instanceof ActivationMintError) {
+    return apiError(
+      400,
+      'VALIDATION',
+      err.message,
+      err.failures.flatMap((f) => f.variantIds),
+    );
   }
   throw err;
 }

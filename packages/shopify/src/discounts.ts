@@ -35,6 +35,10 @@ export type ScopedGiftDiscountInput = {
   readonly qualifyingCollectionId: string;
   // ISO 8601 activation instant. Supplied by the caller — this package keeps no clock.
   readonly startsAt: string;
+  // ISO 8601 expiry instant (= the campaign's endsAt). When set, Shopify stops honoring the code at
+  // the window close, so an expired campaign's held codes can't be redeemed — schedule expiry needs
+  // no cron (the lazy /validate gate stops offering and Shopify stops honoring at the same instant).
+  readonly endsAt?: string;
   readonly combinesWith: DiscountCombinesWith;
   // Model-C flip (default false = today's behavior): when true, gift products are INTENTIONALLY
   // members of the qualifying collection (BXGY's buys/gets split keeps the $0 gift from
@@ -101,6 +105,7 @@ function buildBxgyCodeDiscount(input: ScopedGiftDiscountInput): Record<string, u
     title: input.title,
     code: input.code,
     startsAt: input.startsAt,
+    ...(input.endsAt !== undefined ? { endsAt: input.endsAt } : {}),
     combinesWith: input.combinesWith,
     context: { all: 'ALL' },
     customerBuys: {

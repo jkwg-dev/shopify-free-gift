@@ -45,7 +45,11 @@ import {
   PrismaShopRepository,
 } from '../db/repositories.js';
 import { ShopifyDiscountGatewayAdapter } from '../gateways/shopifyDiscountGateway.js';
-import { activateCampaign, deactivateCampaign } from '../services/activation.js';
+import {
+  activateCampaign,
+  deactivateCampaign,
+  type ActivationDeps,
+} from '../services/activation.js';
 import {
   createCampaign,
   getCampaign,
@@ -377,8 +381,26 @@ export async function updateCampaignDraft(
 
 // --- embedded admin: activation (Phase 3c Stage C1, flip-only) -----------------------------------
 
-// Activate a campaign for a (session-verified) shop. Ownership-checked (null -> 404). Throws
-// AnotherCampaignActiveError when a different FGE campaign is active (Stage C1 rejects; C3 swaps).
+// Activation deps (Stage C2): the campaign repo + the gift-tag gateway (provisioning) + the gift-code
+// mapping store (eager-mint). Built from the shop's persisted admin token, like getValidateDeps.
+async function activationDeps(shopDomain: string): Promise<ActivationDeps> {
+  const client = await adminClientForShop(shopDomain);
+  const mappingStore = new GiftCodeMappingStore(
+    new PrismaGiftCodeMappingTable(prismaLike()),
+    new ShopifyDiscountGatewayAdapter(client, giftsIncludedFlag()),
+  );
+  return {
+    campaignRepo: new PrismaCampaignRepository(prismaLike()),
+    gateway: await getGiftTagGateway(),
+    mappingStore,
+    giftsIncluded: giftsIncludedFlag(),
+  };
+}
+
+// Activate a campaign for a (session-verified) shop. Ownership-checked (null -> 404). Provisions the
+// qualifying scope + EAGER-MINTS every per-tier code before flipping active (C2); throws
+// AnotherCampaignActiveError (different campaign active — C3 swaps), GiftProvisioningError (broken
+// scope), or ActivationMintError (a code failed) — campaign stays inactive in all cases.
 export async function activateCampaignForDomain(
   shopDomain: string,
   campaignId: string,
@@ -387,9 +409,7 @@ export async function activateCampaignForDomain(
   if (shop === null) {
     return null;
   }
-  return activateCampaign(shop.id, campaignId, {
-    campaignRepo: new PrismaCampaignRepository(prismaLike()),
-  });
+  return activateCampaign(shop.id, campaignId, await activationDeps(shopDomain));
 }
 
 export async function deactivateCampaignForDomain(

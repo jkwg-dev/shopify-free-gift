@@ -67,7 +67,7 @@ export class ValidateBadRequestError extends Error {
 // suppression requirement; also backed by server highest-only resolution). They MAY coexist with
 // order/shipping discounts. GreenTee runs promos via direct price edits (not product discount
 // codes), so "gift not combinable with other product discounts" is an accepted side effect.
-const GIFT_COMBINES_WITH: DiscountCombinesWith = {
+export const GIFT_COMBINES_WITH: DiscountCombinesWith = {
   productDiscounts: false,
   orderDiscounts: true,
   shippingDiscounts: true,
@@ -237,24 +237,35 @@ export async function resolveValidate(
   }
 
   const domainTier = campaign.tiers.find((t) => t.id === winning.tierId) as Tier;
-  const mapping = await deps.mappingStore.getOrCreate(
-    {
-      campaignId: campaign.id,
-      tierId: winning.tierId,
-      resolvedGiftSetHash: resolvedGiftSetHash(winning.gifts),
-      configVersionHash: campaign.configVersionHash,
-    },
-    {
-      title: `${campaign.name} — tier ${domainTier.position}`,
-      giftVariantIds,
-      minimumSubtotal: domainTier.baseThreshold,
-      qualifyingCollectionId: deps.qualifyingCollectionId,
-      startsAt: campaign.startsAt.toISOString(),
-      combinesWith: deps.giftCombinesWith ?? GIFT_COMBINES_WITH,
-    },
-  );
+  // Defense-in-depth: minting is a synchronous Shopify call on the checkout-click path. Post-3c-C2 the
+  // codes are eager-minted at activate so this just READS the stored code — but if a mint must run here
+  // and FAILS (Shopify userError, empty scope, etc.), DEGRADE to no-gift rather than throw → the
+  // /validate route must never 500/hang the storefront widget. The real cause is logged for triage.
+  let mapping;
+  try {
+    mapping = await deps.mappingStore.getOrCreate(
+      {
+        campaignId: campaign.id,
+        tierId: winning.tierId,
+        resolvedGiftSetHash: resolvedGiftSetHash(winning.gifts),
+        configVersionHash: campaign.configVersionHash,
+      },
+      {
+        title: `${campaign.name} — tier ${domainTier.position}`,
+        giftVariantIds,
+        minimumSubtotal: domainTier.baseThreshold,
+        qualifyingCollectionId: deps.qualifyingCollectionId,
+        startsAt: campaign.startsAt.toISOString(),
+        endsAt: campaign.endsAt.toISOString(),
+        combinesWith: deps.giftCombinesWith ?? GIFT_COMBINES_WITH,
+      },
+    );
+  } catch (err) {
+    console.error('[validate] gift-code mint failed; degrading to no-gift', err);
+    return { status: 'no-gift', reason: 'gift-unavailable', subtotal: resolved.subtotal };
+  }
   if (mapping.code === null) {
-    throw new Error(`Gift-code mapping for tier ${winning.tierId} resolved without a code`);
+    return { status: 'no-gift', reason: 'gift-unavailable', subtotal: resolved.subtotal };
   }
 
   return {

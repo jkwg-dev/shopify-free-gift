@@ -79,6 +79,8 @@ type BxgyView = {
     value: { discountOnQuantity: { quantity: string; effect: { percentage: number } } };
     items: { products: { productVariantsToAdd: string[] } };
   };
+  readonly startsAt?: string;
+  readonly endsAt?: string;
   readonly usageLimit?: unknown;
   readonly appliesOncePerCustomer?: unknown;
 };
@@ -125,6 +127,21 @@ describe('createScopedGiftDiscount — BXGY payload', () => {
     expect('usageLimit' in input).toBe(false);
     expect('appliesOncePerCustomer' in input).toBe(false);
     expect(input.code).toBe(baseInput.code);
+  });
+
+  it('forwards endsAt when present and omits it when absent (schedule-bounded codes)', async () => {
+    const withEnd = mockFetch(mintOk);
+    await createScopedGiftDiscount(new AdminGraphqlClient(testConfig(withEnd.fetch)), {
+      ...baseInput,
+      endsAt: '2026-07-01T00:00:00.000Z',
+    });
+    const ended = getBxgy(parseBody(withEnd.calls[3]!));
+    expect(ended.startsAt).toBe(baseInput.startsAt);
+    expect(ended.endsAt).toBe('2026-07-01T00:00:00.000Z');
+
+    const noEnd = mockFetch(mintOk);
+    await createScopedGiftDiscount(new AdminGraphqlClient(testConfig(noEnd.fetch)), baseInput);
+    expect('endsAt' in getBxgy(parseBody(noEnd.calls[3]!))).toBe(false);
   });
 
   it('returns the opaque code and created discount id', async () => {

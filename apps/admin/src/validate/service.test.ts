@@ -113,10 +113,15 @@ function makeDeps(
     campaign?: Campaign | null;
     prices?: PriceTable;
     now?: () => Date;
+    failMint?: boolean;
   } = {},
 ): { deps: ValidateServiceDeps; gateway: FakeDiscountGateway } {
-  const gateway = new FakeDiscountGateway();
-  const store = new GiftCodeMappingStore(new FakeMappingTable(), gateway);
+  const gateway = options.failMint
+    ? new FakeDiscountGateway({ failWith: new Error('mint boom') })
+    : new FakeDiscountGateway();
+  const store = new GiftCodeMappingStore(new FakeMappingTable(), gateway, {
+    sleep: () => Promise.resolve(),
+  });
   const campaign = options.campaign === undefined ? DEFAULT_CAMPAIGN : options.campaign;
   const deps: ValidateServiceDeps = {
     resolveActiveCampaign: () =>
@@ -495,6 +500,21 @@ describe('resolveValidate — no-gift paths', () => {
     const result = await resolveValidate(
       'shop.myshopify.com',
       req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }), // $120 -> t2 (G2)
+      deps,
+    );
+
+    expect(result).toEqual({
+      status: 'no-gift',
+      reason: 'gift-unavailable',
+      subtotal: money(12000, 'USD'),
+    });
+  });
+
+  it('degrades to no-gift (never throws -> never 500s the storefront) when minting fails', async () => {
+    const { deps } = makeDeps({ failMint: true });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }), // $120 -> qualifies t2
       deps,
     );
 
