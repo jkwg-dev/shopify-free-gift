@@ -63,7 +63,7 @@ export type CampaignRow = {
 export type GiftCodeMappingRow = {
   id: string;
   campaignId: string;
-  tierId: string;
+  tierPosition: number;
   resolvedGiftSetHash: string;
   configVersionHash: string;
   code: string | null;

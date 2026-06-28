@@ -16,7 +16,7 @@ const spec: GiftDiscountSpec = {
 
 const keyWithHash = (configVersionHash: string): MintingKey => ({
   campaignId: 'c1',
-  tierId: 't1',
+  tierPosition: 1,
   resolvedGiftSetHash: 'g1',
   configVersionHash,
 });

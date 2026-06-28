@@ -34,14 +34,14 @@ function allVariantIds(input: CampaignInputDTO): string[] {
   return [...new Set(input.tiers.flatMap((tier) => giftVariantIds(tier.gift)))];
 }
 
-function toConfigVersionHash(input: CampaignInputDTO): string {
+export function toConfigVersionHash(input: CampaignInputDTO): string {
   return configVersionHash({
     suppression: input.suppression,
     tiers: input.tiers.map((tier) => ({ threshold: tier.baseThreshold, gift: tier.gift })),
   });
 }
 
-function toNewCampaignInput(input: CampaignInputDTO, hash: string): NewCampaignInput {
+export function toNewCampaignInput(input: CampaignInputDTO, hash: string): NewCampaignInput {
   return {
     name: input.name,
     suppression: input.suppression,
@@ -92,7 +92,7 @@ function toResponse(campaign: Campaign): CampaignResponse {
 }
 
 // Validate every referenced gift variant is live; throws CampaignValidationError otherwise.
-async function assertVariantsLive(
+export async function assertVariantsLive(
   input: CampaignInputDTO,
   variantGateway: GiftVariantGateway,
 ): Promise<void> {

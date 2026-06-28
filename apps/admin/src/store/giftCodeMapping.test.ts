@@ -7,7 +7,7 @@ import { GiftCodeMappingStore, type GiftDiscountSpec } from './giftCodeMapping.j
 
 const key: MintingKey = {
   campaignId: 'c1',
-  tierId: 't1',
+  tierPosition: 1,
   resolvedGiftSetHash: 'g1',
   configVersionHash: 'v1',
 };

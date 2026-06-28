@@ -58,7 +58,7 @@ Core `Money` is integer minor units, but the minor-unit exponent depends on the 
 
 ### Decision: discount code minting
 
-- A discount code is **reusable**, keyed by the tuple `(campaignId, tierId, resolvedGiftSetHash, configVersionHash)`. The same qualifying state always maps to the same code.
+- A discount code is **reusable**, keyed by the tuple `(campaignId, tierPosition, resolvedGiftSetHash, configVersionHash)`. The tier component is the tier **POSITION**, not the DB tier id: it is config-derived, stable across the tier-row recreation `updateCampaign` does, and derivable from the campaign config **before any DB write** — which is what lets edit-while-active **supersede** eager-mint the new version's codes before the commit (Phase 3c Q4). `configVersionHash` is the version discriminator (N vs N+1). The same qualifying state always maps to the same code.
 - **One code per resolved OR choice**: each distinct resolved gift-set (the shopper's A-or-B pick, fully resolved) gets its own code. `resolvedGiftSetHash` is computed over the resolved variant set so OR branches never collide.
 - **Idempotent lookup in Postgres**: before minting, look up the key tuple; reuse the stored code if present, otherwise create it once and persist. Concurrent `/validate` calls for the same state converge on one code (unique constraint on the key tuple).
 - **Base-currency minimum**: the discount's minimum-purchase condition is set in the store's base currency so a single code serves all markets; Shopify applies the native market conversion at checkout. We do not mint a code per market.
@@ -127,10 +127,13 @@ campaign list. **Stage B = the campaign + tier EDITOR (create/edit INACTIVE draf
   `shopFromBearer`/`authenticateShop` helper as the Stage-A GET (401 on failure). Ownership is
   enforced in the composition layer (a campaign not owned by the verified shop → 404, never leaked).
   The App-Proxy routes (`/validate`, `/config`) keep their own HMAC and are NOT subject to JWT/CSP.
-- **Drafts only**: create/update never set `active` (defaults false); Stage B refuses to edit an
-  ACTIVE campaign (`ActiveCampaignNotEditableError` → 400) so a live campaign's codes are never
-  superseded before Stage C builds activation/teardown. No provisioning, no qualifying-scope setting
-  (Stage D), no channel policy (Stage E).
+- **Drafts only at create**: create/update never set `active` (defaults false). Editing a LIVE
+  campaign is now allowed via **Phase 3c Q4 supersede** (PUT routes through `supersedeCampaign`):
+  eager-mint the new config's codes → atomic `configVersionHash` flip in one `campaign.update` → tear
+  down the old-version codes; a mint failure leaves the old config fully live. A live **schedule**
+  edit is refused (`ScheduleEditRequiresDeactivationError` → 400 — deactivate to change the window).
+  Stage B itself added no provisioning, no qualifying-scope setting (Stage D), no channel policy
+  (Stage E).
 - **Suppression is fixed to `highest-only`** — the form shows it read-only and the server rejects any
   other value (`suppression-unsupported`). Cumulative stays non-creatable (Advanced limitation).
 - **Tier-shape validation is pure + tested**: core `validateCampaignConfig` (thresholds strictly

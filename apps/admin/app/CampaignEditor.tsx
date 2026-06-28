@@ -16,6 +16,7 @@ import {
   Checkbox,
   FormLayout,
   InlineStack,
+  Modal,
   Page,
   Select,
   Spinner,
@@ -92,6 +93,9 @@ export function CampaignEditor({
   const [endsLocal, setEndsLocal] = useState(defaultEnd);
   const [declineEnabled, setDeclineEnabled] = useState(true);
   const [tiers, setTiers] = useState<readonly TierForm[]>([blankTier(baseCurrency)]);
+  // Whether the campaign was LIVE when opened — saving then SUPERSEDES (confirm first).
+  const [wasActive, setWasActive] = useState(false);
+  const [confirmLive, setConfirmLive] = useState(false);
 
   // Load the existing draft for editing. Threshold is forced to the base currency and per-market rows
   // are dropped (the editor is now single-base-currency); the loaded amount string is kept.
@@ -111,6 +115,7 @@ export function CampaignEditor({
         setStartsLocal(isoToLocal(view.startsAt));
         setEndsLocal(isoToLocal(view.endsAt));
         setDeclineEnabled(view.declineEnabled);
+        setWasActive(view.active);
         setTiers(
           view.tiers.map((t) => ({
             ...t,
@@ -208,6 +213,17 @@ export function CampaignEditor({
     }
   };
 
+  // Editing a LIVE campaign supersedes it (shoppers see the change) — confirm first. A draft saves
+  // directly.
+  const requestSave = (): void => {
+    if (wasActive) {
+      setConfirmLive(true);
+    } else {
+      void save();
+    }
+  };
+  const saveLabel = wasActive ? 'Update live campaign' : 'Save draft';
+
   if (loading) {
     return (
       <Page title="Edit campaign">
@@ -220,7 +236,7 @@ export function CampaignEditor({
     <Page
       title={campaignId === undefined ? 'Create campaign' : 'Edit campaign'}
       backAction={{ content: 'Campaigns', onAction: onCancel }}
-      primaryAction={{ content: 'Save draft', onAction: () => void save(), disabled: saving }}
+      primaryAction={{ content: saveLabel, onAction: requestSave, disabled: saving }}
     >
       <BlockStack gap="400">
         {error !== null ? (
@@ -355,11 +371,33 @@ export function CampaignEditor({
 
         <InlineStack align="space-between">
           <Button onClick={addTier}>Add tier</Button>
-          <Button variant="primary" onClick={() => void save()} loading={saving}>
-            Save draft
+          <Button variant="primary" onClick={requestSave} loading={saving}>
+            {saveLabel}
           </Button>
         </InlineStack>
       </BlockStack>
+
+      <Modal
+        open={confirmLive}
+        onClose={() => setConfirmLive(false)}
+        title="Update the live campaign?"
+        primaryAction={{
+          content: 'Update',
+          onAction: () => {
+            setConfirmLive(false);
+            void save();
+          },
+        }}
+        secondaryActions={[{ content: 'Cancel', onAction: () => setConfirmLive(false) }]}
+      >
+        <Modal.Section>
+          <Text as="p">
+            Shoppers will immediately see the new gifts/tiers. The campaign stays live throughout
+            (its current codes are replaced atomically). To change the schedule instead, deactivate
+            first.
+          </Text>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }

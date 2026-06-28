@@ -1,6 +1,6 @@
 // Embedded admin API: a single campaign.
 //   GET /api/admin/campaigns/[id]  — load one as an editor view (decimals + gift titles).
-//   PUT /api/admin/campaigns/[id]  — update an INACTIVE draft (Phase 3b Stage B).
+//   PUT /api/admin/campaigns/[id]  — edit a draft OR supersede a LIVE campaign (Phase 3c Q4).
 // AUTH: the App Bridge session token (Bearer JWT) via authenticateShop — the SAME boundary as the
 // collection route. Ownership is enforced in the composition layer (a campaign not owned by the
 // verified shop returns 404, never leaking it). Node runtime. App-Proxy routes are untouched.
@@ -13,7 +13,7 @@ import {
 import type { CampaignEditorInput } from '../../../../../src/admin/editorTypes.js';
 import {
   getCampaignEditorView,
-  updateCampaignDraft,
+  supersedeCampaignForDomain,
 } from '../../../../../src/validate/composition.js';
 
 export const runtime = 'nodejs';
@@ -37,7 +37,7 @@ export async function PUT(request: Request, ctx: Ctx): Promise<Response> {
     const shop = authenticateShop(request);
     const { id } = await ctx.params;
     const input = await parseJsonBody<CampaignEditorInput>(request);
-    const campaign = await updateCampaignDraft(shop, id, input);
+    const campaign = await supersedeCampaignForDomain(shop, id, input);
     return campaign === null ? notFound('Campaign not found.') : Response.json(campaign);
   } catch (err) {
     return toErrorResponse(err);

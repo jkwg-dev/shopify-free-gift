@@ -91,7 +91,11 @@ model GiftCodeMapping {
   id                  String   @id @default(cuid())
   campaignId          String
   campaign            Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  tierId              String
+  // The TIER POSITION (not the DB tier id): config-derived + stable across the tier-row recreation that
+  // updateCampaign does, so the key survives an edit and is derivable from the new config BEFORE any DB
+  // write (enabling eager-mint-before-commit for edit-while-active supersede). Unique per campaign
+  // (ascending-threshold validation). configVersionHash remains the version discriminator (N vs N+1).
+  tierPosition        Int
   resolvedGiftSetHash String
   configVersionHash   String
   code                String?  @unique
@@ -101,7 +105,7 @@ model GiftCodeMapping {
 
   // The reusable-code minting key. UNIQUE so two concurrent /validate calls converge on ONE row
   // (the loser hits this constraint and reuses the winner's code).
-  @@unique([campaignId, tierId, resolvedGiftSetHash, configVersionHash], name: "minting_key")
+  @@unique([campaignId, tierPosition, resolvedGiftSetHash, configVersionHash], name: "minting_key")
   @@index([campaignId])
   @@map("gift_code_mappings")
 }

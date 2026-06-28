@@ -194,11 +194,7 @@ export function CampaignListClient({
                           Deactivate
                         </Button>
                       )}
-                      <Button
-                        onClick={() => onEdit(c.id)}
-                        disabled={!isInactive}
-                        accessibilityLabel={`Edit ${c.name}`}
-                      >
+                      <Button onClick={() => onEdit(c.id)} accessibilityLabel={`Edit ${c.name}`}>
                         Edit
                       </Button>
                     </InlineStack>

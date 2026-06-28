@@ -9,12 +9,18 @@
 // ports + injected gateway/mapping store — unit-tested with fakes.
 import { resolvedGiftSetHash, type Gift, type Money } from '@free-gift-engine/core';
 import type { DiscountCombinesWith } from '@free-gift-engine/shopify';
-import type { CampaignResponse } from '../contract.js';
+import { assertCampaignInputValid } from '../admin/campaignValidation.js';
+import type { CampaignInputDTO, CampaignResponse } from '../contract.js';
 import type { Campaign, MintingKey } from '../domain.js';
-import type { CampaignRepository } from '../ports.js';
+import type { CampaignRepository, GiftVariantGateway } from '../ports.js';
 import type { GiftCodeMappingStore, GiftDiscountSpec } from '../store/giftCodeMapping.js';
 import { GIFT_COMBINES_WITH } from '../validate/service.js';
-import { campaignToResponse } from './campaign.js';
+import {
+  assertVariantsLive,
+  campaignToResponse,
+  toConfigVersionHash,
+  toNewCampaignInput,
+} from './campaign.js';
 import { provisionGifts, type GiftTagGateway } from './giftLifecycle.js';
 
 // Bounded concurrency for eager-minting (~14 codes / 5 in flight ≈ 3 waves). Tunable.
@@ -43,7 +49,6 @@ export class ActivationWindowError extends Error {
 }
 
 export type MintFailure = {
-  readonly tierId: string;
   readonly position: number;
   readonly variantIds: readonly string[];
   readonly message: string;
@@ -76,7 +81,6 @@ export type ActivationDeps = {
 export type ActivateOptions = { readonly confirmReplace?: boolean };
 
 type MintTarget = {
-  readonly tierId: string;
   readonly position: number;
   readonly gifts: readonly Gift[];
   readonly minimumSubtotal: Money;
@@ -85,7 +89,7 @@ type MintTarget = {
 // One reusable code per resolved gift-set: AND -> one set; OR -> one per option. Mirrors /validate.
 function mintTargets(campaign: Campaign): MintTarget[] {
   return campaign.tiers.flatMap((tier) => {
-    const base = { tierId: tier.id, position: tier.position, minimumSubtotal: tier.baseThreshold };
+    const base = { position: tier.position, minimumSubtotal: tier.baseThreshold };
     return tier.gift.kind === 'AND'
       ? [{ ...base, gifts: tier.gift.gifts }]
       : tier.gift.options.map((o) => ({ ...base, gifts: [{ variantId: o.variantId }] }));
@@ -148,7 +152,7 @@ async function eagerMint(
   const settled = await runBounded(targets, MINT_CONCURRENCY, (t) => {
     const key: MintingKey = {
       campaignId: campaign.id,
-      tierId: t.tierId,
+      tierPosition: t.position,
       resolvedGiftSetHash: resolvedGiftSetHash(t.gifts),
       configVersionHash: campaign.configVersionHash,
     };
@@ -170,14 +174,7 @@ async function eagerMint(
     }
     const t = targets[i] as MintTarget;
     const message = r.status === 'rejected' ? messageOf(r.reason) : 'mint resolved without a code';
-    return [
-      {
-        tierId: t.tierId,
-        position: t.position,
-        variantIds: t.gifts.map((g) => g.variantId),
-        message,
-      },
-    ];
+    return [{ position: t.position, variantIds: t.gifts.map((g) => g.variantId), message }];
   });
   if (failures.length > 0) {
     throw new ActivationMintError(failures);
@@ -252,4 +249,101 @@ export async function deactivateCampaign(
   await deps.campaignRepo.setActive(campaignId, false);
   await deps.mappingStore.teardownCampaign(campaignId);
   return campaignToResponse({ ...campaign, active: false });
+}
+
+// --- Edit-while-active SUPERSEDE (Phase 3c Q4) ---------------------------------------------------
+
+// Thrown when a LIVE campaign's schedule (startsAt/endsAt) is edited. The schedule is deliberately
+// outside configVersionHash (so it never churns codes), and the minted codes carry endsAt — so a live
+// schedule change can't be superseded gap-free. The merchant must deactivate → edit → re-activate
+// (re-activation re-mints with the new window). Mapped to a 400.
+export class ScheduleEditRequiresDeactivationError extends Error {
+  constructor(readonly campaignId: string) {
+    super('Deactivate the campaign to change its schedule, then re-activate.');
+    this.name = 'ScheduleEditRequiresDeactivationError';
+  }
+}
+
+export type SupersedeDeps = ActivationDeps & { readonly variantGateway: GiftVariantGateway };
+
+function windowChanged(input: CampaignInputDTO, existing: Campaign): boolean {
+  return (
+    new Date(input.startsAt).getTime() !== existing.startsAt.getTime() ||
+    new Date(input.endsAt).getTime() !== existing.endsAt.getTime()
+  );
+}
+
+// Build an in-memory Campaign carrying the NEW config (for eager-mint, which keys on tier POSITION, not
+// the DB tier id — so a placeholder id is fine). The window stays the existing one (live schedule edits
+// are refused upstream), so codes mint with the campaign's current [startsAt, endsAt].
+function withNewConfig(existing: Campaign, input: CampaignInputDTO, newHash: string): Campaign {
+  return {
+    ...existing,
+    name: input.name,
+    suppression: input.suppression,
+    declineEnabled: input.declineEnabled,
+    configVersionHash: newHash,
+    tiers: input.tiers.map((t) => ({
+      id: '',
+      campaignId: existing.id,
+      position: t.position,
+      baseThreshold: t.baseThreshold,
+      gift: t.gift,
+      marketThresholds: [],
+    })),
+  };
+}
+
+// Edit a campaign owned by `shopId`. null when not found / not owned (-> 404). For an INACTIVE draft
+// it's a plain persist (codes are minted at activate). For a LIVE campaign it SUPERSEDES, gap-free:
+// validate → if the SCOPE (configVersionHash) is unchanged, persist non-scope fields only (no re-mint;
+// position-keyed codes survive the tier-row recreation); else provision + eager-mint the NEW config's
+// codes FULLY (row still on the old hash, so /validate keeps serving the old version), COMMIT the new
+// config in one update (the atomic flip — /validate now serves the new version), then tear down the OLD
+// version's codes. A mint failure before the commit leaves the live campaign fully intact. A live
+// SCHEDULE edit is refused (ScheduleEditRequiresDeactivationError).
+export async function supersedeCampaign(
+  shopId: string,
+  campaignId: string,
+  input: CampaignInputDTO,
+  deps: SupersedeDeps,
+): Promise<CampaignResponse | null> {
+  const existing = await deps.campaignRepo.findById(campaignId);
+  if (existing === null || existing.shopId !== shopId) {
+    return null;
+  }
+  assertCampaignInputValid(input);
+  await assertVariantsLive(input, deps.variantGateway);
+  const newHash = toConfigVersionHash(input);
+  const newInput = toNewCampaignInput(input, newHash);
+
+  // Inactive draft: plain persist (no live codes to supersede).
+  if (!existing.active) {
+    return campaignToResponse(await deps.campaignRepo.update(campaignId, newInput));
+  }
+
+  // Live campaign: schedule edits go through deactivate→re-activate, not supersede.
+  if (windowChanged(input, existing)) {
+    throw new ScheduleEditRequiresDeactivationError(campaignId);
+  }
+
+  // Scope unchanged (name/decline only): persist without re-minting — the position-keyed codes stay
+  // valid even though the tier rows are recreated.
+  if (newHash === existing.configVersionHash) {
+    return campaignToResponse(await deps.campaignRepo.update(campaignId, newInput));
+  }
+
+  // Scope changed → gap-free supersede. Mint the new version FULLY before the commit.
+  const newCampaign = withNewConfig(existing, input, newHash);
+  const provision = await provisionGifts(deps.gateway, allGiftVariantIds(newCampaign), {
+    giftsIncluded: deps.giftsIncluded,
+  });
+  await eagerMint(newCampaign, provision.collectionId, existing.startsAt, deps);
+
+  // COMMIT: flip the persisted config (configVersionHash N -> N+1). /validate now keys on N+1.
+  const updated = await deps.campaignRepo.update(campaignId, newInput);
+
+  // Post-commit: tear down ONLY the old-version codes (keep the just-minted N+1 codes).
+  await deps.mappingStore.teardownCampaign(campaignId, { keepConfigVersionHash: newHash });
+  return campaignToResponse(updated);
 }

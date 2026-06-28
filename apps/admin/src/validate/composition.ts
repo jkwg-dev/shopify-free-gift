@@ -28,7 +28,6 @@ import {
   type FetchLike,
   type QualifyingRule,
 } from '@free-gift-engine/shopify';
-import { ActiveCampaignNotEditableError } from '../admin/campaignValidation.js';
 import {
   campaignToEditorView,
   editorInputToCampaignInput,
@@ -48,15 +47,12 @@ import { ShopifyDiscountGatewayAdapter } from '../gateways/shopifyDiscountGatewa
 import {
   activateCampaign,
   deactivateCampaign,
+  supersedeCampaign,
   type ActivateOptions,
   type ActivationDeps,
+  type SupersedeDeps,
 } from '../services/activation.js';
-import {
-  createCampaign,
-  getCampaign,
-  updateCampaign,
-  type CampaignServiceDeps,
-} from '../services/campaign.js';
+import { createCampaign, getCampaign, type CampaignServiceDeps } from '../services/campaign.js';
 import type { GiftTagGateway } from '../services/giftLifecycle.js';
 import type { OAuthTokenExchanger, ShopifyDiscountGateway } from '../ports.js';
 import { decryptToken } from '../security/crypto.js';
@@ -359,10 +355,10 @@ export async function getCampaignEditorView(
   return campaignToEditorView(campaign, await giftVariantTitles(shopDomain, campaign));
 }
 
-// Update an inactive draft. Ownership-checked (null -> 404); refuses to edit an ACTIVE campaign in
-// Stage B (throws ActiveCampaignNotEditableError -> 400) so the live campaign's codes are never
-// superseded out from under it before Stage C builds activation/teardown.
-export async function updateCampaignDraft(
+// Edit a campaign (Phase 3c Q4 supersede). Ownership-checked (null -> 404). A DRAFT is a plain
+// persist; a LIVE campaign is SUPERSEDED gap-free (eager-mint the new config, atomic flip, tear down
+// the old codes). A live SCHEDULE edit is refused (ScheduleEditRequiresDeactivationError -> 400).
+export async function supersedeCampaignForDomain(
   shopDomain: string,
   campaignId: string,
   input: CampaignEditorInput,
@@ -371,16 +367,8 @@ export async function updateCampaignDraft(
   if (shop === null) {
     return null;
   }
-  const deps = await campaignServiceDeps(shopDomain);
-  const existing = await deps.campaignRepo.findById(campaignId);
-  if (existing === null || existing.shopId !== shop.id) {
-    return null;
-  }
-  if (existing.active) {
-    throw new ActiveCampaignNotEditableError(campaignId);
-  }
   const dto = editorInputToCampaignInput(input); // may throw EditorParseError
-  return updateCampaign(campaignId, dto, deps);
+  return supersedeCampaign(shop.id, campaignId, dto, await supersedeDeps(shopDomain));
 }
 
 // --- embedded admin: activation (Phase 3c Stage C1, flip-only) -----------------------------------
@@ -399,6 +387,23 @@ async function activationDeps(shopDomain: string): Promise<ActivationDeps> {
     mappingStore,
     giftsIncluded: giftsIncludedFlag(),
     now: () => new Date(),
+  };
+}
+
+// Supersede deps = activation deps + a variant-liveness gateway (the new gift set is validated live
+// before re-minting).
+async function supersedeDeps(shopDomain: string): Promise<SupersedeDeps> {
+  const client = await adminClientForShop(shopDomain);
+  return {
+    ...(await activationDeps(shopDomain)),
+    variantGateway: {
+      fetch: async (ids) =>
+        (await fetchGiftVariants(client, ids)).map((v) => ({
+          id: v.id,
+          title: v.title,
+          availableForSale: v.availableForSale,
+        })),
+    },
   };
 }
 

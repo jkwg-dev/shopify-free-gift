@@ -101,7 +101,7 @@ describe('updateCampaign', () => {
     await store.getOrCreate(
       {
         campaignId: created.id,
-        tierId: 't0',
+        tierPosition: 0,
         resolvedGiftSetHash: 'g1',
         configVersionHash: created.configVersionHash,
       },

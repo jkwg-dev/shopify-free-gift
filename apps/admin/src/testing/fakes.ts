@@ -18,7 +18,9 @@ import {
 const EPOCH = new Date(0);
 
 function keyString(key: MintingKey): string {
-  return [key.campaignId, key.tierId, key.resolvedGiftSetHash, key.configVersionHash].join('|');
+  return [key.campaignId, key.tierPosition, key.resolvedGiftSetHash, key.configVersionHash].join(
+    '|',
+  );
 }
 
 // In-memory GiftCodeMappingTable. insertPending performs a SYNCHRONOUS check-then-set so that two
@@ -197,7 +199,9 @@ export class FakeCampaignRepository implements CampaignRepository {
   update(id: string, input: NewCampaignInput): Promise<Campaign> {
     const existing = this.store.get(id);
     const shopId = existing?.shopId ?? 'shop';
-    const campaign = this.materialize(id, shopId, input);
+    // The real repo's update omits `active` (campaignData), so it PRESERVES the activation state —
+    // mirror that here (supersede edits a LIVE campaign and it must stay live).
+    const campaign = { ...this.materialize(id, shopId, input), active: existing?.active ?? false };
     this.store.set(id, campaign);
     return Promise.resolve(campaign);
   }

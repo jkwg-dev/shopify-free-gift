@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiError } from '../contract.js';
 import { SessionTokenError } from '../security/sessionToken.js';
-import { ActivationWindowError, ReplaceConfirmationRequiredError } from '../services/activation.js';
+import {
+  ActivationWindowError,
+  ReplaceConfirmationRequiredError,
+  ScheduleEditRequiresDeactivationError,
+} from '../services/activation.js';
 import { CampaignValidationError } from '../services/campaign.js';
-import { ActiveCampaignNotEditableError, CampaignConfigError } from './campaignValidation.js';
+import { CampaignConfigError } from './campaignValidation.js';
 import { EditorParseError } from './editorMapping.js';
 import { notFound, toErrorResponse } from './routeHelpers.js';
 
@@ -39,8 +43,8 @@ describe('toErrorResponse', () => {
     expect((await body(res)).error.invalid).toEqual(['gid://v/dead']);
   });
 
-  it('maps editing an active campaign to 400 VALIDATION', async () => {
-    const res = toErrorResponse(new ActiveCampaignNotEditableError('c1'));
+  it('maps a live schedule edit to 400 VALIDATION', async () => {
+    const res = toErrorResponse(new ScheduleEditRequiresDeactivationError('c1'));
     expect(res.status).toBe(400);
     expect((await body(res)).error.code).toBe('VALIDATION');
   });

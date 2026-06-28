@@ -9,10 +9,11 @@ import {
   ActivationMintError,
   ActivationWindowError,
   ReplaceConfirmationRequiredError,
+  ScheduleEditRequiresDeactivationError,
 } from '../services/activation.js';
 import { CampaignValidationError } from '../services/campaign.js';
 import { GiftProvisioningError } from '../services/giftLifecycle.js';
-import { ActiveCampaignNotEditableError, CampaignConfigError } from './campaignValidation.js';
+import { CampaignConfigError } from './campaignValidation.js';
 import { EditorParseError } from './editorMapping.js';
 import { shopFromBearer } from './session.js';
 
@@ -49,7 +50,7 @@ export function toErrorResponse(err: unknown): Response {
   if (err instanceof CampaignValidationError) {
     return apiError(400, 'VALIDATION', err.message, err.invalidVariantIds);
   }
-  if (err instanceof ActiveCampaignNotEditableError) {
+  if (err instanceof ScheduleEditRequiresDeactivationError) {
     return apiError(400, 'VALIDATION', err.message);
   }
   // Confirm-and-replace (Stage C3): the activation would replace the live campaign. Signal the UI to

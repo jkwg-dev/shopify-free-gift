@@ -54,10 +54,14 @@ export type Campaign = {
   readonly tiers: readonly Tier[];
 };
 
-// The reusable-code key (CLAUDE.md). UNIQUE in the database.
+// The reusable-code key (CLAUDE.md). UNIQUE in the database. The tier component is the tier POSITION
+// (config-derived + stable across tier-row recreation), NOT the DB tier id — so the key is derivable
+// from the campaign config before any DB write (enables eager-mint-before-commit for supersede) and an
+// edit that recreates tier rows reuses the same code when the scope is unchanged. configVersionHash is
+// the version discriminator: a scope change mints fresh codes under the new hash.
 export type MintingKey = {
   readonly campaignId: string;
-  readonly tierId: string;
+  readonly tierPosition: number;
   readonly resolvedGiftSetHash: string;
   readonly configVersionHash: string;
 };

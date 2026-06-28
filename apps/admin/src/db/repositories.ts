@@ -86,7 +86,7 @@ function toMapping(row: GiftCodeMappingRow): GiftCodeMapping {
   return {
     id: row.id,
     campaignId: row.campaignId,
-    tierId: row.tierId,
+    tierPosition: row.tierPosition,
     resolvedGiftSetHash: row.resolvedGiftSetHash,
     configVersionHash: row.configVersionHash,
     code: row.code,

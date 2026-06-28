@@ -181,13 +181,23 @@ export class GiftCodeMappingStore {
     return this.now().getTime() - row.createdAt.getTime() >= this.staleReservationMs;
   }
 
-  // Teardown (Phase 3c): permanently delete every active code of a campaign — the Shopify discount
-  // AND the mapping row — so held codes stop working and a later re-activation mints FRESH codes under
-  // the same key (a deleted row can't be reused by same-key dedup). Best-effort + idempotent: a code
-  // whose delete fails keeps its row and is retried on the next teardown. Returns counts for logging.
-  // Scoped to THIS campaign's codes only; the shared qualifying collection + gift tags are untouched.
-  async teardownCampaign(campaignId: string): Promise<{ deleted: number; failed: number }> {
-    const mappings = await this.table.findActiveByCampaign(campaignId);
+  // Teardown (Phase 3c): permanently delete a campaign's active codes — the Shopify discount AND the
+  // mapping row — so held codes stop working and a later re-activation mints FRESH codes under the same
+  // key (a deleted row can't be reused by same-key dedup). Best-effort + idempotent: a code whose
+  // delete fails keeps its row and is retried on the next teardown. Returns counts for logging. Scoped
+  // to THIS campaign's codes only; the shared qualifying collection + gift tags are untouched.
+  //
+  // `keepConfigVersionHash` (supersede): keep the codes of that config version and delete only the
+  // STALE-version ones — so the just-minted N+1 codes survive while N's are torn down.
+  async teardownCampaign(
+    campaignId: string,
+    opts: { keepConfigVersionHash?: string } = {},
+  ): Promise<{ deleted: number; failed: number }> {
+    const active = await this.table.findActiveByCampaign(campaignId);
+    const mappings =
+      opts.keepConfigVersionHash === undefined
+        ? active
+        : active.filter((m) => m.configVersionHash !== opts.keepConfigVersionHash);
     let deleted = 0;
     let failed = 0;
     for (const mapping of mappings) {

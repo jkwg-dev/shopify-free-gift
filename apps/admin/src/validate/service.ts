@@ -246,7 +246,7 @@ export async function resolveValidate(
     mapping = await deps.mappingStore.getOrCreate(
       {
         campaignId: campaign.id,
-        tierId: winning.tierId,
+        tierPosition: domainTier.position,
         resolvedGiftSetHash: resolvedGiftSetHash(winning.gifts),
         configVersionHash: campaign.configVersionHash,
       },

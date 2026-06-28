@@ -30,15 +30,6 @@ export class CampaignConfigError extends Error {
   }
 }
 
-// Thrown when an edit targets a campaign that is currently active. Stage B only writes inactive
-// drafts; editing a live campaign (which would supersede its codes) is deferred to Stage C.
-export class ActiveCampaignNotEditableError extends Error {
-  constructor(readonly campaignId: string) {
-    super('Editing an active campaign is not supported yet.');
-    this.name = 'ActiveCampaignNotEditableError';
-  }
-}
-
 function isValidInstant(iso: string): boolean {
   return Number.isFinite(Date.parse(iso));
 }
