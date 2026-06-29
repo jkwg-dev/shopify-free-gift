@@ -225,10 +225,11 @@ body.fge-checkout-pending .cart__checkout-button::after{
 }
 .fge-merged-stepper__remove{
   appearance:none; -webkit-appearance:none; cursor:pointer;
-  margin-left:6px; padding:0 2px; height:30px; line-height:1;
-  font-size:11px; font-weight:600; color:#707070; text-decoration:underline;
-  background:transparent; border:0;
+  display:inline-flex; align-items:center; justify-content:center;
+  margin-left:6px; padding:0; width:30px; height:30px;
+  color:#707070; background:transparent; border:0;
 }
+.fge-merged-stepper__remove:hover{ color:#111111; }
 .fge-merged-stepper__btn:focus-visible, .fge-merged-stepper__remove:focus-visible{
   outline:2px solid var(--fge-brand); outline-offset:2px;
 }

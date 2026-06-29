@@ -437,7 +437,8 @@
     };
     const dec = mkBtn("dec", "Decrease quantity", "\u2212");
     const inc = mkBtn("inc", "Increase quantity", "+");
-    const del = mkBtn("del", "Remove item", "Remove");
+    const del = mkBtn("del", "Remove item", "");
+    del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
     const qtyEl = document.createElement("span");
     qtyEl.className = "fge-merged-stepper__qty";
     qtyEl.setAttribute("aria-live", "polite");
@@ -1599,10 +1600,11 @@ body.fge-checkout-pending .cart__checkout-button::after{
 }
 .fge-merged-stepper__remove{
   appearance:none; -webkit-appearance:none; cursor:pointer;
-  margin-left:6px; padding:0 2px; height:30px; line-height:1;
-  font-size:11px; font-weight:600; color:#707070; text-decoration:underline;
-  background:transparent; border:0;
+  display:inline-flex; align-items:center; justify-content:center;
+  margin-left:6px; padding:0; width:30px; height:30px;
+  color:#707070; background:transparent; border:0;
 }
+.fge-merged-stepper__remove:hover{ color:#111111; }
 .fge-merged-stepper__btn:focus-visible, .fge-merged-stepper__remove:focus-visible{
   outline:2px solid var(--fge-brand); outline-offset:2px;
 }
