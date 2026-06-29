@@ -16,6 +16,7 @@ export { computeQualifyingSubtotal, type CartLine } from './cart.js';
 export {
   InvalidGiftChoiceError,
   resolveGiftSet,
+  type AndChoices,
   type Gift,
   type GiftConfig,
   type GiftOption,

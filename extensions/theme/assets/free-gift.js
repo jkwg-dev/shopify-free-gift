@@ -806,16 +806,48 @@
       return { productId, options: (_a2 = byProduct.get(productId)) != null ? _a2 : [] };
     });
   }
+  function groupAndGiftsByProduct(gifts) {
+    const order = [];
+    const byProduct = /* @__PURE__ */ new Map();
+    for (const gift of gifts) {
+      const existing = byProduct.get(gift.productId);
+      if (existing === void 0) {
+        order.push(gift.productId);
+        byProduct.set(gift.productId, [gift]);
+      } else {
+        existing.push(gift);
+      }
+    }
+    return order.map((productId) => {
+      var _a2, _b2, _c2;
+      const variants = (_a2 = byProduct.get(productId)) != null ? _a2 : [];
+      return { productId, productLabel: (_c2 = (_b2 = variants[0]) == null ? void 0 : _b2.productLabel) != null ? _c2 : "", variants };
+    });
+  }
   function defaultGiftChoices(tiers) {
     var _a2;
     const choices = {};
     for (const tier of tiers) {
-      if (tier.gift.kind !== "OR") {
-        continue;
-      }
-      const pick = (_a2 = tier.gift.options.find((o) => o.available)) != null ? _a2 : tier.gift.options[0];
-      if (pick !== void 0) {
-        choices[tier.tierId] = pick.optionId;
+      if (tier.gift.kind === "OR") {
+        const pick = (_a2 = tier.gift.options.find((o) => o.available)) != null ? _a2 : tier.gift.options[0];
+        if (pick !== void 0) {
+          choices[tier.tierId] = pick.optionId;
+        }
+      } else {
+        const byProduct = /* @__PURE__ */ new Map();
+        for (const gift of tier.gift.gifts) {
+          if (byProduct.has(gift.productId)) continue;
+          byProduct.set(gift.productId, gift);
+        }
+        for (const gift of tier.gift.gifts) {
+          const current = byProduct.get(gift.productId);
+          if (!current.available && gift.available) {
+            byProduct.set(gift.productId, gift);
+          }
+        }
+        for (const [productId, gift] of byProduct) {
+          choices[`${tier.tierId}:${productId}`] = gift.variantId;
+        }
       }
     }
     return choices;
@@ -835,11 +867,21 @@
           ...g,
           available: isAvailable(g.variantId, g.available)
         }));
+        const groups = groupAndGiftsByProduct(items);
+        const selections = {};
+        for (const g of groups) {
+          const key = `${tier.tierId}:${g.productId}`;
+          const chosen = state.choices[key];
+          if (chosen !== void 0) selections[g.productId] = chosen;
+        }
         return {
           kind: "and",
           tierId: tier.tierId,
           threshold: tier.threshold,
           items,
+          groups,
+          selections,
+          hasChoice: groups.some((g) => g.variants.length > 1),
           incomplete: items.some((i) => !i.available)
         };
       }
@@ -897,9 +939,13 @@
       root2.append(hint("Add a little more to your cart to unlock your free gift."));
       return;
     }
-    const optionCount = current.kind === "or" ? current.groups.reduce((n, g) => n + g.options.length, 0) : 0;
-    const hasChoice = current.kind === "or" && optionCount > 1;
-    if (!hasChoice) return;
+    if (current.kind === "and") {
+      if (!current.hasChoice) return;
+      renderAndTierSection(root2, current, handlers);
+      return;
+    }
+    const optionCount = current.groups.reduce((n, g) => n + g.options.length, 0);
+    if (optionCount <= 1) return;
     const title = document.createElement("p");
     title.className = "fge-gift__title";
     title.textContent = "Choose your free gift";
@@ -932,6 +978,72 @@
     ph.className = "fge-card__img";
     ph.setAttribute("aria-hidden", "true");
     return ph;
+  }
+  function renderAndTierSection(root2, tier, handlers) {
+    const title = document.createElement("p");
+    title.className = "fge-gift__title";
+    title.textContent = "Your free gifts";
+    root2.append(title);
+    const container = document.createElement("div");
+    container.className = "fge-and-gifts";
+    for (const group of tier.groups) {
+      container.append(
+        renderAndProductCard(tier.tierId, group, tier.selections[group.productId], handlers)
+      );
+    }
+    root2.append(container);
+  }
+  function renderAndProductCard(tierId, group, selectedVariantId, handlers) {
+    var _a2;
+    const card = document.createElement("div");
+    card.className = "fge-card is-selected";
+    const anyAvailable = group.variants.some((v) => v.available);
+    if (!anyAvailable) card.classList.add("is-unavailable");
+    const selected = (_a2 = group.variants.find((v) => v.variantId === selectedVariantId)) != null ? _a2 : group.variants[0];
+    card.append(giftImage(selected == null ? void 0 : selected.imageUrl));
+    const body = document.createElement("div");
+    body.className = "fge-card__body";
+    const name = document.createElement("div");
+    name.className = "fge-card__name";
+    name.textContent = group.productLabel;
+    body.append(name);
+    if (!anyAvailable) {
+      const status = document.createElement("div");
+      status.className = "fge-card__status is-unavailable";
+      status.textContent = "Currently unavailable";
+      body.append(status);
+    } else if (group.variants.length > 1) {
+      const compoundKey = `${tierId}:${group.productId}`;
+      body.append(
+        renderAndVariantChips(compoundKey, group.variants, selectedVariantId, group.productLabel, handlers)
+      );
+    }
+    card.append(body);
+    return card;
+  }
+  function renderAndVariantChips(compoundKey, variants, selectedVariantId, productLabel, handlers) {
+    const picker = document.createElement("div");
+    picker.className = "fge-variants";
+    picker.setAttribute("role", "group");
+    picker.setAttribute("aria-label", `Choose a ${productLabel} option`);
+    for (const v of variants) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "fge-variant";
+      btn.textContent = v.variantLabel;
+      const isSel = v.variantId === selectedVariantId;
+      if (isSel) btn.classList.add("is-selected");
+      btn.setAttribute("aria-pressed", String(isSel));
+      if (!v.available) {
+        btn.disabled = true;
+        btn.classList.add("is-unavailable");
+        btn.setAttribute("aria-label", `${v.variantLabel} (currently unavailable)`);
+      } else {
+        btn.addEventListener("click", () => handlers.onChoose(compoundKey, v.variantId));
+      }
+      picker.append(btn);
+    }
+    return picker;
   }
   function renderProductGroup(tierId, group, selectedOptionId, handlers) {
     var _a2, _b2, _c2, _d, _e;

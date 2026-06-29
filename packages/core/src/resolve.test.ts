@@ -135,6 +135,81 @@ describe('resolveActiveGifts — decline', () => {
   });
 });
 
+describe('resolveActiveGifts — AND tiers with compound choices', () => {
+  const andCampaign: Campaign = {
+    ...campaign,
+    tiers: [
+      {
+        id: 'bundle',
+        threshold: money(5000, 'USD'),
+        gift: {
+          kind: 'AND',
+          gifts: [
+            { variantId: 'a1' },
+            { variantId: 'a2' },
+            { variantId: 'b1' },
+            { variantId: 'b2' },
+          ],
+        },
+      },
+    ],
+  };
+
+  it('returns all gifts when no compound choices are provided', () => {
+    const result = resolveActiveGifts(input({ campaign: andCampaign, choices: {} }));
+    expect(result).toMatchObject({
+      status: 'gifts',
+      resolved: [
+        {
+          tierId: 'bundle',
+          gifts: [
+            { variantId: 'a1' },
+            { variantId: 'a2' },
+            { variantId: 'b1' },
+            { variantId: 'b2' },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('filters to chosen variants via compound keys', () => {
+    const result = resolveActiveGifts(
+      input({
+        campaign: andCampaign,
+        choices: { 'bundle:prodA': 'a2', 'bundle:prodB': 'b1' },
+      }),
+    );
+    expect(result).toMatchObject({
+      status: 'gifts',
+      resolved: [{ tierId: 'bundle', gifts: [{ variantId: 'a2' }, { variantId: 'b1' }] }],
+    });
+  });
+
+  it('compound keys for one tier do not affect another tier', () => {
+    const result = resolveActiveGifts(
+      input({
+        campaign: andCampaign,
+        choices: { 'other:prodA': 'a2' },
+      }),
+    );
+    expect(result).toMatchObject({
+      status: 'gifts',
+      resolved: [
+        {
+          tierId: 'bundle',
+          gifts: [
+            { variantId: 'a1' },
+            { variantId: 'a2' },
+            { variantId: 'b1' },
+            { variantId: 'b2' },
+          ],
+        },
+      ],
+    });
+  });
+});
+
 describe('resolveActiveGifts — OR tiers', () => {
   const orCampaign: Campaign = {
     ...campaign,

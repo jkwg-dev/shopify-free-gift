@@ -95,7 +95,7 @@ describe('buildChooserModel', () => {
     expect(model!.declineEnabled).toBe(true);
   });
 
-  it('renders the AND tier as a bundled display: both gifts, NO radios/choice', () => {
+  it('renders the AND tier as a bundled display with per-product groups', () => {
     const model = buildChooserModel(config, { choices: {}, declined: false });
     const and = model!.tiers[1] as ChooserAndTier;
     expect(and.kind).toBe('and');
@@ -103,9 +103,11 @@ describe('buildChooserModel', () => {
       'The Hidden Snowboard',
       'The Multi-location Snowboard',
     ]);
-    // An AND tier carries NO selectable options/groups and NO selection — nothing feeds `choices`.
-    expect('groups' in and).toBe(false);
-    expect('selected' in and).toBe(false);
+    expect(and.groups).toHaveLength(2);
+    expect(and.groups[0]!.variants).toHaveLength(1);
+    expect(and.groups[1]!.variants).toHaveLength(1);
+    expect(and.selections).toEqual({});
+    expect(and.hasChoice).toBe(false);
     expect(and.threshold).toEqual(money(100000, 'USD'));
   });
 
@@ -119,6 +121,65 @@ describe('buildChooserModel', () => {
     expect(or.groups).toHaveLength(1);
     expect(or.groups[0]!.options.map((o) => o.variantLabel)).toEqual(['Ice', 'Dawn']);
     expect(or.groups[0]!.options[0]!.productLabel).toBe('The Complete Snowboard');
+  });
+});
+
+describe('buildChooserModel — AND tier with multi-variant products', () => {
+  const multiVariantConfig: CampaignConfigResponse = {
+    status: 'active',
+    currency: 'USD',
+    declineEnabled: false,
+    tiers: [
+      {
+        tierId: 't1',
+        position: 1,
+        threshold: money(50000, 'USD'),
+        gift: {
+          kind: 'AND',
+          gifts: [
+            {
+              variantId: ICE,
+              productId: SNOWBOARD,
+              productLabel: 'The Complete Snowboard',
+              variantLabel: 'Ice',
+              available: true,
+            },
+            {
+              variantId: DAWN,
+              productId: SNOWBOARD,
+              productLabel: 'The Complete Snowboard',
+              variantLabel: 'Dawn',
+              available: true,
+            },
+            {
+              variantId: LIQUID_S,
+              productId: 'gid://shopify/Product/Liquid',
+              productLabel: 'Liquid',
+              variantLabel: 'S',
+              available: true,
+            },
+          ],
+        },
+      },
+    ],
+  };
+
+  it('hasChoice is true when a product has multiple variants', () => {
+    const model = buildChooserModel(multiVariantConfig, { choices: {}, declined: false });
+    const and = model!.tiers[0] as ChooserAndTier;
+    expect(and.hasChoice).toBe(true);
+    expect(and.groups).toHaveLength(2);
+    expect(and.groups[0]!.variants).toHaveLength(2);
+    expect(and.groups[1]!.variants).toHaveLength(1);
+  });
+
+  it('populates selections from compound keys in choices state', () => {
+    const model = buildChooserModel(multiVariantConfig, {
+      choices: { [`t1:${SNOWBOARD}`]: DAWN },
+      declined: false,
+    });
+    const and = model!.tiers[0] as ChooserAndTier;
+    expect(and.selections[SNOWBOARD]).toBe(DAWN);
   });
 });
 

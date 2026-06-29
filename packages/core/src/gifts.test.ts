@@ -15,11 +15,38 @@ const orConfig: GiftConfig = {
 };
 
 describe('resolveGiftSet — AND', () => {
-  it('returns the full gift-set', () => {
+  it('returns the full gift-set when no andChoices', () => {
     expect(resolveGiftSet(andConfig, undefined)).toEqual([{ variantId: 'a' }, { variantId: 'b' }]);
   });
 
-  it('ignores any choice for an AND tier', () => {
+  it('returns the full gift-set when andChoices is empty', () => {
+    expect(resolveGiftSet(andConfig, undefined, {})).toEqual([
+      { variantId: 'a' },
+      { variantId: 'b' },
+    ]);
+  });
+
+  it('filters to chosen variants when andChoices are provided', () => {
+    expect(resolveGiftSet(andConfig, undefined, { prod1: 'a' })).toEqual([{ variantId: 'a' }]);
+  });
+
+  it('returns all gifts when no chosen variant matches', () => {
+    expect(resolveGiftSet(andConfig, undefined, { prod1: 'nonexistent' })).toEqual([
+      { variantId: 'a' },
+      { variantId: 'b' },
+    ]);
+  });
+
+  it('filters to exactly the chosen variants from multiple products', () => {
+    const multiProduct: GiftConfig = {
+      kind: 'AND',
+      gifts: [{ variantId: 'a1' }, { variantId: 'a2' }, { variantId: 'b1' }, { variantId: 'b2' }],
+    };
+    const result = resolveGiftSet(multiProduct, undefined, { prodA: 'a2', prodB: 'b1' });
+    expect(result).toEqual([{ variantId: 'a2' }, { variantId: 'b1' }]);
+  });
+
+  it('ignores the OR choice param for an AND tier', () => {
     expect(resolveGiftSet(andConfig, 'whatever')).toEqual([{ variantId: 'a' }, { variantId: 'b' }]);
   });
 });

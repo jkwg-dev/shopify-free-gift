@@ -13,7 +13,12 @@ import type {
   Money,
   TierConfig,
 } from '@free-gift-engine/core';
-import { groupGiftOptionsByProduct, type GiftProductGroup } from './choices.js';
+import {
+  groupAndGiftsByProduct,
+  groupGiftOptionsByProduct,
+  type AndProductGroup,
+  type GiftProductGroup,
+} from './choices.js';
 
 export type ChooserState = {
   readonly choices: Readonly<Record<string, string>>;
@@ -40,14 +45,18 @@ export type ChooserOrTier = {
   readonly selected: string | undefined;
 };
 
-// An AND tier: all gifts unlocked together, NO choice — a bundled display only.
+// An AND tier: all gifts unlocked together. When a product has multiple variants, the shopper
+// picks ONE variant per product (compound keys `tierId:productId → variantId`). Single-variant
+// products are locked (no choice). When NO product has multiple variants, `hasChoice` is false.
 export type ChooserAndTier = {
   readonly kind: 'and';
   readonly tierId: string;
   readonly threshold: Money;
   readonly items: readonly GiftItemView[];
-  // True when any bundle item is unavailable — the gift can't be FULLY added (surface it; don't
-  // silently deliver a partial bundle).
+  readonly groups: readonly AndProductGroup[];
+  // productId → selected variantId, from compound keys in choices state.
+  readonly selections: Readonly<Record<string, string>>;
+  readonly hasChoice: boolean;
   readonly incomplete: boolean;
 };
 
@@ -80,11 +89,21 @@ export function buildChooserModel(
         ...g,
         available: isAvailable(g.variantId, g.available),
       }));
+      const groups = groupAndGiftsByProduct(items);
+      const selections: Record<string, string> = {};
+      for (const g of groups) {
+        const key = `${tier.tierId}:${g.productId}`;
+        const chosen = state.choices[key];
+        if (chosen !== undefined) selections[g.productId] = chosen;
+      }
       return {
         kind: 'and',
         tierId: tier.tierId,
         threshold: tier.threshold,
         items,
+        groups,
+        selections,
+        hasChoice: groups.some((g) => g.variants.length > 1),
         incomplete: items.some((i) => !i.available),
       };
     }
@@ -181,13 +200,14 @@ function renderGiftSection(
     return;
   }
 
-  // No chooser when there's nothing to decide: AND tiers (all gifts granted together) and OR tiers
-  // with a single option (auto-selected, no pick needed). The stepper + gift line are sufficient.
-  const optionCount =
-    current.kind === 'or' ? current.groups.reduce((n, g) => n + g.options.length, 0) : 0;
-  const hasChoice = current.kind === 'or' && optionCount > 1;
+  if (current.kind === 'and') {
+    if (!current.hasChoice) return;
+    renderAndTierSection(root, current, handlers);
+    return;
+  }
 
-  if (!hasChoice) return;
+  const optionCount = current.groups.reduce((n, g) => n + g.options.length, 0);
+  if (optionCount <= 1) return;
 
   const title = document.createElement('p');
   title.className = 'fge-gift__title';
@@ -227,6 +247,104 @@ function giftImage(imageUrl: string | null | undefined): HTMLElement {
   ph.className = 'fge-card__img';
   ph.setAttribute('aria-hidden', 'true');
   return ph;
+}
+
+// AND tier: each product is a mandatory card (no radio — all are included). Multi-variant products
+// show variant chips; single-variant products are a locked display. The compound key
+// `tierId:productId` flows through the existing onChoose handler with variantId as the value.
+function renderAndTierSection(
+  root: HTMLElement,
+  tier: ChooserAndTier,
+  handlers: ChooserHandlers,
+): void {
+  const title = document.createElement('p');
+  title.className = 'fge-gift__title';
+  title.textContent = 'Your free gifts';
+  root.append(title);
+
+  const container = document.createElement('div');
+  container.className = 'fge-and-gifts';
+  for (const group of tier.groups) {
+    container.append(
+      renderAndProductCard(tier.tierId, group, tier.selections[group.productId], handlers),
+    );
+  }
+  root.append(container);
+}
+
+function renderAndProductCard(
+  tierId: string,
+  group: AndProductGroup,
+  selectedVariantId: string | undefined,
+  handlers: ChooserHandlers,
+): HTMLElement {
+  const card = document.createElement('div');
+  card.className = 'fge-card is-selected';
+  const anyAvailable = group.variants.some((v) => v.available);
+  if (!anyAvailable) card.classList.add('is-unavailable');
+
+  const selected =
+    group.variants.find((v) => v.variantId === selectedVariantId) ?? group.variants[0];
+  card.append(giftImage(selected?.imageUrl));
+
+  const body = document.createElement('div');
+  body.className = 'fge-card__body';
+  const name = document.createElement('div');
+  name.className = 'fge-card__name';
+  name.textContent = group.productLabel;
+  body.append(name);
+
+  if (!anyAvailable) {
+    const status = document.createElement('div');
+    status.className = 'fge-card__status is-unavailable';
+    status.textContent = 'Currently unavailable';
+    body.append(status);
+  } else if (group.variants.length > 1) {
+    const compoundKey = `${tierId}:${group.productId}`;
+    body.append(
+      renderAndVariantChips(
+        compoundKey,
+        group.variants,
+        selectedVariantId,
+        group.productLabel,
+        handlers,
+      ),
+    );
+  }
+
+  card.append(body);
+  return card;
+}
+
+function renderAndVariantChips(
+  compoundKey: string,
+  variants: readonly GiftItemView[],
+  selectedVariantId: string | undefined,
+  productLabel: string,
+  handlers: ChooserHandlers,
+): HTMLElement {
+  const picker = document.createElement('div');
+  picker.className = 'fge-variants';
+  picker.setAttribute('role', 'group');
+  picker.setAttribute('aria-label', `Choose a ${productLabel} option`);
+  for (const v of variants) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fge-variant';
+    btn.textContent = v.variantLabel;
+    const isSel = v.variantId === selectedVariantId;
+    if (isSel) btn.classList.add('is-selected');
+    btn.setAttribute('aria-pressed', String(isSel));
+    if (!v.available) {
+      btn.disabled = true;
+      btn.classList.add('is-unavailable');
+      btn.setAttribute('aria-label', `${v.variantLabel} (currently unavailable)`);
+    } else {
+      btn.addEventListener('click', () => handlers.onChoose(compoundKey, v.variantId));
+    }
+    picker.append(btn);
+  }
+  return picker;
 }
 
 // One PRODUCT as a card. A single-variant product is a plain card (no chips). A multi-variant product

@@ -1,6 +1,11 @@
-import { money, type TierConfig } from '@free-gift-engine/core';
+import { money, type GiftItemView, type TierConfig } from '@free-gift-engine/core';
 import { describe, expect, it } from 'vitest';
-import { defaultGiftChoices, groupGiftOptionsByProduct, type GiftOptionView } from './choices.js';
+import {
+  defaultGiftChoices,
+  groupAndGiftsByProduct,
+  groupGiftOptionsByProduct,
+  type GiftOptionView,
+} from './choices.js';
 
 const completeSnowboard = 'gid://shopify/Product/COMPLETE';
 const liquid = 'gid://shopify/Product/LIQUID';
@@ -80,7 +85,7 @@ describe('defaultGiftChoices', () => {
     expect(defaultGiftChoices(tiers)).toEqual({ t1: 'opt-1' }); // S, the first available
   });
 
-  it('ignores AND tiers (no choice) and skips tiers with no options', () => {
+  it('skips AND tiers with no gifts', () => {
     const tiers: TierConfig[] = [
       {
         tierId: 'tAnd',
@@ -96,5 +101,106 @@ describe('defaultGiftChoices', () => {
       },
     ];
     expect(defaultGiftChoices(tiers)).toEqual({ tOr: 'a' });
+  });
+
+  it('generates compound keys for AND tiers (one per product, first available variant)', () => {
+    const andGifts: GiftItemView[] = [
+      { variantId: 'v/ICE', productId: completeSnowboard, variantLabel: 'Ice', available: false },
+      { variantId: 'v/DAWN', productId: completeSnowboard, variantLabel: 'Dawn', available: true },
+      { variantId: 'v/S', productId: liquid, variantLabel: 'S', available: true },
+    ];
+    const tiers: TierConfig[] = [
+      {
+        tierId: 'tAnd',
+        position: 1,
+        threshold: money(5000, 'USD'),
+        gift: { kind: 'AND', gifts: andGifts },
+      },
+    ];
+    expect(defaultGiftChoices(tiers)).toEqual({
+      [`tAnd:${completeSnowboard}`]: 'v/DAWN',
+      [`tAnd:${liquid}`]: 'v/S',
+    });
+  });
+
+  it('AND tier falls back to first variant when none are available', () => {
+    const andGifts: GiftItemView[] = [
+      { variantId: 'v/ICE', productId: completeSnowboard, variantLabel: 'Ice', available: false },
+      { variantId: 'v/DAWN', productId: completeSnowboard, variantLabel: 'Dawn', available: false },
+    ];
+    const tiers: TierConfig[] = [
+      {
+        tierId: 'tAnd',
+        position: 1,
+        threshold: money(5000, 'USD'),
+        gift: { kind: 'AND', gifts: andGifts },
+      },
+    ];
+    expect(defaultGiftChoices(tiers)).toEqual({
+      [`tAnd:${completeSnowboard}`]: 'v/ICE',
+    });
+  });
+
+  it('mixed OR and AND tiers produce both simple and compound keys', () => {
+    const andGifts: GiftItemView[] = [
+      { variantId: 'v/S', productId: liquid, variantLabel: 'S', available: true },
+    ];
+    const tiers: TierConfig[] = [
+      {
+        tierId: 't1',
+        position: 1,
+        threshold: money(5000, 'USD'),
+        gift: { kind: 'OR', options: options.slice(0, 2) },
+      },
+      {
+        tierId: 't2',
+        position: 2,
+        threshold: money(10000, 'USD'),
+        gift: { kind: 'AND', gifts: andGifts },
+      },
+    ];
+    const result = defaultGiftChoices(tiers);
+    expect(result['t1']).toBe('a');
+    expect(result[`t2:${liquid}`]).toBe('v/S');
+  });
+});
+
+describe('groupAndGiftsByProduct', () => {
+  const andGifts: GiftItemView[] = [
+    {
+      variantId: 'v/ICE',
+      productId: completeSnowboard,
+      productLabel: 'Complete Snowboard',
+      variantLabel: 'Ice',
+      available: true,
+    },
+    {
+      variantId: 'v/DAWN',
+      productId: completeSnowboard,
+      productLabel: 'Complete Snowboard',
+      variantLabel: 'Dawn',
+      available: true,
+    },
+    {
+      variantId: 'v/S',
+      productId: liquid,
+      productLabel: 'Liquid',
+      variantLabel: 'S',
+      available: true,
+    },
+  ];
+
+  it('groups by product, preserving insertion order', () => {
+    const groups = groupAndGiftsByProduct(andGifts);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]!.productId).toBe(completeSnowboard);
+    expect(groups[0]!.productLabel).toBe('Complete Snowboard');
+    expect(groups[0]!.variants.map((v) => v.variantLabel)).toEqual(['Ice', 'Dawn']);
+    expect(groups[1]!.productId).toBe(liquid);
+    expect(groups[1]!.variants).toHaveLength(1);
+  });
+
+  it('returns empty for no gifts', () => {
+    expect(groupAndGiftsByProduct([])).toEqual([]);
   });
 });
