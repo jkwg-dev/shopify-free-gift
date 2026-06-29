@@ -232,3 +232,58 @@ describe('stampAuthoritativeCart (custom theme)', () => {
     expect(r.badgeTargetsFound).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Drawer section detection — the :not(button) exclusion
+// ---------------------------------------------------------------------------
+describe('drawer panel selector excludes trigger buttons', () => {
+  const PANEL_SEL =
+    'cart-drawer, #CartDrawer, .cart-drawer:not(button):not([class*="__trigger"]), .drawer--cart';
+
+  it('matches the cart drawer panel, not a trigger button with "cart-drawer" in its class', () => {
+    document.body.innerHTML = `
+      <div id="shopify-section-recommendations">
+        <button class="quick-cart-drawer__trigger">Cart</button>
+      </div>
+      <div id="shopify-section-cart-drawer">
+        <div id="CartDrawer" class="cart-drawer">
+          <div id="CartDrawer-Body">
+            <cart-drawer-items>
+              <div class="cart-item">Socks</div>
+            </cart-drawer-items>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const matched = document.querySelector(PANEL_SEL);
+    expect(matched).not.toBeNull();
+    // Must match the panel (#CartDrawer), NOT the trigger button.
+    expect(matched!.id).toBe('CartDrawer');
+    // The items container must be inside the matched element's section.
+    const section = matched!.closest('[id^="shopify-section-"]');
+    expect(section).not.toBeNull();
+    expect(section!.id).toBe('shopify-section-cart-drawer');
+  });
+
+  it('items-container-based detection finds the correct section even with a trigger earlier in DOM', () => {
+    document.body.innerHTML = `
+      <div id="shopify-section-template--recommendations">
+        <button class="quick-cart-drawer__trigger">Cart</button>
+      </div>
+      <div id="shopify-section-sections--cart-drawer">
+        <div id="CartDrawer-Body">
+          <cart-drawer-items>
+            <div class="cart-item">Knit</div>
+          </cart-drawer-items>
+        </div>
+      </div>
+    `;
+
+    // Items-container anchor: walk up from #CartDrawer-Body.
+    const body = document.querySelector('#CartDrawer-Body');
+    const section = body?.closest('[id^="shopify-section-"]');
+    expect(section).not.toBeNull();
+    expect(section!.id).toBe('shopify-section-sections--cart-drawer');
+  });
+});

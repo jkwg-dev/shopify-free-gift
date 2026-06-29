@@ -17,8 +17,7 @@
 const DRAWER_SELECTORS = [
   'cart-drawer',
   '#CartDrawer',
-  '.cart-drawer',
-  '[class*="cart-drawer" i]',
+  '.cart-drawer:not(button):not([class*="__trigger"])',
   '.drawer--cart',
   'cart-notification',
 ];

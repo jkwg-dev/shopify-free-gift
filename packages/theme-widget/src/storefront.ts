@@ -88,6 +88,11 @@ type WidgetConfig = {
 const w = window as ThemeWindow;
 const root = w.Shopify?.routes?.root ?? '/';
 
+// Drawer PANEL selector — excludes buttons/triggers whose class contains "cart-drawer" (e.g.
+// `.quick-cart-drawer__trigger`) that can false-positive into the wrong shopify-section.
+const DRAWER_PANEL_SELECTOR =
+  'cart-drawer, #CartDrawer, .cart-drawer:not(button):not([class*="__trigger"]), .drawer--cart';
+
 // Shopify's live base->presentment FX rate, read FRESH per request so a storefront currency switch is
 // honored. The server derives each tier's presentment threshold from it (display == enforced).
 const presentmentRate = (): string | undefined => w.Shopify?.currency?.rate;
@@ -521,9 +526,7 @@ function remaskUngrouped(): void {
 // A MutationObserver on class-attribute fires in the microtask queue — before the browser paints — so
 // we mask ungrouped content at the exact moment the drawer becomes visible.
 function observeDrawerOpen(): void {
-  const drawer = document.querySelector<HTMLElement>(
-    'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart',
-  );
+  const drawer = document.querySelector<HTMLElement>(DRAWER_PANEL_SELECTOR);
   if (drawer === null) return;
   new MutationObserver(() => {
     if (drawer.classList.contains('active')) {
@@ -564,26 +567,46 @@ async function whenReconcileIdle(): Promise<void> {
   }
 }
 
-// Detect the Shopify section ID for the cart drawer from the live DOM. Themes wrap each section in a
-// `<div id="shopify-section-<id>" class="shopify-section">`, so we walk up from the drawer element to
-// find that wrapper and extract the ID suffix. Falls back to the Dawn default 'cart-drawer'.
+// Detect the Shopify section ID for the cart drawer from the live DOM. Anchored on the ITEMS
+// CONTAINER (#CartDrawer-Body, cart-drawer-items) — the node the refetch needs to replace — so it
+// returns the section that actually contains cart line items, never a recommendations or trigger
+// button section. Falls back to a panel-level detection (excluding buttons/triggers) only if the
+// items anchor is not found.
 function detectDrawerSectionId(): string {
-  const drawer = document.querySelector(
-    'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart',
-  );
-  if (drawer === null) return 'cart-drawer';
-  // Check the element itself, then walk parents for the shopify-section wrapper.
-  const section =
-    drawer.closest<HTMLElement>('[id^="shopify-section-"]') ??
-    drawer.querySelector<HTMLElement>('[id^="shopify-section-"]');
-  if (section !== null) {
-    return section.id.replace('shopify-section-', '');
+  // Primary: walk up from the items container — authoritative because it IS the cart content.
+  const itemsAnchors = [
+    '#CartDrawer-Body',
+    'cart-drawer-items',
+    '.cart-drawer__items',
+    '[data-cart-body]',
+    '[data-cart-items]',
+  ];
+  for (const sel of itemsAnchors) {
+    const el = document.querySelector(sel);
+    if (el !== null) {
+      const section = el.closest<HTMLElement>('[id^="shopify-section-"]');
+      if (section !== null) return section.id.replace('shopify-section-', '');
+    }
   }
-  // Some themes set data-section-id on the section wrapper or the drawer itself.
-  const dataId =
-    drawer.closest<HTMLElement>('[data-section-id]')?.dataset['sectionId'] ??
-    (drawer as HTMLElement).dataset?.['sectionId'];
-  if (dataId !== undefined && dataId !== '') return dataId;
+  // Fallback: drawer panel detection, excluding buttons/triggers that can false-positive.
+  const drawer = document.querySelector(DRAWER_PANEL_SELECTOR);
+  if (drawer !== null) {
+    const section =
+      drawer.closest<HTMLElement>('[id^="shopify-section-"]') ??
+      drawer.querySelector<HTMLElement>('[id^="shopify-section-"]');
+    if (section !== null) {
+      const id = section.id.replace('shopify-section-', '');
+      // Verify this section actually contains cart items; if not, log and fall back.
+      if (section.querySelector('.cart-item, #CartDrawer-Body, cart-drawer-items') !== null) {
+        return id;
+      }
+      console.warn('[FGE-DRAWERFIX] drawer section misdetected ->', id);
+    }
+    const dataId =
+      drawer.closest<HTMLElement>('[data-section-id]')?.dataset['sectionId'] ??
+      (drawer as HTMLElement).dataset?.['sectionId'];
+    if (dataId !== undefined && dataId !== '') return dataId;
+  }
   return 'cart-drawer';
 }
 

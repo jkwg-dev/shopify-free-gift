@@ -55,8 +55,7 @@
   var DRAWER_SELECTORS = [
     "cart-drawer",
     "#CartDrawer",
-    ".cart-drawer",
-    '[class*="cart-drawer" i]',
+    '.cart-drawer:not(button):not([class*="__trigger"])',
     ".drawer--cart",
     "cart-notification"
   ];
@@ -2025,6 +2024,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   var w = window;
   var _a, _b, _c;
   var root = (_c = (_b = (_a = w.Shopify) == null ? void 0 : _a.routes) == null ? void 0 : _b.root) != null ? _c : "/";
+  var DRAWER_PANEL_SELECTOR = 'cart-drawer, #CartDrawer, .cart-drawer:not(button):not([class*="__trigger"]), .drawer--cart';
   var presentmentRate = () => {
     var _a2, _b2;
     return (_b2 = (_a2 = w.Shopify) == null ? void 0 : _a2.currency) == null ? void 0 : _b2.rate;
@@ -2367,9 +2367,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
   }
   function observeDrawerOpen() {
-    const drawer = document.querySelector(
-      'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart'
-    );
+    const drawer = document.querySelector(DRAWER_PANEL_SELECTOR);
     if (drawer === null) return;
     new MutationObserver(() => {
       if (drawer.classList.contains("active")) {
@@ -2404,16 +2402,35 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   }
   function detectDrawerSectionId() {
     var _a2, _b2, _c2, _d;
-    const drawer = document.querySelector(
-      'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart'
-    );
-    if (drawer === null) return "cart-drawer";
-    const section = (_a2 = drawer.closest('[id^="shopify-section-"]')) != null ? _a2 : drawer.querySelector('[id^="shopify-section-"]');
-    if (section !== null) {
-      return section.id.replace("shopify-section-", "");
+    const itemsAnchors = [
+      "#CartDrawer-Body",
+      "cart-drawer-items",
+      ".cart-drawer__items",
+      "[data-cart-body]",
+      "[data-cart-items]"
+    ];
+    for (const sel of itemsAnchors) {
+      const el = document.querySelector(sel);
+      if (el !== null) {
+        const section = el.closest('[id^="shopify-section-"]');
+        if (section !== null) return section.id.replace("shopify-section-", "");
+      }
     }
-    const dataId = (_d = (_b2 = drawer.closest("[data-section-id]")) == null ? void 0 : _b2.dataset["sectionId"]) != null ? _d : (_c2 = drawer.dataset) == null ? void 0 : _c2["sectionId"];
-    if (dataId !== void 0 && dataId !== "") return dataId;
+    const drawer = document.querySelector(
+      DRAWER_PANEL_SELECTOR
+    );
+    if (drawer !== null) {
+      const section = (_a2 = drawer.closest('[id^="shopify-section-"]')) != null ? _a2 : drawer.querySelector('[id^="shopify-section-"]');
+      if (section !== null) {
+        const id = section.id.replace("shopify-section-", "");
+        if (section.querySelector(".cart-item, #CartDrawer-Body, cart-drawer-items") !== null) {
+          return id;
+        }
+        console.warn("[FGE-DRAWERFIX] drawer section misdetected ->", id);
+      }
+      const dataId = (_d = (_b2 = drawer.closest("[data-section-id]")) == null ? void 0 : _b2.dataset["sectionId"]) != null ? _d : (_c2 = drawer.dataset) == null ? void 0 : _c2["sectionId"];
+      if (dataId !== void 0 && dataId !== "") return dataId;
+    }
     return "cart-drawer";
   }
   function detectBadgeSectionId() {
