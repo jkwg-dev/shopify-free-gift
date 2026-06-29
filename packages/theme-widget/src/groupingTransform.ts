@@ -27,7 +27,7 @@ const GETS_SUBLABEL = 'Added free';
 const LINGERING_LABEL = 'Free gift — pending';
 const FREE_GIFT_LABEL = 'Free gift';
 
-// --- Dawn selectors (multi, fallback; tune on dev) -----------------------------------------------
+// --- selectors (Dawn first, then broader fallbacks for non-Dawn themes) --------------------------
 const LINE_SELECTORS = [
   '.cart-item',
   '[id^="CartDrawer-Item-"]',
@@ -35,19 +35,46 @@ const LINE_SELECTORS = [
   'cart-item',
   '.cart__row',
 ];
-const TOTALS_SELECTOR = '.cart-item__totals'; // the line-TOTAL cell (Dawn renders 2 responsive copies)
+const TOTALS_SELECTORS = [
+  '.cart-item__totals',
+  '[class*="cart-item__price"]',
+  '[class*="line-item__price"]',
+  '[class*="cart-item__total"]',
+];
 const FINAL_PRICE_SELECTORS = ['.price--end', '.cart-item__final-price'];
 const OLD_PRICE_SELECTORS = ['.cart-item__old-price'];
 const PRICE_WRAPPER = '.cart-item__price-wrapper';
-const QTY_CELL_SELECTORS = ['.cart-item__quantity'];
-const QTY_INPUT_SELECTORS = ['.quantity__input', 'input[name="updates[]"]'];
+const QTY_CELL_SELECTORS = [
+  '.cart-item__quantity',
+  '[class*="cart-item__quantity"]',
+  '[class*="cart-item__qty"]',
+];
+const QTY_INPUT_SELECTORS = [
+  '.quantity__input',
+  'input[name="updates[]"]',
+  'input[name*="quantity" i]',
+  'input[type="number"]',
+];
 const QTY_BUTTON_SELECTORS = ['.quantity__button', 'cart-remove-button', '.button--tertiary'];
-// Native qty WIDGET (the whole stepper) — hidden on split rows so its per-split-key write (the source
-// of defect #2) can't fire; we inject our own merged control in the cell instead.
-const QTY_WIDGET_SELECTORS = ['quantity-input', '.quantity', '.cart-item__quantity-wrapper'];
-const REMOVE_SELECTORS = ['cart-remove-button', '.button--tertiary', '[id^="Remove-"]'];
+const QTY_WIDGET_SELECTORS = [
+  'quantity-input',
+  '.quantity',
+  '.cart-item__quantity-wrapper',
+  '[class*="quantity-selector"]',
+];
+const REMOVE_SELECTORS = [
+  'cart-remove-button',
+  '.button--tertiary',
+  '[id^="Remove-"]',
+  'a[href*="/cart/change"]',
+];
 const DISCOUNT_SELECTORS = ['ul.discounts', '.cart-item__discounts', '.discounts'];
-const BADGE_HOST_SELECTORS = [TOTALS_SELECTOR, PRICE_WRAPPER, '.cart-item__price'];
+const BADGE_HOST_SELECTORS = [
+  '.cart-item__totals',
+  PRICE_WRAPPER,
+  '.cart-item__price',
+  '[class*="cart-item__price"]',
+];
 
 const MARK = 'data-fge-grouped';
 const HIDDEN_MARK = 'data-fge-merged-hidden';
@@ -66,6 +93,33 @@ function findLineNodes(itemsEl: HTMLElement): HTMLElement[] {
     if (found.length > 0) return found;
   }
   return [];
+}
+
+function diag(msg: string, ...data: unknown[]): void {
+  console.warn(`[FGE] ${msg}`, ...data);
+}
+
+function findTotalsCell(node: HTMLElement): HTMLElement | null {
+  for (const sel of TOTALS_SELECTORS) {
+    const el = node.querySelector<HTMLElement>(sel);
+    if (el !== null) return el;
+  }
+  return null;
+}
+
+function findQtyContainer(node: HTMLElement): HTMLElement {
+  const named = findFirst(node, QTY_CELL_SELECTORS);
+  if (named !== null) return named;
+  const input = findFirst(node, QTY_INPUT_SELECTORS);
+  if (input !== null) {
+    const parent = input.parentElement;
+    if (parent !== null && parent !== node) {
+      diag('findQtyContainer: fallback to input parent', parent.tagName, parent.className);
+      return parent;
+    }
+  }
+  diag('findQtyContainer: no qty cell found, falling back to node', node.tagName, node.id);
+  return node;
 }
 
 // Replace ONLY the numeric value inside a node's existing price text with `sumMinorUnits`, preserving
@@ -105,18 +159,27 @@ function reformatInPlace(el: HTMLElement | null, sumMinorUnits: number): void {
   if (next !== null) el.textContent = next;
 }
 
-// Overwrite the line total in EVERY responsive .cart-item__totals cell (and the strikethrough, if any)
+// Overwrite the line total in EVERY responsive totals cell (and the strikethrough, if any)
 // with the merged sums. Leaves the per-UNIT price alone (it lives in .cart-item__details, not totals).
 function setLineTotals(node: HTMLElement, sumFinal: number, sumOriginal: number): void {
-  node.querySelectorAll<HTMLElement>(TOTALS_SELECTOR).forEach((cell) => {
-    const wrapper = cell.querySelector<HTMLElement>(PRICE_WRAPPER) ?? cell;
-    const finalEl =
-      findFirst(wrapper, FINAL_PRICE_SELECTORS) ??
-      wrapper.querySelector<HTMLElement>('.price:not(.cart-item__old-price)') ??
-      wrapper;
-    reformatInPlace(finalEl, sumFinal);
-    reformatInPlace(findFirst(wrapper, OLD_PRICE_SELECTORS), sumOriginal);
-  });
+  let found = false;
+  for (const sel of TOTALS_SELECTORS) {
+    const cells = node.querySelectorAll<HTMLElement>(sel);
+    if (cells.length > 0) {
+      cells.forEach((cell) => {
+        const wrapper = cell.querySelector<HTMLElement>(PRICE_WRAPPER) ?? cell;
+        const finalEl =
+          findFirst(wrapper, FINAL_PRICE_SELECTORS) ??
+          wrapper.querySelector<HTMLElement>('.price:not(.cart-item__old-price)') ??
+          wrapper;
+        reformatInPlace(finalEl, sumFinal);
+        reformatInPlace(findFirst(wrapper, OLD_PRICE_SELECTORS), sumOriginal);
+      });
+      found = true;
+      break;
+    }
+  }
+  if (!found) diag('setLineTotals: no totals cell found in', node.tagName, node.id);
 }
 
 // Show the merged quantity as READ-ONLY text (the number stays visible), disabling the +/- and remove
@@ -155,17 +218,57 @@ function renderReadOnlyBuyLine(node: HTMLElement): void {
   hideNativeStepper(node);
 }
 
-// Hide Dawn's native qty widget + per-line remove on a row (their write targets a SINGLE split key —
-// defect #2). Keeps the .cart-item__quantity CELL itself visible so we can inject our merged control.
+// Hide the native qty widget + per-line remove on a row (their write targets a SINGLE split key —
+// defect #2). Keeps the qty CELL itself visible so we can inject our merged control.
 function hideNativeStepper(node: HTMLElement): void {
+  let hiddenCount = 0;
   for (const sel of [...QTY_WIDGET_SELECTORS, ...REMOVE_SELECTORS]) {
     node.querySelectorAll<HTMLElement>(sel).forEach((el) => {
       el.style.display = 'none';
       el.setAttribute('aria-hidden', 'true');
+      hiddenCount++;
     });
   }
   const input = findFirst(node, QTY_INPUT_SELECTORS);
-  if (input instanceof HTMLInputElement) input.readOnly = true; // belt-and-suspenders if the widget shows
+  if (input instanceof HTMLInputElement) input.readOnly = true;
+
+  if (hiddenCount === 0) {
+    diag(
+      'hideNativeStepper: no elements matched widget/remove selectors in',
+      node.tagName,
+      node.id,
+      node.className,
+    );
+    // Fallback: find the qty input and hide its parent container's children (the native +/- buttons
+    // and input wrapper) so only the FGE stepper remains visible in the cell.
+    if (input !== null) {
+      const container = findQtyContainer(node);
+      if (container !== node) {
+        for (const child of Array.from(container.children)) {
+          if (child instanceof HTMLElement && !child.classList.contains('fge-merged-stepper')) {
+            child.style.display = 'none';
+            child.setAttribute('aria-hidden', 'true');
+            hiddenCount++;
+          }
+        }
+        // Also hide direct text/button siblings of the input that aren't wrapped
+        if (hiddenCount === 0 && input.parentElement === container) {
+          container.querySelectorAll<HTMLElement>('button, a').forEach((el) => {
+            el.style.display = 'none';
+            el.setAttribute('aria-hidden', 'true');
+          });
+          input.style.display = 'none';
+        }
+        diag(
+          'hideNativeStepper: fallback hid',
+          hiddenCount,
+          'children in',
+          container.tagName,
+          container.className,
+        );
+      }
+    }
+  }
 }
 
 export type MergedQtyChangeResult = {
@@ -195,8 +298,9 @@ function injectMergedStepper(
   onChange: MergedQtyChange,
 ): void {
   hideNativeStepper(node);
-  node.querySelector('.fge-merged-stepper')?.remove(); // defensive: never duplicate
-  const cell = findFirst(node, QTY_CELL_SELECTORS) ?? node;
+  node.querySelector('.fge-merged-stepper')?.remove();
+  const cell = findQtyContainer(node);
+  diag('injectMergedStepper: cell=', cell.tagName, cell.className, 'node=', node.tagName, node.id);
 
   let perUnitFinal = qty > 0 ? finalLinePrice / qty : 0;
   let perUnitOriginal = qty > 0 ? originalLinePrice / qty : 0;
@@ -354,6 +458,10 @@ export type GroupingTransformOptions = {
 // Apply the two-group layout to one theme items container. Returns true if it grouped, false if it
 // failed open. Idempotent: re-running on an already-grouped render is a no-op; the theme's next
 // re-render wipes our markers and we re-group from scratch.
+//
+// The FGE merged stepper is ALWAYS injected on buy rows when opts.onMergedQtyChange is provided
+// (campaign is active), regardless of whether gifts are currently in the cart. This routes every
+// +/-/Remove through the gift-aware write path. Reordering + group headers are gifts-only.
 export function applyTwoGroupLayout(
   itemsEl: HTMLElement | null,
   plan: GroupingPlan,
@@ -362,13 +470,38 @@ export function applyTwoGroupLayout(
   if (itemsEl === null) return false;
 
   const lineNodes = findLineNodes(itemsEl);
-  // FAIL OPEN: nothing to group, or the rendered list doesn't match the plan we built from /cart.js.
-  if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) return false;
+  diag('applyTwoGroupLayout entry:', {
+    lineNodes: lineNodes.length,
+    planLineCount: plan.lineCount,
+    hasGifts: plan.hasGifts,
+    buys: plan.buys.length,
+    gets: plan.gets.length,
+    lingering: plan.lingering.length,
+    hasMergedQtyChange: opts.onMergedQtyChange !== undefined,
+    containerTag: itemsEl.tagName,
+    containerId: itemsEl.id,
+    lineNodeInfo: lineNodes
+      .slice(0, 3)
+      .map((n) => `${n.tagName}#${n.id}.${n.className.slice(0, 50)}`),
+  });
 
-  // Idempotency: already grouped THIS render (our header present) -> no-op.
-  // Still (re-)set the mask-lift marker — onReattach's remask() strips it on every re-render, and
-  // without this the FOUC mask stays permanently (the full path below only runs on the FIRST group).
-  if (itemsEl.querySelector('.fge-group-head') !== null) {
+  // FAIL OPEN: nothing to group, or the rendered list doesn't match the plan we built from /cart.js.
+  if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) {
+    diag(
+      'applyTwoGroupLayout: FAIL OPEN — lineCount mismatch',
+      lineNodes.length,
+      '≠',
+      plan.lineCount,
+    );
+    return false;
+  }
+
+  // Idempotency: already grouped/stepped THIS render -> no-op. Check BOTH headers (gifts path) and
+  // merged steppers (no-gifts path) so re-running after either path is a no-op.
+  if (
+    itemsEl.querySelector('.fge-group-head') !== null ||
+    itemsEl.querySelector('.fge-merged-stepper') !== null
+  ) {
     (itemsEl.closest('cart-drawer-items, cart-items') ?? itemsEl).setAttribute(MARK, '');
     return true;
   }
@@ -378,7 +511,14 @@ export function applyTwoGroupLayout(
   for (const row of plan.buys) {
     if (!row.split) continue;
     const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
-    if (keep == null || keep.querySelector(TOTALS_SELECTOR) === null) return false;
+    if (keep == null || findTotalsCell(keep) === null) {
+      diag(
+        'applyTwoGroupLayout: FAIL OPEN — split row has no totals cell',
+        keep?.tagName,
+        keep?.id,
+      );
+      return false;
+    }
   }
 
   const parent = lineNodes[0]?.parentElement ?? null;
@@ -388,6 +528,7 @@ export function applyTwoGroupLayout(
   // it; falls back to itemsEl if no host is found (e.g. a non-Dawn theme).
   (itemsEl.closest('cart-drawer-items, cart-items') ?? itemsEl).setAttribute(MARK, '');
 
+  // --- buys header (gifts-only) ---
   if (plan.buys.length > 0 && plan.hasGifts) {
     const firstRow = plan.buys[0]!;
     const firstIdx =
@@ -395,20 +536,25 @@ export function applyTwoGroupLayout(
     const firstBuy = firstIdx === undefined ? null : lineNodes[firstIdx];
     if (firstBuy != null) parent.insertBefore(makeHeader(firstBuy, BUYS_HEADER, null), firstBuy);
   }
+
+  // --- buy rows: ALWAYS inject merged stepper, reorder ONLY when gifts present ---
+  let steppersInjected = 0;
   for (const row of plan.buys) {
     const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
     if (keep != null) {
       if (row.split) {
-        // Split rows need correction: overwrite the line total (every responsive cell) with the
-        // controllable sum (unsplit rows already show the correct theme-rendered total).
         setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
       }
-      // When gifts are present, ALL buy rows get the FGE stepper — not just split. An unsplit row
-      // has a single writable key (the atomic write is trivially correct). This routes every +/-/
-      // Remove through onMergedBuyQtyChange → the gift-first sequence, so a below-tier reduction
-      // can't deadlock against the VF. Without this, the native Dawn stepper fires cart/change.js
-      // directly and 422s when the gift is orphaned.
-      if (plan.hasGifts && opts.onMergedQtyChange !== undefined) {
+      // FGE stepper on ALL buy rows when the campaign is active (callback provided). Routes every
+      // +/-/Remove through onMergedBuyQtyChange → the gift-first sequence when a tier drop occurs.
+      if (opts.onMergedQtyChange !== undefined) {
+        diag('injectMergedStepper: injecting on', keep.tagName, keep.id, {
+          qty: row.controllableQuantity,
+          split: row.split,
+          writableKeys: row.writableKeys,
+          qtyCell: findFirst(keep, QTY_CELL_SELECTORS)?.className ?? '(none)',
+          qtyInput: findFirst(keep, QTY_INPUT_SELECTORS)?.tagName ?? '(none)',
+        });
         injectMergedStepper(
           keep,
           row.controllableQuantity,
@@ -417,32 +563,35 @@ export function applyTwoGroupLayout(
           row.writableKeys,
           opts.onMergedQtyChange,
         );
+        steppersInjected++;
       } else if (row.split) {
-        // Stage-1 fallback for split rows without a write callback.
         showMergedQtyReadOnly(keep, row.controllableQuantity);
       }
-      // Suppress our raw discount code label on buy lines (the "Free gift" relabel is gift-group only).
-      if (plan.hasGifts) hideOurDiscount(keep, opts.ourCode);
-      parent.append(keep); // reorder: buys first, in first-occurrence order
+      if (plan.hasGifts) {
+        hideOurDiscount(keep, opts.ourCode);
+        parent.append(keep); // reorder: buys first (gifts-only)
+      }
     }
     for (const hideIdx of row.hideIndexes) {
       const sib = lineNodes[hideIdx];
       if (sib != null) {
         sib.style.display = 'none';
         sib.setAttribute(HIDDEN_MARK, '');
-        parent.append(sib);
+        if (plan.hasGifts) parent.append(sib); // reorder only with gifts
       }
     }
-    // Marked overlap units (issue-#6 / §M): keep read-only in the buys group after the interactive row.
-    for (const roIdx of row.readOnlyIndexes) {
-      const ro = lineNodes[roIdx];
-      if (ro != null) {
-        renderReadOnlyBuyLine(ro);
-        parent.append(ro);
+    if (plan.hasGifts) {
+      for (const roIdx of row.readOnlyIndexes) {
+        const ro = lineNodes[roIdx];
+        if (ro != null) {
+          renderReadOnlyBuyLine(ro);
+          parent.append(ro);
+        }
       }
     }
   }
 
+  // --- gets group (gifts-only) ---
   if (plan.hasGifts) {
     const giftCount = plan.gets.length + plan.lingering.length;
     const firstGiftIdx = plan.gets[0]?.index ?? plan.lingering[0]?.index;
@@ -463,12 +612,18 @@ export function applyTwoGroupLayout(
     for (const ref of plan.lingering) {
       const node = lineNodes[ref.index];
       if (node == null) continue;
-      hideControls(node); // app-managed; reconcile converges it
+      hideControls(node);
       node.classList.add('fge-gift-line', 'fge-gift-line--pending');
-      injectBadge(node, LINGERING_LABEL); // price stays shown; never a silent FREE
+      injectBadge(node, LINGERING_LABEL);
       parent.append(node);
     }
   }
+
+  diag('applyTwoGroupLayout done:', {
+    steppersInjected,
+    headersInjected: itemsEl.querySelectorAll('.fge-group-head').length,
+    mergedSteppersInDOM: itemsEl.querySelectorAll('.fge-merged-stepper').length,
+  });
 
   return true;
 }

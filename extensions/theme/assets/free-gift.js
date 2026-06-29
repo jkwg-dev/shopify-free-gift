@@ -312,17 +312,46 @@
     "cart-item",
     ".cart__row"
   ];
-  var TOTALS_SELECTOR = ".cart-item__totals";
+  var TOTALS_SELECTORS = [
+    ".cart-item__totals",
+    '[class*="cart-item__price"]',
+    '[class*="line-item__price"]',
+    '[class*="cart-item__total"]'
+  ];
   var FINAL_PRICE_SELECTORS = [".price--end", ".cart-item__final-price"];
   var OLD_PRICE_SELECTORS = [".cart-item__old-price"];
   var PRICE_WRAPPER = ".cart-item__price-wrapper";
-  var QTY_CELL_SELECTORS = [".cart-item__quantity"];
-  var QTY_INPUT_SELECTORS = [".quantity__input", 'input[name="updates[]"]'];
+  var QTY_CELL_SELECTORS = [
+    ".cart-item__quantity",
+    '[class*="cart-item__quantity"]',
+    '[class*="cart-item__qty"]'
+  ];
+  var QTY_INPUT_SELECTORS = [
+    ".quantity__input",
+    'input[name="updates[]"]',
+    'input[name*="quantity" i]',
+    'input[type="number"]'
+  ];
   var QTY_BUTTON_SELECTORS = [".quantity__button", "cart-remove-button", ".button--tertiary"];
-  var QTY_WIDGET_SELECTORS = ["quantity-input", ".quantity", ".cart-item__quantity-wrapper"];
-  var REMOVE_SELECTORS = ["cart-remove-button", ".button--tertiary", '[id^="Remove-"]'];
+  var QTY_WIDGET_SELECTORS = [
+    "quantity-input",
+    ".quantity",
+    ".cart-item__quantity-wrapper",
+    '[class*="quantity-selector"]'
+  ];
+  var REMOVE_SELECTORS = [
+    "cart-remove-button",
+    ".button--tertiary",
+    '[id^="Remove-"]',
+    'a[href*="/cart/change"]'
+  ];
   var DISCOUNT_SELECTORS = ["ul.discounts", ".cart-item__discounts", ".discounts"];
-  var BADGE_HOST_SELECTORS = [TOTALS_SELECTOR, PRICE_WRAPPER, ".cart-item__price"];
+  var BADGE_HOST_SELECTORS = [
+    ".cart-item__totals",
+    PRICE_WRAPPER,
+    ".cart-item__price",
+    '[class*="cart-item__price"]'
+  ];
   var MARK = "data-fge-grouped";
   var HIDDEN_MARK = "data-fge-merged-hidden";
   function findFirst2(root2, selectors) {
@@ -338,6 +367,30 @@
       if (found.length > 0) return found;
     }
     return [];
+  }
+  function diag(msg, ...data) {
+    console.warn(`[FGE] ${msg}`, ...data);
+  }
+  function findTotalsCell(node) {
+    for (const sel of TOTALS_SELECTORS) {
+      const el = node.querySelector(sel);
+      if (el !== null) return el;
+    }
+    return null;
+  }
+  function findQtyContainer(node) {
+    const named = findFirst2(node, QTY_CELL_SELECTORS);
+    if (named !== null) return named;
+    const input = findFirst2(node, QTY_INPUT_SELECTORS);
+    if (input !== null) {
+      const parent = input.parentElement;
+      if (parent !== null && parent !== node) {
+        diag("findQtyContainer: fallback to input parent", parent.tagName, parent.className);
+        return parent;
+      }
+    }
+    diag("findQtyContainer: no qty cell found, falling back to node", node.tagName, node.id);
+    return node;
   }
   function reformatPriceText(currentText, sumMinorUnits) {
     const m = currentText.match(/\d[\d.,\u00A0\u202F' ]*\d|\d/);
@@ -370,13 +423,22 @@
     if (next !== null) el.textContent = next;
   }
   function setLineTotals(node, sumFinal, sumOriginal) {
-    node.querySelectorAll(TOTALS_SELECTOR).forEach((cell) => {
-      var _a2, _b2, _c2;
-      const wrapper = (_a2 = cell.querySelector(PRICE_WRAPPER)) != null ? _a2 : cell;
-      const finalEl = (_c2 = (_b2 = findFirst2(wrapper, FINAL_PRICE_SELECTORS)) != null ? _b2 : wrapper.querySelector(".price:not(.cart-item__old-price)")) != null ? _c2 : wrapper;
-      reformatInPlace(finalEl, sumFinal);
-      reformatInPlace(findFirst2(wrapper, OLD_PRICE_SELECTORS), sumOriginal);
-    });
+    let found = false;
+    for (const sel of TOTALS_SELECTORS) {
+      const cells = node.querySelectorAll(sel);
+      if (cells.length > 0) {
+        cells.forEach((cell) => {
+          var _a2, _b2, _c2;
+          const wrapper = (_a2 = cell.querySelector(PRICE_WRAPPER)) != null ? _a2 : cell;
+          const finalEl = (_c2 = (_b2 = findFirst2(wrapper, FINAL_PRICE_SELECTORS)) != null ? _b2 : wrapper.querySelector(".price:not(.cart-item__old-price)")) != null ? _c2 : wrapper;
+          reformatInPlace(finalEl, sumFinal);
+          reformatInPlace(findFirst2(wrapper, OLD_PRICE_SELECTORS), sumOriginal);
+        });
+        found = true;
+        break;
+      }
+    }
+    if (!found) diag("setLineTotals: no totals cell found in", node.tagName, node.id);
   }
   function showMergedQtyReadOnly(node, qty) {
     const input = findFirst2(node, QTY_INPUT_SELECTORS);
@@ -406,20 +468,51 @@
     hideNativeStepper(node);
   }
   function hideNativeStepper(node) {
+    let hiddenCount = 0;
     for (const sel of [...QTY_WIDGET_SELECTORS, ...REMOVE_SELECTORS]) {
       node.querySelectorAll(sel).forEach((el) => {
         el.style.display = "none";
         el.setAttribute("aria-hidden", "true");
+        hiddenCount++;
       });
     }
     const input = findFirst2(node, QTY_INPUT_SELECTORS);
     if (input instanceof HTMLInputElement) input.readOnly = true;
+    if (hiddenCount === 0) {
+      diag(
+        "hideNativeStepper: no elements matched widget/remove selectors in",
+        node.tagName,
+        node.id,
+        node.className
+      );
+      if (input !== null) {
+        const container = findQtyContainer(node);
+        if (container !== node) {
+          for (const child of Array.from(container.children)) {
+            if (child instanceof HTMLElement && !child.classList.contains("fge-merged-stepper")) {
+              child.style.display = "none";
+              child.setAttribute("aria-hidden", "true");
+              hiddenCount++;
+            }
+          }
+          if (hiddenCount === 0 && input.parentElement === container) {
+            container.querySelectorAll("button, a").forEach((el) => {
+              el.style.display = "none";
+              el.setAttribute("aria-hidden", "true");
+            });
+            input.style.display = "none";
+          }
+          diag("hideNativeStepper: fallback hid", hiddenCount, "children in", container.tagName, container.className);
+        }
+      }
+    }
   }
   function injectMergedStepper(node, qty, finalLinePrice, originalLinePrice, writableKeys, onChange) {
-    var _a2, _b2;
+    var _a2;
     hideNativeStepper(node);
     (_a2 = node.querySelector(".fge-merged-stepper")) == null ? void 0 : _a2.remove();
-    const cell = (_b2 = findFirst2(node, QTY_CELL_SELECTORS)) != null ? _b2 : node;
+    const cell = findQtyContainer(node);
+    diag("injectMergedStepper: cell=", cell.tagName, cell.className, "node=", node.tagName, node.id);
     let perUnitFinal = qty > 0 ? finalLinePrice / qty : 0;
     let perUnitOriginal = qty > 0 ? originalLinePrice / qty : 0;
     const wrap = document.createElement("div");
@@ -546,18 +639,36 @@
     return header;
   }
   function applyTwoGroupLayout(itemsEl, plan, opts) {
-    var _a2, _b2, _c2, _d, _e, _f, _g, _h, _i;
+    var _a2, _b2, _c2, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     if (itemsEl === null) return false;
     const lineNodes = findLineNodes(itemsEl);
-    if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) return false;
-    if (itemsEl.querySelector(".fge-group-head") !== null) {
+    diag("applyTwoGroupLayout entry:", {
+      lineNodes: lineNodes.length,
+      planLineCount: plan.lineCount,
+      hasGifts: plan.hasGifts,
+      buys: plan.buys.length,
+      gets: plan.gets.length,
+      lingering: plan.lingering.length,
+      hasMergedQtyChange: opts.onMergedQtyChange !== void 0,
+      containerTag: itemsEl.tagName,
+      containerId: itemsEl.id,
+      lineNodeInfo: lineNodes.slice(0, 3).map((n) => `${n.tagName}#${n.id}.${n.className.slice(0, 50)}`)
+    });
+    if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) {
+      diag("applyTwoGroupLayout: FAIL OPEN \u2014 lineCount mismatch", lineNodes.length, "\u2260", plan.lineCount);
+      return false;
+    }
+    if (itemsEl.querySelector(".fge-group-head") !== null || itemsEl.querySelector(".fge-merged-stepper") !== null) {
       ((_a2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl).setAttribute(MARK, "");
       return true;
     }
     for (const row of plan.buys) {
       if (!row.split) continue;
       const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
-      if (keep == null || keep.querySelector(TOTALS_SELECTOR) === null) return false;
+      if (keep == null || findTotalsCell(keep) === null) {
+        diag("applyTwoGroupLayout: FAIL OPEN \u2014 split row has no totals cell", keep == null ? void 0 : keep.tagName, keep == null ? void 0 : keep.id);
+        return false;
+      }
     }
     const parent = (_c2 = (_b2 = lineNodes[0]) == null ? void 0 : _b2.parentElement) != null ? _c2 : null;
     if (parent === null) return false;
@@ -568,13 +679,21 @@
       const firstBuy = firstIdx === void 0 ? null : lineNodes[firstIdx];
       if (firstBuy != null) parent.insertBefore(makeHeader(firstBuy, BUYS_HEADER, null), firstBuy);
     }
+    let steppersInjected = 0;
     for (const row of plan.buys) {
       const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
       if (keep != null) {
         if (row.split) {
           setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
         }
-        if (plan.hasGifts && opts.onMergedQtyChange !== void 0) {
+        if (opts.onMergedQtyChange !== void 0) {
+          diag("injectMergedStepper: injecting on", keep.tagName, keep.id, {
+            qty: row.controllableQuantity,
+            split: row.split,
+            writableKeys: row.writableKeys,
+            qtyCell: (_h = (_g = findFirst2(keep, QTY_CELL_SELECTORS)) == null ? void 0 : _g.className) != null ? _h : "(none)",
+            qtyInput: (_j = (_i = findFirst2(keep, QTY_INPUT_SELECTORS)) == null ? void 0 : _i.tagName) != null ? _j : "(none)"
+          });
           injectMergedStepper(
             keep,
             row.controllableQuantity,
@@ -583,31 +702,36 @@
             row.writableKeys,
             opts.onMergedQtyChange
           );
+          steppersInjected++;
         } else if (row.split) {
           showMergedQtyReadOnly(keep, row.controllableQuantity);
         }
-        if (plan.hasGifts) hideOurDiscount(keep, opts.ourCode);
-        parent.append(keep);
+        if (plan.hasGifts) {
+          hideOurDiscount(keep, opts.ourCode);
+          parent.append(keep);
+        }
       }
       for (const hideIdx of row.hideIndexes) {
         const sib = lineNodes[hideIdx];
         if (sib != null) {
           sib.style.display = "none";
           sib.setAttribute(HIDDEN_MARK, "");
-          parent.append(sib);
+          if (plan.hasGifts) parent.append(sib);
         }
       }
-      for (const roIdx of row.readOnlyIndexes) {
-        const ro = lineNodes[roIdx];
-        if (ro != null) {
-          renderReadOnlyBuyLine(ro);
-          parent.append(ro);
+      if (plan.hasGifts) {
+        for (const roIdx of row.readOnlyIndexes) {
+          const ro = lineNodes[roIdx];
+          if (ro != null) {
+            renderReadOnlyBuyLine(ro);
+            parent.append(ro);
+          }
         }
       }
     }
     if (plan.hasGifts) {
       const giftCount = plan.gets.length + plan.lingering.length;
-      const firstGiftIdx = (_i = (_g = plan.gets[0]) == null ? void 0 : _g.index) != null ? _i : (_h = plan.lingering[0]) == null ? void 0 : _h.index;
+      const firstGiftIdx = (_m = (_k = plan.gets[0]) == null ? void 0 : _k.index) != null ? _m : (_l = plan.lingering[0]) == null ? void 0 : _l.index;
       const firstGift = firstGiftIdx === void 0 ? null : lineNodes[firstGiftIdx];
       if (firstGift != null) {
         parent.append(
@@ -631,6 +755,11 @@
         parent.append(node);
       }
     }
+    diag("applyTwoGroupLayout done:", {
+      steppersInjected,
+      headersInjected: itemsEl.querySelectorAll(".fge-group-head").length,
+      mergedSteppersInDOM: itemsEl.querySelectorAll(".fge-merged-stepper").length
+    });
     return true;
   }
   function syncNativeInputs(itemsEl, actualQuantities) {
@@ -1015,7 +1144,13 @@
     } else if (group.variants.length > 1) {
       const compoundKey = `${tierId}:${group.productId}`;
       body.append(
-        renderAndVariantChips(compoundKey, group.variants, selectedVariantId, group.productLabel, handlers)
+        renderAndVariantChips(
+          compoundKey,
+          group.variants,
+          selectedVariantId,
+          group.productLabel,
+          handlers
+        )
       );
     }
     card.append(body);
