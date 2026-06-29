@@ -1555,9 +1555,13 @@
   var FGE_STYLE_ID = "fge-styles";
   var FGE_CSS = `
 .fge{
-  --fge-ink:#111111; --fge-muted:#707070; --fge-subtle:#f5f5f5;
-  --fge-line:#e3e3e3; --fge-brand:#111111; --fge-brand-strong:#000000; --fge-card-radius:10px;
-  box-sizing:border-box; font-family:inherit; line-height:1.35;
+  --fge-ink:rgb(var(--color-foreground,17,17,17));
+  --fge-muted:rgb(var(--color-secondary-text,101,112,110));
+  --fge-subtle:#f5f5f5;
+  --fge-line:rgba(var(--color-border,235,235,235),var(--alpha-border,1));
+  --fge-brand:#111111; --fge-brand-strong:#000000; --fge-card-radius:0px;
+  --fge-drawer-pad:36px;
+  box-sizing:border-box; font-family:var(--font-body-family,inherit); line-height:1.35;
 }
 .fge *{ box-sizing:border-box; }
 
@@ -1565,13 +1569,13 @@
    only "Spend CA$X more to unlock <gift>" (or "You've unlocked\u2026"); the theme's own "Your cart" drawer
    header sits separately above and is NOT restated here. Kept slim so cart items below keep space. --- */
 .fge-stepper-wrap{
-  margin:6px 14px 4px; padding:11px 14px 8px; color:var(--fge-ink);
-  border:1px solid var(--fge-line); border-radius:12px; background-color:#fafafa;
+  margin:0; padding:11px var(--fge-drawer-pad) 8px; color:var(--fge-ink);
+  border-bottom:0.1rem solid var(--fge-line); background-color:transparent;
 }
 
-.fge-headline{ margin:0 0 2px; font-size:12.5px; font-weight:600; color:var(--fge-ink); }
+.fge-headline{ margin:0 0 2px; font-size:var(--font-size-static-sm,1.2rem); font-weight:600; color:var(--fge-ink); }
 .fge-headline .fge-amt{ color:var(--fge-brand-strong); font-weight:750; }
-.fge-subnote{ margin:6px 0 0; font-size:10px; line-height:1.3; color:var(--fge-muted); }
+.fge-subnote{ margin:6px 0 0; font-size:var(--font-size-static-xs,1rem); line-height:1.3; color:var(--fge-muted); }
 
 /* --- the progress stepper: a clearly visible slim bar. Explicit px geometry (NOT inset:0 + parent
    height) so the track/fill/dots render reliably regardless of the host theme's resets. Bar area 16px;
@@ -1633,10 +1637,10 @@ cart-drawer .title--primary,
 /* --- gift panel: lives INSIDE the drawer's scrollable items region, after the line items, so it
    scrolls with the cart (no inner max-height/scroll \u2014 that would nest a scrollbar and pin it). --- */
 .fge-gift{
-  border-top:1px solid var(--fge-line); padding:12px 14px 0; margin-top:8px;
+  border-top:0.1rem solid var(--fge-line); padding:16px var(--fge-drawer-pad) 0; margin-top:8px;
 }
-.fge-gift__title{ margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.01em; }
-.fge-gift__hint{ margin:0; font-size:13px; color:var(--fge-muted); }
+.fge-gift__title{ margin:0 0 8px; font-family:var(--font-heading-family,inherit); font-size:var(--font-size-static-sm,1.2rem); font-weight:600; letter-spacing:.01em; }
+.fge-gift__hint{ margin:0; font-size:var(--font-size-static-sm,1.2rem); color:var(--fge-muted); }
 
 .fge-card{
   display:flex; align-items:center; gap:11px; width:100%; text-align:left;
