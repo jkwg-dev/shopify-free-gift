@@ -2171,29 +2171,33 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
     return false;
   }
-  async function verifiedDisplayReconcile() {
+  async function verifiedDisplayReconcile(cartMutated = false) {
     var _a2;
     try {
       const cart = await getCart();
       const itemsEl = document.querySelector("cart-drawer-items, cart-items");
+      if (cartMutated) {
+        await refreshDawnTotals();
+      }
       if (!domMatchesCart(itemsEl, cart)) {
         console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch", {
           domVariants: domVariantIds(itemsEl),
           cartVariants: cart.items.map((i) => i.variant_id)
         });
         await refreshItemsBody(cart);
-        for (const section of sections) section.attach();
       }
       lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
       lastCartQuantities = cart.items.map((item) => item.quantity);
       freshPlanAttach = true;
       for (const section of sections) section.attach();
       freshPlanAttach = false;
-      setTimeout(() => {
-        freshPlanAttach = true;
-        for (const section of sections) section.attach();
-        freshPlanAttach = false;
-      }, 500);
+      if (cartMutated) {
+        setTimeout(() => {
+          freshPlanAttach = true;
+          for (const section of sections) section.attach();
+          freshPlanAttach = false;
+        }, 500);
+      }
       const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
       const buyOnlyCount = ((_a2 = cart.item_count) != null ? _a2 : 0) - giftQty;
       if (cart.total_price !== void 0 && cart.item_count !== void 0) {
@@ -2279,10 +2283,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       markGiftWorkDone();
       renderPerception(config);
       const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
-      if (cartMutated) {
-        await refreshDawnTotals();
-      }
-      await verifiedDisplayReconcile();
+      await verifiedDisplayReconcile(cartMutated);
     } finally {
       markGiftWorkDone();
       selfMutating = false;
@@ -2423,8 +2424,10 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       await new Promise((resolve) => idleResolvers.push(resolve));
     }
   }
+  var cachedDrawerSectionId = null;
   function detectDrawerSectionId() {
     var _a2, _b2, _c2, _d;
+    if (cachedDrawerSectionId !== null) return cachedDrawerSectionId;
     const itemsAnchors = [
       "#CartDrawer-Body",
       "cart-drawer-items",
@@ -2436,7 +2439,10 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       const el = document.querySelector(sel);
       if (el !== null) {
         const section = el.closest('[id^="shopify-section-"]');
-        if (section !== null) return section.id.replace("shopify-section-", "");
+        if (section !== null) {
+          cachedDrawerSectionId = section.id.replace("shopify-section-", "");
+          return cachedDrawerSectionId;
+        }
       }
     }
     const drawer = document.querySelector(DRAWER_PANEL_SELECTOR);
@@ -2445,12 +2451,16 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       if (section !== null) {
         const id = section.id.replace("shopify-section-", "");
         if (section.querySelector(".cart-item, #CartDrawer-Body, cart-drawer-items") !== null) {
+          cachedDrawerSectionId = id;
           return id;
         }
         console.warn("[FGE-DRAWERFIX] drawer section misdetected ->", id);
       }
       const dataId = (_d = (_b2 = drawer.closest("[data-section-id]")) == null ? void 0 : _b2.dataset["sectionId"]) != null ? _d : (_c2 = drawer.dataset) == null ? void 0 : _c2["sectionId"];
-      if (dataId !== void 0 && dataId !== "") return dataId;
+      if (dataId !== void 0 && dataId !== "") {
+        cachedDrawerSectionId = dataId;
+        return dataId;
+      }
     }
     return "cart-drawer";
   }
@@ -2463,7 +2473,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     return "cart-icon-bubble";
   }
   async function refreshDawnTotals() {
-    var _a2, _b2;
+    var _a2;
     try {
       const drawerSectionId = detectDrawerSectionId();
       const badgeSectionId = detectBadgeSectionId();
@@ -2473,14 +2483,11 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       if (pageFooterSection !== void 0 && pageFooterSection !== "") {
         sectionIds.push(pageFooterSection);
       }
-      const [sectionsRes, cart] = await Promise.all([
-        fetch(`${root}?sections=${sectionIds.join(",")}`, {
-          headers: { Accept: "application/json" }
-        }),
-        getCart()
-      ]);
-      if (!sectionsRes.ok) return;
-      const data = await sectionsRes.json();
+      const res = await fetch(`${root}?sections=${sectionIds.join(",")}`, {
+        headers: { Accept: "application/json" }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
       const drawerHtml = data[drawerSectionId];
       const badgeHtml = data[badgeSectionId];
       if (badgeHtml !== void 0) {
@@ -2504,30 +2511,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           }
         }
       }
-      const footerTargetReplaced = drawerHtml !== void 0 ? replaceDrawerFooter(drawerHtml) : false;
-      const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
-      const buyOnlyCount = ((_b2 = cart.item_count) != null ? _b2 : 0) - giftQty;
-      let stampResult = { subtotalTargetsFound: 0, badgeTargetsFound: 0 };
-      if (cart.total_price !== void 0 && cart.item_count !== void 0) {
-        stampResult = stampAuthoritativeCart({
-          total_price: cart.total_price,
-          item_count: buyOnlyCount
-        });
-      }
-      const itemsEl = document.querySelector("cart-drawer-items, cart-items");
-      const renderedLineNodes = itemsEl ? itemsEl.querySelectorAll(
-        '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row'
-      ).length : 0;
-      console.warn("[FGE-DRAWERFIX]", {
-        renderedLineNodes,
-        cartItemsLen: cart.items.length,
-        realSubtotal: cart.total_price,
-        realBadge: cart.item_count,
-        displayedBadge: buyOnlyCount,
-        footerTargetReplaced,
-        subtotalTargetsFound: stampResult.subtotalTargetsFound,
-        badgeTargetsFound: stampResult.badgeTargetsFound
-      });
+      if (drawerHtml !== void 0) replaceDrawerFooter(drawerHtml);
     } catch {
     }
   }

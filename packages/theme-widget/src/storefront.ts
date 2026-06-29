@@ -256,42 +256,46 @@ async function refreshItemsBody(cart: AjaxCart): Promise<boolean> {
   return false;
 }
 
-// Verified display reconcile: compare DOM to cart.js, force a body re-fetch if divergent, then
-// apply grouping + stamp. Called on every reconcile (including no-ops) and on every drawer open.
-async function verifiedDisplayReconcile(): Promise<void> {
+// Verified display reconcile: single cart.js read → section-fetch (if mutated) → DOM divergence
+// check → grouping → stamp. Consolidates all post-reconcile display work into one cart.js read.
+async function verifiedDisplayReconcile(cartMutated = false): Promise<void> {
   try {
     const cart = await getCart();
     const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
 
+    // Section-fetch refresh (footer + badge HTML): only when the reconcile mutated the cart.
+    if (cartMutated) {
+      await refreshDawnTotals();
+    }
+
+    // DOM divergence check: if the rendered items don't match cart.js, force a body re-fetch.
     if (!domMatchesCart(itemsEl, cart)) {
       console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch', {
         domVariants: domVariantIds(itemsEl),
         cartVariants: cart.items.map((i) => i.variant_id),
       });
       await refreshItemsBody(cart);
-      // Re-mount sections so the grouping transform sees the new nodes.
-      for (const section of sections) section.attach();
     }
 
     // Recompute grouping from fresh cart and apply. The freshPlanAttach flag tells onReattach to
-    // apply this plan even though a reconcile is in-flight (the plan was just computed from the
-    // post-mutation cart, so it's NOT stale).
+    // apply this plan even though a reconcile is in-flight.
     lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
     lastCartQuantities = cart.items.map((item) => item.quantity);
     freshPlanAttach = true;
     for (const section of sections) section.attach();
     freshPlanAttach = false;
 
-    // Dawn inserts newly-added gift nodes asynchronously (its own section re-render after
-    // cart/add.js). Schedule a deferred re-apply so the gift node is hidden even if it arrives
-    // after this synchronous pass. The plan is already fresh; the re-apply is idempotent.
-    setTimeout(() => {
-      freshPlanAttach = true;
-      for (const section of sections) section.attach();
-      freshPlanAttach = false;
-    }, 500);
+    // Deferred re-apply: catches Dawn's async gift-node insertion after cart/add.js. Only needed
+    // when the reconcile mutated the cart (a no-op can't produce a new async node).
+    if (cartMutated) {
+      setTimeout(() => {
+        freshPlanAttach = true;
+        for (const section of sections) section.attach();
+        freshPlanAttach = false;
+      }, 500);
+    }
 
-    // Stamp authoritative subtotal + badge.
+    // Stamp authoritative subtotal + badge (always, even on no-ops).
     const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
     const buyOnlyCount = (cart.item_count ?? 0) - giftQty;
     if (cart.total_price !== undefined && cart.item_count !== undefined) {
@@ -393,16 +397,9 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     }
     markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
-    // Section-fetch body refresh: only when the reconcile mutated the cart (the section response can
-    // be stale mid-mutation). The cart.js-driven display reconcile below runs unconditionally.
+    // Single cart.js read shared by section-fetch refresh + verified display reconcile.
     const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
-    if (cartMutated) {
-      await refreshDawnTotals();
-    }
-    // Verified display reconcile: compare DOM to cart.js, force a body re-fetch if the node set
-    // diverges (stale duplicates, missing buy nodes), then apply grouping + stamp. Runs on EVERY
-    // reconcile including no-ops so a stale DOM always converges.
-    await verifiedDisplayReconcile();
+    await verifiedDisplayReconcile(cartMutated);
   } finally {
     markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
     selfMutating = false;
@@ -583,12 +580,14 @@ async function whenReconcileIdle(): Promise<void> {
   }
 }
 
+let cachedDrawerSectionId: string | null = null;
+
 // Detect the Shopify section ID for the cart drawer from the live DOM. Anchored on the ITEMS
 // CONTAINER (#CartDrawer-Body, cart-drawer-items) — the node the refetch needs to replace — so it
 // returns the section that actually contains cart line items, never a recommendations or trigger
-// button section. Falls back to a panel-level detection (excluding buttons/triggers) only if the
-// items anchor is not found.
+// button section. Cached after the first successful detection (the section ID never changes).
 function detectDrawerSectionId(): string {
+  if (cachedDrawerSectionId !== null) return cachedDrawerSectionId;
   // Primary: walk up from the items container — authoritative because it IS the cart content.
   const itemsAnchors = [
     '#CartDrawer-Body',
@@ -601,7 +600,10 @@ function detectDrawerSectionId(): string {
     const el = document.querySelector(sel);
     if (el !== null) {
       const section = el.closest<HTMLElement>('[id^="shopify-section-"]');
-      if (section !== null) return section.id.replace('shopify-section-', '');
+      if (section !== null) {
+        cachedDrawerSectionId = section.id.replace('shopify-section-', '');
+        return cachedDrawerSectionId;
+      }
     }
   }
   // Fallback: drawer panel detection, excluding buttons/triggers that can false-positive.
@@ -612,8 +614,8 @@ function detectDrawerSectionId(): string {
       drawer.querySelector<HTMLElement>('[id^="shopify-section-"]');
     if (section !== null) {
       const id = section.id.replace('shopify-section-', '');
-      // Verify this section actually contains cart items; if not, log and fall back.
       if (section.querySelector('.cart-item, #CartDrawer-Body, cart-drawer-items') !== null) {
+        cachedDrawerSectionId = id;
         return id;
       }
       console.warn('[FGE-DRAWERFIX] drawer section misdetected ->', id);
@@ -621,7 +623,10 @@ function detectDrawerSectionId(): string {
     const dataId =
       drawer.closest<HTMLElement>('[data-section-id]')?.dataset['sectionId'] ??
       (drawer as HTMLElement).dataset?.['sectionId'];
-    if (dataId !== undefined && dataId !== '') return dataId;
+    if (dataId !== undefined && dataId !== '') {
+      cachedDrawerSectionId = dataId;
+      return dataId;
+    }
   }
   return 'cart-drawer';
 }
@@ -640,6 +645,8 @@ function detectBadgeSectionId(): string {
 // left untouched — it is owned by Dawn's own cart-update repaint + the FGE grouping transform.
 // After applying the section HTML, authoritative cart.js values are stamped into the subtotal and
 // badge so a stale section response (fetched before the discount settles) never shows wrong numbers.
+// Section-fetch refresh for footer + badge. Accepts an already-fetched cart to avoid a redundant
+// getCart() (the caller already read cart.js for the verified display reconcile).
 async function refreshDawnTotals(): Promise<void> {
   try {
     const drawerSectionId = detectDrawerSectionId();
@@ -650,14 +657,11 @@ async function refreshDawnTotals(): Promise<void> {
     if (pageFooterSection !== undefined && pageFooterSection !== '') {
       sectionIds.push(pageFooterSection);
     }
-    const [sectionsRes, cart] = await Promise.all([
-      fetch(`${root}?sections=${sectionIds.join(',')}`, {
-        headers: { Accept: 'application/json' },
-      }),
-      getCart(),
-    ]);
-    if (!sectionsRes.ok) return;
-    const data = (await sectionsRes.json()) as Record<string, string>;
+    const res = await fetch(`${root}?sections=${sectionIds.join(',')}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as Record<string, string>;
 
     const drawerHtml = data[drawerSectionId];
 
@@ -687,39 +691,10 @@ async function refreshDawnTotals(): Promise<void> {
       }
     }
 
-    // Defense in depth: stamp authoritative cart.js values into the subtotal and badge so the
-    // displayed numbers are never wrong, even if the section HTML is momentarily stale.
-    const footerTargetReplaced = drawerHtml !== undefined ? replaceDrawerFooter(drawerHtml) : false;
-    // Badge count excludes gift lines — the shopper sees only their purchase count.
-    const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
-    const buyOnlyCount = (cart.item_count ?? 0) - giftQty;
-    let stampResult = { subtotalTargetsFound: 0, badgeTargetsFound: 0 };
-    if (cart.total_price !== undefined && cart.item_count !== undefined) {
-      stampResult = stampAuthoritativeCart({
-        total_price: cart.total_price,
-        item_count: buyOnlyCount,
-      });
-    }
-
-    // Diagnostic: log selector hits + the count-match invariant for dev verification.
-    const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
-    const renderedLineNodes = itemsEl
-      ? itemsEl.querySelectorAll(
-          '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row',
-        ).length
-      : 0;
-    console.warn('[FGE-DRAWERFIX]', {
-      renderedLineNodes,
-      cartItemsLen: cart.items.length,
-      realSubtotal: cart.total_price,
-      realBadge: cart.item_count,
-      displayedBadge: buyOnlyCount,
-      footerTargetReplaced,
-      subtotalTargetsFound: stampResult.subtotalTargetsFound,
-      badgeTargetsFound: stampResult.badgeTargetsFound,
-    });
+    // Replace the drawer summary/footer block.
+    if (drawerHtml !== undefined) replaceDrawerFooter(drawerHtml);
   } catch {
-    // Best-effort: a failed refresh leaves stale totals (no worse than before).
+    // Best-effort.
   }
 }
 
@@ -783,14 +758,12 @@ async function onMergedBuyQtyChange(
   if (!result.applied) {
     surfaceMergedWriteFailure(result.failureBody);
   }
-  // Read the authoritative post-write cart so the stepper syncs from ground truth, not a stale base.
+  // Read the authoritative post-write cart ONCE so the stepper syncs from ground truth.
   const cart = await getCart();
   lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
   const row =
     preRow !== undefined ? lastPlan.buys.find((r) => r.variantId === preRow.variantId) : undefined;
   await refreshDawnTotals();
-  // The section swap wipes our line transforms (hidden gifts, steppers); explicitly re-attach so the
-  // chooser is re-mounted and applyTwoGroupLayout re-hides gift lines + re-injects steppers.
   for (const section of sections) section.attach();
   schedule(perceptionConfig);
   if (!result.applied) return fail;
