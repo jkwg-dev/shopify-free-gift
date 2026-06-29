@@ -173,6 +173,21 @@ async function refreshGrouping(): Promise<void> {
   }
 }
 
+// Stamp authoritative subtotal + badge from a fresh cart.js read. Safe to call on every reconcile and
+// on drawer open — no network section fetch, no race. Badge excludes gift lines.
+async function stampFromCart(): Promise<void> {
+  try {
+    const cart = await getCart();
+    const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
+    const buyOnlyCount = (cart.item_count ?? 0) - giftQty;
+    if (cart.total_price !== undefined && cart.item_count !== undefined) {
+      stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
+    }
+  } catch {
+    // Best-effort.
+  }
+}
+
 // Pending-indicator state (5b-2b): masks the residual gift-reconcile latency. Engaged IMMEDIATELY and
 // held for at least PENDING_MIN_MS (anti-flicker), and ALWAYS cleared on a terminal outcome or the
 // safety timeout (so Checkout never gets stuck). `perceptionConfig` lets the timer callbacks re-render
@@ -264,15 +279,17 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     }
     markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
-    // Only refresh the cart body when the reconcile actually mutated the cart (added/removed a gift,
-    // changed the discount code). A no-op reconcile (cart already correct) skips the body refresh so
-    // it doesn't overwrite the theme's own section re-render with a stale sections response — that
-    // race caused the stepper to show an old qty and the gift to flash visible.
+    // Section-fetch body refresh: only when the reconcile mutated the cart (the section response can
+    // be stale mid-mutation). The cart.js-driven display reconcile below runs unconditionally.
     const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
     if (cartMutated) {
       await refreshDawnTotals();
     }
-    await refreshGrouping(); // recompute + re-apply the two-group line transform from the final cart
+    // cart.js-driven display reconcile: grouping (hides gifts, removes stale nodes, injects steppers)
+    // + authoritative stamp (subtotal + badge). Runs on EVERY reconcile including no-ops, so a stale
+    // DOM from a prior broken render always converges to the current cart.js state.
+    await refreshGrouping();
+    await stampFromCart();
   } finally {
     markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
     selfMutating = false;
@@ -419,6 +436,9 @@ function observeDrawerOpen(): void {
   new MutationObserver(() => {
     if (drawer.classList.contains('active')) {
       remaskUngrouped();
+      // On drawer open, run the cart.js-driven display reconcile so the drawer never shows a frozen
+      // prior render (stale duplicate nodes, wrong subtotal/badge). No section fetch — safe.
+      void refreshGrouping().then(stampFromCart);
     }
   }).observe(drawer, { attributes: true, attributeFilter: ['class'] });
 }

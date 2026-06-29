@@ -175,6 +175,59 @@ describe('applyTwoGroupLayout — merged stepper on unsplit buy rows (Section O)
   });
 });
 
+describe('applyTwoGroupLayout — stale-node removal', () => {
+  it('removes extra DOM nodes when DOM has more items than cart.js (stale duplicate gift)', () => {
+    // DOM has 3 nodes (stale duplicate socks + knit + socks), cart.js has 2 lines.
+    const itemsEl = buildDawnItems(3);
+    document.body.appendChild(itemsEl);
+
+    const p = plan({
+      buys: [buyRow({ variantId: 200, interactiveIndex: 1 })],
+      gets: [{ index: 0, key: 'k0', variantId: 100 }],
+      lineCount: 2,
+    });
+
+    const result = applyTwoGroupLayout(itemsEl, p, {});
+    expect(result).toBe(true);
+
+    // The extra node (index 2) was removed from the DOM.
+    const rows = itemsEl.querySelectorAll('.cart-item');
+    expect(rows).toHaveLength(2);
+    // Gift (index 0) is hidden, buy (index 1) is visible.
+    expect((rows[0] as HTMLElement).style.display).toBe('none');
+    expect((rows[1] as HTMLElement).style.display).toBe('');
+  });
+
+  it('handles DOM === cart.js count (no removal needed)', () => {
+    const itemsEl = buildDawnItems(2);
+    document.body.appendChild(itemsEl);
+
+    const p = plan({
+      buys: [buyRow({ variantId: 100, interactiveIndex: 0 })],
+      gets: [{ index: 1, key: 'k1', variantId: 200 }],
+      lineCount: 2,
+    });
+
+    const result = applyTwoGroupLayout(itemsEl, p, {});
+    expect(result).toBe(true);
+    expect(itemsEl.querySelectorAll('.cart-item')).toHaveLength(2);
+  });
+
+  it('fails open when DOM has FEWER nodes than cart.js', () => {
+    const itemsEl = buildDawnItems(1);
+    document.body.appendChild(itemsEl);
+
+    const p = plan({
+      buys: [buyRow({ variantId: 100, interactiveIndex: 0 })],
+      gets: [{ index: 1, key: 'k1', variantId: 200 }],
+      lineCount: 2,
+    });
+
+    const result = applyTwoGroupLayout(itemsEl, p, {});
+    expect(result).toBe(false);
+  });
+});
+
 describe('applyTwoGroupLayout — self-healing (stale-plan regression)', () => {
   it('a buy row wrongly hidden by a stale plan is un-hidden when the correct plan applies', () => {
     const itemsEl = buildDawnItems(2);

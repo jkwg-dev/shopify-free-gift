@@ -629,9 +629,23 @@
       containerId: itemsEl.id,
       lineNodeInfo: lineNodes.slice(0, 3).map((n) => `${n.tagName}#${n.id}.${n.className.slice(0, 50)}`)
     });
-    if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) {
+    if (plan.lineCount === 0) {
+      diag("applyTwoGroupLayout: FAIL OPEN \u2014 empty plan");
+      return false;
+    }
+    if (lineNodes.length > plan.lineCount) {
+      diag("applyTwoGroupLayout: removing stale nodes", {
+        domNodes: lineNodes.length,
+        cartLines: plan.lineCount
+      });
+      for (let i = lineNodes.length - 1; i >= plan.lineCount; i--) {
+        lineNodes[i].remove();
+      }
+      lineNodes.length = plan.lineCount;
+    }
+    if (lineNodes.length !== plan.lineCount) {
       diag(
-        "applyTwoGroupLayout: FAIL OPEN \u2014 lineCount mismatch",
+        "applyTwoGroupLayout: FAIL OPEN \u2014 lineCount mismatch (DOM < cart)",
         lineNodes.length,
         "\u2260",
         plan.lineCount
@@ -2076,6 +2090,18 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       section.attach();
     }
   }
+  async function stampFromCart() {
+    var _a2;
+    try {
+      const cart = await getCart();
+      const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
+      const buyOnlyCount = ((_a2 = cart.item_count) != null ? _a2 : 0) - giftQty;
+      if (cart.total_price !== void 0 && cart.item_count !== void 0) {
+        stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
+      }
+    } catch {
+    }
+  }
   var giftPendingActive = false;
   var giftPendingWorkDone = false;
   var giftPendingMinElapsed = false;
@@ -2157,6 +2183,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         await refreshDawnTotals();
       }
       await refreshGrouping();
+      await stampFromCart();
     } finally {
       markGiftWorkDone();
       selfMutating = false;
@@ -2271,6 +2298,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     new MutationObserver(() => {
       if (drawer.classList.contains("active")) {
         remaskUngrouped();
+        void refreshGrouping().then(stampFromCart);
       }
     }).observe(drawer, { attributes: true, attributeFilter: ["class"] });
   }

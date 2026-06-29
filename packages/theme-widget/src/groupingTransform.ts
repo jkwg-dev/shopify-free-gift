@@ -418,10 +418,30 @@ export function applyTwoGroupLayout(
       .map((n) => `${n.tagName}#${n.id}.${n.className.slice(0, 50)}`),
   });
 
-  // FAIL OPEN: nothing to transform, or the rendered list doesn't match the plan from /cart.js.
-  if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) {
+  // FAIL OPEN: nothing to transform.
+  if (plan.lineCount === 0) {
+    diag('applyTwoGroupLayout: FAIL OPEN — empty plan');
+    return false;
+  }
+
+  // Stale-node removal: if the DOM has MORE nodes than cart.js lines, remove the extras from the
+  // end (Shopify appends new lines; stale duplicates from a transient race sit at the position that
+  // no longer has a matching cart line). This makes the DOM converge to cart.js even when a prior
+  // broken render left orphan nodes.
+  if (lineNodes.length > plan.lineCount) {
+    diag('applyTwoGroupLayout: removing stale nodes', {
+      domNodes: lineNodes.length,
+      cartLines: plan.lineCount,
+    });
+    for (let i = lineNodes.length - 1; i >= plan.lineCount; i--) {
+      lineNodes[i]!.remove();
+    }
+    lineNodes.length = plan.lineCount;
+  }
+
+  if (lineNodes.length !== plan.lineCount) {
     diag(
-      'applyTwoGroupLayout: FAIL OPEN — lineCount mismatch',
+      'applyTwoGroupLayout: FAIL OPEN — lineCount mismatch (DOM < cart)',
       lineNodes.length,
       '≠',
       plan.lineCount,
