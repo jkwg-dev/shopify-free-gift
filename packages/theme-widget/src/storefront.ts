@@ -146,6 +146,9 @@ let sections: CartSection[] = [];
 // after each reconcile from a fresh /cart.js read. The cartSections re-attach hook applies it to each
 // surface's line list. Presentation-only — no cart write.
 let lastPlan: GroupingPlan | null = null;
+// Set by verifiedDisplayReconcile to tell onReattach "this attach carries a fresh plan — apply it
+// even though a reconcile is in-flight". Cleared after the attach calls complete.
+let freshPlanAttach = false;
 
 function toGroupingLines(cart: AjaxCart): RawCartLine[] {
   return cart.items.map((item, index) => ({
@@ -270,10 +273,23 @@ async function verifiedDisplayReconcile(): Promise<void> {
       for (const section of sections) section.attach();
     }
 
-    // Recompute grouping from fresh cart.
+    // Recompute grouping from fresh cart and apply. The freshPlanAttach flag tells onReattach to
+    // apply this plan even though a reconcile is in-flight (the plan was just computed from the
+    // post-mutation cart, so it's NOT stale).
     lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
     lastCartQuantities = cart.items.map((item) => item.quantity);
+    freshPlanAttach = true;
     for (const section of sections) section.attach();
+    freshPlanAttach = false;
+
+    // Dawn inserts newly-added gift nodes asynchronously (its own section re-render after
+    // cart/add.js). Schedule a deferred re-apply so the gift node is hidden even if it arrives
+    // after this synchronous pass. The plan is already fresh; the re-apply is idempotent.
+    setTimeout(() => {
+      freshPlanAttach = true;
+      for (const section of sections) section.attach();
+      freshPlanAttach = false;
+    }, 500);
 
     // Stamp authoritative subtotal + badge.
     const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
@@ -885,10 +901,9 @@ function init(): void {
     onReattach: (_context, itemsEl) => {
       remask(itemsEl);
       // Don't apply a stale plan while a reconcile is running, queued, or about to start (debounce
-      // timer pending). The reconcile's verifiedDisplayReconcile will re-call attach() with a fresh
-      // that matches the new DOM. The mask covers the brief ungrouped window; the 2s timeout is
-      // the backstop.
-      const workPending = running || pending || timer !== undefined;
+      // timer pending) — UNLESS freshPlanAttach is set, meaning verifiedDisplayReconcile just
+      // computed a fresh plan from the post-mutation cart and is calling attach() itself.
+      const workPending = (running || pending || timer !== undefined) && !freshPlanAttach;
       if (lastPlan === null || workPending) {
         if (!workPending) liftMask(itemsEl);
         syncNativeInputs(itemsEl, lastCartQuantities);

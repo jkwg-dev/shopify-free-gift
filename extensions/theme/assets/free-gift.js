@@ -2074,6 +2074,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   var unavailableVariantIds = /* @__PURE__ */ new Set();
   var sections = [];
   var lastPlan = null;
+  var freshPlanAttach = false;
   function toGroupingLines(cart) {
     return cart.items.map((item, index) => {
       var _a2, _b2, _c2;
@@ -2185,7 +2186,14 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       }
       lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
       lastCartQuantities = cart.items.map((item) => item.quantity);
+      freshPlanAttach = true;
       for (const section of sections) section.attach();
+      freshPlanAttach = false;
+      setTimeout(() => {
+        freshPlanAttach = true;
+        for (const section of sections) section.attach();
+        freshPlanAttach = false;
+      }, 500);
       const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
       const buyOnlyCount = ((_a2 = cart.item_count) != null ? _a2 : 0) - giftQty;
       if (cart.total_price !== void 0 && cart.item_count !== void 0) {
@@ -2657,7 +2665,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       drawerSelector: config.drawerSelector,
       onReattach: (_context, itemsEl) => {
         remask(itemsEl);
-        const workPending = running || pending || timer !== void 0;
+        const workPending = (running || pending || timer !== void 0) && !freshPlanAttach;
         if (lastPlan === null || workPending) {
           if (!workPending) liftMask(itemsEl);
           syncNativeInputs(itemsEl, lastCartQuantities);
