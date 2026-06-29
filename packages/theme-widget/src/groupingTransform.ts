@@ -273,20 +273,23 @@ function injectMergedStepper(
   wrap.setAttribute('role', 'group');
   wrap.setAttribute('aria-label', 'Quantity');
 
-  const mkBtn = (act: 'dec' | 'inc' | 'del', label: string, text: string): HTMLButtonElement => {
+  const mkBtn = (act: 'dec' | 'inc' | 'del', label: string): HTMLButtonElement => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = act === 'del' ? 'fge-merged-stepper__remove' : 'fge-merged-stepper__btn';
     b.setAttribute('data-fge-act', act);
     b.setAttribute('aria-label', label);
-    b.textContent = text;
     return b;
   };
-  const dec = mkBtn('dec', 'Decrease quantity', '−');
-  const inc = mkBtn('inc', 'Increase quantity', '+');
-  const del = mkBtn('del', 'Remove item', '');
+  const dec = mkBtn('dec', 'Decrease quantity');
+  dec.innerHTML =
+    '<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 12H20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+  const inc = mkBtn('inc', 'Increase quantity');
+  inc.innerHTML =
+    '<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4V12M12 12V20M12 12H4M12 12H20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+  const del = mkBtn('del', 'Remove item');
   del.innerHTML =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
   const qtyEl = document.createElement('span');
   qtyEl.className = 'fge-merged-stepper__qty';
   qtyEl.setAttribute('aria-live', 'polite');

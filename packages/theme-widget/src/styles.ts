@@ -72,12 +72,13 @@ export const FGE_CSS = `
 .fge-step__dot,
 .fge-card__img{ display:block !important; }
 
-/* THEME-OVERRIDE: hide per-line totals when our grouping is active — the subtotal in the footer
-   is sufficient, and the line totals create visual noise (especially with the discount code tag
-   Dawn renders). Scoped to the grouped container so ungrouped fallback shows them. Dawn uses
-   .cart-item__totals OR .cart-item__actions--price depending on theme variant. */
-[data-fge-grouped] .cart-item__totals,
-[data-fge-grouped] .cart-item__actions--price{ display:none !important; }
+/* THEME-OVERRIDE: hide per-line totals on HIDDEN (merged-away) rows only. Visible buy rows keep
+   their native price display so the merged total is shown. Gift rows are hidden entirely by the
+   grouping transform (display:none on the whole row), so their prices never show. Discount-code
+   tags that Dawn renders inside the price cell are hidden on grouped rows to avoid stale labels. */
+[data-fge-merged-hidden] .cart-item__totals,
+[data-fge-merged-hidden] .cart-item__actions--price{ display:none !important; }
+[data-fge-grouped] .cart-item__discounts{ display:none !important; }
 
 /* THEME-OVERRIDE: Dawn renders TWO "Your cart" titles inside the drawer — the H2.drawer__heading
    (header) and the H1.title--primary (cart section title, normally suppressed). Our injected layout
@@ -201,33 +202,41 @@ body.fge-checkout-pending .cart__checkout-button::after{
   body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
 
-/* --- Stage 2: the interactive merged stepper injected on a SPLIT buy row (replaces the theme's native
-   per-split stepper, which would write only one split key). A slim −/qty/+ group + a quiet "Remove",
-   styled to read like a cart control without depending on the theme's button CSS. --- */
+/* --- Stage 2: the interactive merged stepper, styled to match the theme's native quantity-input
+   (.quantity__wrapper): a single rounded-rectangle capsule with flat +/- buttons inside. --- */
 .fge-merged-stepper{
-  display:inline-flex; align-items:center; gap:2px; flex-wrap:wrap;
+  display:inline-flex; align-items:center; width:8rem;
+  border:0.1rem solid rgba(var(--color-border,235,235,235),var(--alpha-border,1));
+  border-radius:var(--badge-border-radius,0.4rem);
 }
 .fge-merged-stepper__btn{
   appearance:none; -webkit-appearance:none; cursor:pointer;
-  min-width:30px; height:30px; padding:0 6px; line-height:1;
-  font-size:15px; font-weight:600; color:#111111;
-  background:#ffffff; border:1px solid #cfcfcf; border-radius:6px;
+  display:flex; align-items:center; justify-content:center;
+  width:2rem; height:2.8rem; flex-shrink:0; padding:0;
+  color:rgb(var(--color-foreground,17,17,17)); opacity:0.5;
+  background-color:transparent; border:0;
 }
+.fge-merged-stepper__btn:hover{ opacity:0.75; }
+.fge-merged-stepper__btn svg{ width:1rem; height:1rem; pointer-events:none; }
 .fge-merged-stepper__qty{
-  min-width:28px; padding:0 6px; text-align:center; font-size:13px; font-weight:600; color:#111111;
+  flex:1 1 auto; width:2rem; text-align:center;
+  font:inherit; font-size:var(--font-size-static-sm,1.2rem); font-weight:var(--font-weight-normal,400);
+  color:rgb(var(--color-foreground,17,17,17)); background:transparent; line-height:2.8rem;
 }
 .fge-merged-stepper__remove{
   appearance:none; -webkit-appearance:none; cursor:pointer;
   display:inline-flex; align-items:center; justify-content:center;
-  margin-left:6px; padding:0; width:30px; height:30px;
-  color:#707070; background:transparent; border:0;
+  margin-left:6px; padding:0; width:2.4rem; height:2.4rem;
+  color:rgb(var(--color-foreground,17,17,17)); opacity:0.5;
+  background:transparent; border:0;
 }
-.fge-merged-stepper__remove:hover{ color:#111111; }
+.fge-merged-stepper__remove:hover{ opacity:0.75; }
+.fge-merged-stepper__remove svg{ width:1.4rem; height:1.4rem; pointer-events:none; }
 .fge-merged-stepper__btn:focus-visible, .fge-merged-stepper__remove:focus-visible{
   outline:2px solid var(--fge-brand); outline-offset:2px;
 }
 .fge-merged-stepper.is-busy{ opacity:.55; }
-.fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; }
+.fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; opacity:0.3; }
 /* --- Stage 2 (defect B.1): a transient failure notice (e.g. a VF-blocked update). Fixed bottom-center
    toast, appended to <body>; hidden until is-visible. Reduced-motion friendly (opacity only). --- */
 .fge-notice{
