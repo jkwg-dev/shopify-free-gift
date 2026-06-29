@@ -539,11 +539,14 @@ async function refreshDawnTotals(): Promise<void> {
     // Defense in depth: stamp authoritative cart.js values into the subtotal and badge so the
     // displayed numbers are never wrong, even if the section HTML is momentarily stale.
     const footerTargetReplaced = drawerHtml !== undefined ? replaceDrawerFooter(drawerHtml) : false;
+    // Badge count excludes gift lines — the shopper sees only their purchase count.
+    const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
+    const buyOnlyCount = (cart.item_count ?? 0) - giftQty;
     let stampResult = { subtotalTargetsFound: 0, badgeTargetsFound: 0 };
     if (cart.total_price !== undefined && cart.item_count !== undefined) {
       stampResult = stampAuthoritativeCart({
         total_price: cart.total_price,
-        item_count: cart.item_count,
+        item_count: buyOnlyCount,
       });
     }
 
@@ -559,6 +562,7 @@ async function refreshDawnTotals(): Promise<void> {
       cartItemsLen: cart.items.length,
       realSubtotal: cart.total_price,
       realBadge: cart.item_count,
+      displayedBadge: buyOnlyCount,
       footerTargetReplaced,
       subtotalTargetsFound: stampResult.subtotalTargetsFound,
       badgeTargetsFound: stampResult.badgeTargetsFound,

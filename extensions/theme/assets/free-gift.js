@@ -2293,7 +2293,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     return "cart-icon-bubble";
   }
   async function refreshDawnTotals() {
-    var _a2;
+    var _a2, _b2;
     try {
       const drawerSectionId = detectDrawerSectionId();
       const badgeSectionId = detectBadgeSectionId();
@@ -2335,11 +2335,13 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         }
       }
       const footerTargetReplaced = drawerHtml !== void 0 ? replaceDrawerFooter(drawerHtml) : false;
+      const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
+      const buyOnlyCount = ((_b2 = cart.item_count) != null ? _b2 : 0) - giftQty;
       let stampResult = { subtotalTargetsFound: 0, badgeTargetsFound: 0 };
       if (cart.total_price !== void 0 && cart.item_count !== void 0) {
         stampResult = stampAuthoritativeCart({
           total_price: cart.total_price,
-          item_count: cart.item_count
+          item_count: buyOnlyCount
         });
       }
       const itemsEl = document.querySelector("cart-drawer-items, cart-items");
@@ -2351,6 +2353,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         cartItemsLen: cart.items.length,
         realSubtotal: cart.total_price,
         realBadge: cart.item_count,
+        displayedBadge: buyOnlyCount,
         footerTargetReplaced,
         subtotalTargetsFound: stampResult.subtotalTargetsFound,
         badgeTargetsFound: stampResult.badgeTargetsFound
