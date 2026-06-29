@@ -233,8 +233,8 @@
         headerSelectors: PAGE_HEADER_SELECTORS,
         itemsSelectors: PAGE_ITEMS_SELECTORS,
         footerSelectors: PAGE_FOOTER_SELECTORS,
-        chooserInsideItems: false,
-        // a normal page: chooser AFTER the items, before the footer section
+        chooserInsideItems: true,
+        // append inside #main-cart-items so the chooser stays in the main column (below line items), not in the sidebar summary
         strict: true,
         // never inject in the wrong place on an unknown theme
         onReattach: opts.onReattach
