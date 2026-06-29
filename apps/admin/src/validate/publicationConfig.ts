@@ -1,11 +1,13 @@
-// The Online Store publication id used by the Stage-E availability check. Isolated in its own module
-// (no heavy imports) so the fail-fast validation is unit-testable without the composition root.
+// Resolve the Online Store publication id at runtime via the Admin API (no build-time env var).
+// Matches the Online Store by the system app handle `online_store` on the AppCatalog — robust against
+// locale, merchant rename, and display-title changes. Requires `read_publications` scope.
 //
-// FAIL-FAST, NEVER SILENT. A missing/empty/malformed value must be OBVIOUS, not invisible — this is the
-// same class of trap as the FGE_GIFTS_INCLUDED miss, where the app silently took the wrong path because
-// the env var was unset. So the availability path NEVER falls back to a stock-only predicate when the id
-// is absent: it throws a named MissingPublicationConfigError, which surfaces as a 500 on /config +
-// /validate (loud, logged, widget visibly stops) rather than quietly skipping the publication signal.
+// FAIL-FAST, NEVER SILENT. If the Online Store publication cannot be found (channel not installed,
+// scope not consented, API error), throws a named MissingPublicationConfigError → 500 + logged on the
+// first /config or /validate request. The availability path NEVER silently falls back to a stock-only
+// check when the publication id is unknown.
+
+import type { AdminGraphqlClient } from '@free-gift-engine/shopify';
 
 export class MissingPublicationConfigError extends Error {
   constructor(message: string) {
@@ -14,30 +16,59 @@ export class MissingPublicationConfigError extends Error {
   }
 }
 
-// Online Store publication GIDs look like gid://shopify/Publication/<numeric id>.
-const PUBLICATION_GID = /^gid:\/\/shopify\/Publication\/\d+$/;
+const ONLINE_STORE_APP_HANDLE = 'online_store';
 
-export const ONLINE_STORE_PUBLICATION_ENV = 'SHOPIFY_ONLINE_STORE_PUBLICATION_ID';
+const PUBLICATIONS_QUERY = `query OnlineStorePublication {
+  publications(first: 20, catalogType: APP) {
+    nodes {
+      id
+      catalog {
+        ... on AppCatalog {
+          apps(first: 1) { nodes { handle } }
+        }
+      }
+    }
+  }
+}`;
 
-// Read + validate the Online Store publication id, throwing a NAMED error if missing/empty/malformed.
-// env is injectable for tests; defaults to process.env. The production id DIFFERS from dev's — it must
-// be looked up and set per environment (see docs/phase-3b-stage-e-channel-availability-design.md §5a).
-export function requireOnlineStorePublicationId(env: NodeJS.ProcessEnv = process.env): string {
-  const raw = env[ONLINE_STORE_PUBLICATION_ENV];
-  if (raw === undefined || raw.trim().length === 0) {
+type PublicationNode = {
+  readonly id: string;
+  readonly catalog?: {
+    readonly apps?: { readonly nodes: readonly { readonly handle: string }[] };
+  } | null;
+};
+
+type PublicationsResponse = {
+  readonly publications: { readonly nodes: readonly PublicationNode[] };
+};
+
+// Resolve the Online Store publication id from the shop's publications. Boot-eager: called once in the
+// singleton constructor (getValidateDeps / getConfigDeps) and cached in memory for the process lifetime.
+// Throws MissingPublicationConfigError if the Online Store is not found — same loud-fail behavior as the
+// old env-var validation, but now the id adapts automatically per shop (no env change / no redeploy).
+export async function resolveOnlineStorePublicationId(client: AdminGraphqlClient): Promise<string> {
+  let data: PublicationsResponse;
+  try {
+    data = await client.request<PublicationsResponse>(PUBLICATIONS_QUERY, {});
+  } catch (err) {
     throw new MissingPublicationConfigError(
-      `${ONLINE_STORE_PUBLICATION_ENV} is not set — the Online-Store publish availability check cannot run. ` +
-        'Set it to the Online Store publication GID (gid://shopify/Publication/<id>) in this environment. ' +
-        'It is NOT inferred and must NEVER be skipped (that would silently fall back to a stock-only check).',
+      'Failed to query publications — cannot resolve the Online Store publication id. ' +
+        `Is read_publications consented on this shop? (${err instanceof Error ? err.message : String(err)})`,
     );
   }
-  const id = raw.trim();
-  if (!PUBLICATION_GID.test(id)) {
-    throw new MissingPublicationConfigError(
-      `${ONLINE_STORE_PUBLICATION_ENV} is malformed (${id}); expected gid://shopify/Publication/<digits>.`,
-    );
+
+  for (const node of data.publications.nodes) {
+    const handle = node.catalog?.apps?.nodes[0]?.handle;
+    if (handle === ONLINE_STORE_APP_HANDLE) {
+      return node.id;
+    }
   }
-  return id;
+
+  throw new MissingPublicationConfigError(
+    "Online Store publication not found in this shop's publications " +
+      '(is the Online Store sales channel installed and read_publications consented?). ' +
+      `Searched ${data.publications.nodes.length} APP-type publications for app handle "${ONLINE_STORE_APP_HANDLE}".`,
+  );
 }
 
 // The scope Product.publishedOnPublication needs — read_products alone is NOT sufficient (ground-truthed

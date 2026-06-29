@@ -62,7 +62,7 @@ import type { WebhookDeps } from '../webhooks/handlers.js';
 import type { ConfigHandlerDeps } from './configHandler.js';
 import type { ValidateHandlerDeps } from './handler.js';
 import { PostgresRateLimiter, type WindowCounter } from './rateLimitPostgres.js';
-import { hasPublicationsScope, requireOnlineStorePublicationId } from './publicationConfig.js';
+import { hasPublicationsScope, resolveOnlineStorePublicationId } from './publicationConfig.js';
 import type { ActiveCampaignContext } from './service.js';
 
 // Minimal access scopes the engine actually uses (audited against packages/shopify):
@@ -240,13 +240,12 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
   const shopDomain = requireEnv('SHOPIFY_SHOP_DOMAIN');
   const baseCurrency = requireEnv('SHOPIFY_BASE_CURRENCY');
 
-  // Fail-fast (named) if the Online Store publication id is missing/malformed — the availability path
-  // must never silently fall back to a stock-only check (Stage E §5a). Read eagerly here so a misconfig
-  // surfaces on the first /validate construction, not buried mid-request.
-  const onlineStorePublicationId = requireOnlineStorePublicationId();
   await warnIfPublicationsScopeMissing(shopDomain);
   const mappingTable = new PrismaGiftCodeMappingTable(prismaLike());
   const client = await adminClientForShop(shopDomain);
+  // Resolve the Online Store publication id at runtime (no env var). Fail-fast (named) if not found —
+  // the availability path must never silently fall back to a stock-only check (Stage E §5a).
+  const onlineStorePublicationId = await resolveOnlineStorePublicationId(client);
   const mappingStore = new GiftCodeMappingStore(
     mappingTable,
     new ShopifyDiscountGatewayAdapter(client, giftsIncludedFlag()),
@@ -470,11 +469,10 @@ export async function getConfigDeps(): Promise<ConfigHandlerDeps> {
   const prisma = getPrisma();
   const shopDomain = requireEnv('SHOPIFY_SHOP_DOMAIN');
   const baseCurrency = requireEnv('SHOPIFY_BASE_CURRENCY');
-  // Fail-fast (named) if the publication id is missing/malformed — never serve config with a stock-only
-  // availability check (Stage E §5a).
-  const onlineStorePublicationId = requireOnlineStorePublicationId();
   await warnIfPublicationsScopeMissing(shopDomain);
   const client = await adminClientForShop(shopDomain);
+  // Resolve the Online Store publication id at runtime (no env var). Fail-fast (named) if not found.
+  const onlineStorePublicationId = await resolveOnlineStorePublicationId(client);
 
   configDeps = {
     apiSecret: requireEnv('SHOPIFY_API_SECRET'),
