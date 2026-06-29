@@ -304,3 +304,23 @@ can produce a marker on a **full-price split** (issue-#6 reachable). If so, a be
 is refused (Step A 422s because the paid marked line remains) → B.1 rollback + message — worst case is
 "can't delete, message shown," **never a leak**. If common, a separate fix (removable read-only marked
 line / marker-allocation) is filed.
+
+## O. RESOLVED — unsplit buy rows need the FGE stepper too
+
+Found on dev verify: the FGE merged stepper (+ code-label suppression) was injected **only** for
+Shopify-SPLIT buy rows (`row.split`, n>1). An unsplit buy line (n=1) kept Dawn's native stepper,
+which has no gift-first handling. Consequences:
+
+1. **Deadlock:** a native "−" below the gift's tier fires `cart/change.js` directly → 422 (VF blocks:
+   orphaned `_fge_gift` line) → Dawn shows its error, rolls back. No leak, but the shopper **cannot
+   reduce or remove** the purchase: the native stepper is blocked, and the gift group is read-only.
+2. **Exposed code label:** the raw `cVI_…` discount code shows on the buy line (defect #3 regression).
+3. **Stepper flicker:** splitting is BXGY-allocation-dependent and appears/disappears with quantity, so
+   the UI alternates between the native and FGE stepper as quantity changes.
+
+**Fix:** when `plan.hasGifts` is true, inject the FGE stepper on **ALL** buy rows (not just split),
+routing every +/−/Remove through `onMergedBuyQtyChange` → the gift-first sequence + rollback. An unsplit
+row has a single `writableKey` — the atomic `cart/update.js` with one key is trivially correct. The raw
+code label is hidden on all buy lines when gifts are present (`hideOurDiscount`); the "Free gift" relabel
+remains scoped to the gift group only. When no gift is in the cart (`plan.hasGifts === false`), unsplit
+rows keep the native stepper — no deadlock risk without a gift.

@@ -489,6 +489,14 @@
     inc.addEventListener("click", () => onAct(current + 1));
     del.addEventListener("click", () => onAct(0));
   }
+  function hideOurDiscount(node, ourCode) {
+    var _a2;
+    if (ourCode === null) return;
+    const discountEl = findFirst2(node, DISCOUNT_SELECTORS);
+    if (discountEl !== null && ((_a2 = discountEl.textContent) == null ? void 0 : _a2.includes(ourCode)) === true) {
+      discountEl.style.display = "none";
+    }
+  }
   function relabelOurDiscount(node, ourCode) {
     var _a2;
     const discountEl = findFirst2(node, DISCOUNT_SELECTORS);
@@ -557,19 +565,20 @@
       if (keep != null) {
         if (row.split) {
           setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
-          if (opts.onMergedQtyChange !== void 0) {
-            injectMergedStepper(
-              keep,
-              row.controllableQuantity,
-              row.controllableFinalPrice,
-              row.controllableOriginalPrice,
-              row.writableKeys,
-              opts.onMergedQtyChange
-            );
-          } else {
-            showMergedQtyReadOnly(keep, row.controllableQuantity);
-          }
         }
+        if (plan.hasGifts && opts.onMergedQtyChange !== void 0) {
+          injectMergedStepper(
+            keep,
+            row.controllableQuantity,
+            row.controllableFinalPrice,
+            row.controllableOriginalPrice,
+            row.writableKeys,
+            opts.onMergedQtyChange
+          );
+        } else if (row.split) {
+          showMergedQtyReadOnly(keep, row.controllableQuantity);
+        }
+        if (plan.hasGifts) hideOurDiscount(keep, opts.ourCode);
         parent.append(keep);
       }
       for (const hideIdx of row.hideIndexes) {

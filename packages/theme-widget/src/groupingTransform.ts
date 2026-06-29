@@ -278,6 +278,16 @@ function injectMergedStepper(
   del.addEventListener('click', () => onAct(0));
 }
 
+// Hide our discount code label on a BUY line (the raw code string is ugly; the "Free gift" relabel
+// belongs only on gift-group lines). A merchant's other promo is left visible.
+function hideOurDiscount(node: HTMLElement, ourCode: string | null): void {
+  if (ourCode === null) return;
+  const discountEl = findFirst(node, DISCOUNT_SELECTORS);
+  if (discountEl !== null && discountEl.textContent?.includes(ourCode) === true) {
+    discountEl.style.display = 'none';
+  }
+}
+
 // Rewrite the theme-rendered discount label to "Free gift" when it is OUR code (a merchant's other
 // promo is left untouched). Returns whether a label was found + relabeled.
 function relabelOurDiscount(node: HTMLElement, ourCode: string | null): boolean {
@@ -376,23 +386,29 @@ export function applyTwoGroupLayout(
     if (keep != null) {
       if (row.split) {
         // Split rows need correction: overwrite the line total (every responsive cell) with the
-        // controllable sum, then either inject the interactive merged stepper (Stage 2) or — when no
-        // write callback is wired — fall back to the read-only merged quantity (Stage 1).
+        // controllable sum (unsplit rows already show the correct theme-rendered total).
         setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
-        if (opts.onMergedQtyChange !== undefined) {
-          injectMergedStepper(
-            keep,
-            row.controllableQuantity,
-            row.controllableFinalPrice,
-            row.controllableOriginalPrice,
-            row.writableKeys,
-            opts.onMergedQtyChange,
-          );
-        } else {
-          showMergedQtyReadOnly(keep, row.controllableQuantity);
-        }
       }
-      // Non-split rows keep the theme's native (correct) numbers + interactive stepper.
+      // When gifts are present, ALL buy rows get the FGE stepper — not just split. An unsplit row
+      // has a single writable key (the atomic write is trivially correct). This routes every +/-/
+      // Remove through onMergedBuyQtyChange → the gift-first sequence, so a below-tier reduction
+      // can't deadlock against the VF. Without this, the native Dawn stepper fires cart/change.js
+      // directly and 422s when the gift is orphaned.
+      if (plan.hasGifts && opts.onMergedQtyChange !== undefined) {
+        injectMergedStepper(
+          keep,
+          row.controllableQuantity,
+          row.controllableFinalPrice,
+          row.controllableOriginalPrice,
+          row.writableKeys,
+          opts.onMergedQtyChange,
+        );
+      } else if (row.split) {
+        // Stage-1 fallback for split rows without a write callback.
+        showMergedQtyReadOnly(keep, row.controllableQuantity);
+      }
+      // Suppress our raw discount code label on buy lines (the "Free gift" relabel is gift-group only).
+      if (plan.hasGifts) hideOurDiscount(keep, opts.ourCode);
       parent.append(keep); // reorder: buys first, in first-occurrence order
     }
     for (const hideIdx of row.hideIndexes) {
