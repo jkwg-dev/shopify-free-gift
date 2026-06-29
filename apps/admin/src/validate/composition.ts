@@ -62,18 +62,21 @@ import type { WebhookDeps } from '../webhooks/handlers.js';
 import type { ConfigHandlerDeps } from './configHandler.js';
 import type { ValidateHandlerDeps } from './handler.js';
 import { PostgresRateLimiter, type WindowCounter } from './rateLimitPostgres.js';
-import { requireOnlineStorePublicationId } from './publicationConfig.js';
+import { hasPublicationsScope, requireOnlineStorePublicationId } from './publicationConfig.js';
 import type { ActiveCampaignContext } from './service.js';
 
 // Minimal access scopes the engine actually uses (audited against packages/shopify):
-//   read_products   — gift-variant validation (fetchGiftVariants) + contextualPricing reads
-//   write_products  — tag gift products (GIFT_TAG) so they drop out of the qualifying
-//                     smart collection, and create that collection (BXGY customerBuys scope)
-//   write_discounts — create/deactivate the BXGY gift codes
-//   read_discounts  — the Admin discounts API requires it (we read the created code node back)
-// Adding write_products requires re-consent/reinstall on the store (scope change). This must match
-// [access_scopes] in shopify.app.toml and the Dev Dashboard app.
-export const GIFT_ENGINE_SCOPES = 'read_products,write_products,write_discounts,read_discounts';
+//   read_products    — gift-variant validation (fetchGiftVariants) + contextualPricing reads
+//   write_products   — tag gift products (GIFT_TAG) so they drop out of the qualifying
+//                      smart collection, and create that collection (BXGY customerBuys scope)
+//   write_discounts  — create/deactivate the BXGY gift codes
+//   read_discounts   — the Admin discounts API requires it (we read the created code node back)
+//   read_publications — read Online-Store publish status (Product.publishedOnPublication). read_products
+//                      alone is NOT sufficient (ground-truthed: the prod token returns ACCESS_DENIED).
+// A scope change requires re-consent/reinstall on the store. This MUST match [access_scopes] in
+// shopify.app.toml, the SHOPIFY_SCOPES env override (which wins if set), and the Dev Dashboard app.
+export const GIFT_ENGINE_SCOPES =
+  'read_products,write_products,write_discounts,read_discounts,read_publications';
 
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
@@ -214,6 +217,19 @@ function makeRateLimiter(prisma: PrismaClient): PostgresRateLimiter {
 
 // --- /validate -----------------------------------------------------------------------------------
 
+// Defense-in-depth (runs once per cold start, since the deps are memoized): if the installed shop's
+// granted scopes lack read_publications, the channel read degrades to stock-only — surface that at
+// deploy time, not only per request. A missing/uninstalled shop is left to the normal install flow.
+async function warnIfPublicationsScopeMissing(shopDomain: string): Promise<void> {
+  const shop = await shopRepo().findByDomain(shopDomain);
+  if (shop !== null && !hasPublicationsScope(shop.scopes)) {
+    console.warn(
+      `[scopes] read_publications NOT granted for ${shopDomain} — gift publish-status check is running ` +
+        `in STOCK-ONLY fallback (no Online-Store publication greying). Re-consent (reinstall) to enable it.`,
+    );
+  }
+}
+
 let validateDeps: ValidateHandlerDeps | null = null;
 
 export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
@@ -228,6 +244,7 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
   // must never silently fall back to a stock-only check (Stage E §5a). Read eagerly here so a misconfig
   // surfaces on the first /validate construction, not buried mid-request.
   const onlineStorePublicationId = requireOnlineStorePublicationId();
+  await warnIfPublicationsScopeMissing(shopDomain);
   const mappingTable = new PrismaGiftCodeMappingTable(prismaLike());
   const client = await adminClientForShop(shopDomain);
   const mappingStore = new GiftCodeMappingStore(
@@ -456,6 +473,7 @@ export async function getConfigDeps(): Promise<ConfigHandlerDeps> {
   // Fail-fast (named) if the publication id is missing/malformed — never serve config with a stock-only
   // availability check (Stage E §5a).
   const onlineStorePublicationId = requireOnlineStorePublicationId();
+  await warnIfPublicationsScopeMissing(shopDomain);
   const client = await adminClientForShop(shopDomain);
 
   configDeps = {

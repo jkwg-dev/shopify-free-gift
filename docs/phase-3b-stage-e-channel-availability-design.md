@@ -97,6 +97,50 @@ greys the **entire** `/config` batch until republished — the robustness follow
   `publishedOnPublication:false` yet `availableForSale:true`. Do not mark Stage E fully done until that
   payload is observed.
 
+> **⚠ CORRECTION (§5c supersedes the bullets above re: scope).** The "honest gap" closed badly: the
+> production runtime returns **`ACCESS_DENIED` on `publishedOnPublication` for every node**. The earlier
+> "works under a token lacking `read_product_listings`" probes used the **Shopify Claude Connector App**
+> token (60+ scopes — `currentAppInstallation` confirmed it **includes `read_publications`**, lacks
+> `read_product_listings`); **`read_publications` was doing the work, not `read_products`.** Ground truth:
+> `Product.publishedOnPublication` needs **`read_publications`** (or `read_product_listings`) — **`read_products`
+> alone does NOT suffice.** So "no reinstall / `read_products`-only" is **not achievable** for this read.
+
+## 5c. Scope fix — add `read_publications` (Path A) + missing-scope stock-only fallback
+
+**Decision (chosen over staying read_products-only):** add **`read_publications`** to the app's scopes.
+For this single internal store the one-time re-consent is cheap, and it's the only option that delivers a
+reliable per-variant publication signal (the `read_products`-only alternatives either over-grey
+(`onlineStoreUrl`) or revert to the pre-E1 reactive-422 gap).
+
+- **Scope set aligned in ALL four places** (a stale one silently wins): `shopify.app.toml [access_scopes]`,
+  `composition.ts GIFT_ENGINE_SCOPES`, **and `SHOPIFY_SCOPES` (env override — wins if set)**, now
+  `read_products,write_products,write_discounts,read_discounts,read_publications`. **Found + fixed a real
+  drift:** `SHOPIFY_SCOPES` (in `apps/admin/.env` and `.env.example`) was
+  `read_products,write_discounts,read_discounts` — missing **both** `write_products` AND `read_publications`
+  — so the install redirect was requesting a stale set regardless of the toml.
+- **Missing-scope fallback (the core safety net):** `fetchGiftChannelAvailability` classifies an
+  `ACCESS_DENIED` (or "access scope" message) on a `…publishedOnPublication` path as **SCOPE_UNAVAILABLE**
+  for that batch → re-reads `availableForSale` alone (a publication-free query, `read_products`) and returns
+  it with `publishedToOnlineStore:true` so publication does **not** gate → **stock-only (pre-E1) behavior,
+  never grey-all**. One loud warn per request. A real `publishedOnPublication:false` (a value, not an error)
+  still greys exactly that gift — the two are **never conflated**. (The combined query's `ACCESS_DENIED`
+  nulls the whole node, taking `availableForSale` with it, which is why stock is re-read separately.)
+- **Boot-time scope check (defense in depth):** the `/validate` + `/config` dep builders warn once per
+  cold start if the installed shop's persisted scopes lack `read_publications` — surfacing a missing
+  re-consent at deploy time, not only per request.
+
+### Production rollout checklist (REQUIRED — scope change needs RE-CONSENT)
+
+1. **Vercel env** (dev AND prod): set `SHOPIFY_SCOPES` to the full set above. **This is the silent-failure
+   point** — it overrides `GIFT_ENGINE_SCOPES`; if left stale the redirect requests the wrong scopes and
+   the merchant never gets `read_publications`.
+2. **`shopify app deploy`** — register the new scope on the app config (in addition to the Vercel code
+   deploy).
+3. **Merchant RE-CONSENT on the LIVE store** — a scope change does **not** apply to existing tokens; the
+   merchant must reinstall/re-authorize. **Until re-consented, E1 runs in the stock-only fallback** (the
+   pre-E1 unpublished-but-in-stock gap, offered then reactively greyed at `/cart/add`) — **NOT** grey-all.
+   The boot warning fires until this is done.
+
 Verified on dev (the crux):
 
 - Online Store publication id = `gid://shopify/Publication/157545496685`.

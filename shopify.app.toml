@@ -14,8 +14,10 @@ embedded = true
 
 [access_scopes]
 # Minimal scopes the engine uses (composition.ts GIFT_ENGINE_SCOPES). write_products tags gift
-# products + creates the qualifying smart collection (BXGY). Adding it requires reinstall/re-consent.
-scopes = "read_products,write_products,write_discounts,read_discounts"
+# products + creates the qualifying smart collection (BXGY). read_publications reads Online-Store
+# publish status (Product.publishedOnPublication — read_products alone is NOT enough; ground-truthed
+# against the prod token's ACCESS_DENIED). Any scope change requires reinstall/re-consent on the store.
+scopes = "read_products,write_products,write_discounts,read_discounts,read_publications"
 optional_scopes = []
 use_legacy_install_flow = false
 

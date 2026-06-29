@@ -39,3 +39,15 @@ export function requireOnlineStorePublicationId(env: NodeJS.ProcessEnv = process
   }
   return id;
 }
+
+// The scope Product.publishedOnPublication needs — read_products alone is NOT sufficient (ground-truthed
+// against the prod token's ACCESS_DENIED). When the granted scopes (from the OAuth token exchange, stored
+// on the Shop row) lack it, the channel read degrades to stock-only until the merchant re-consents.
+export const READ_PUBLICATIONS_SCOPE = 'read_publications';
+
+export function hasPublicationsScope(grantedScopes: string): boolean {
+  return grantedScopes
+    .split(',')
+    .map((s) => s.trim())
+    .includes(READ_PUBLICATIONS_SCOPE);
+}

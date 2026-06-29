@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hasPublicationsScope,
   MissingPublicationConfigError,
   ONLINE_STORE_PUBLICATION_ENV,
   requireOnlineStorePublicationId,
@@ -39,5 +40,19 @@ describe('requireOnlineStorePublicationId', () => {
         requireOnlineStorePublicationId({ [ONLINE_STORE_PUBLICATION_ENV]: bad }),
       ).toThrow(MissingPublicationConfigError);
     }
+  });
+});
+
+describe('hasPublicationsScope', () => {
+  it('is true when the granted scope CSV includes read_publications (trim-tolerant)', () => {
+    expect(hasPublicationsScope('read_products,write_discounts,read_publications')).toBe(true);
+    expect(hasPublicationsScope(' read_products , read_publications ')).toBe(true);
+  });
+
+  it('is false when read_publications is absent (the stock-only fallback condition)', () => {
+    expect(
+      hasPublicationsScope('read_products,write_products,write_discounts,read_discounts'),
+    ).toBe(false);
+    expect(hasPublicationsScope('')).toBe(false);
   });
 });
