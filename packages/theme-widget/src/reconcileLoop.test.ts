@@ -20,22 +20,43 @@ function res(ok: boolean, status = ok ? 200 : 422, body = ''): PostResponse {
 // or (qty 0) removes a line by its key.
 class FakeCart {
   private seq = 0;
+  seq_bump(): void {
+    this.seq += 1;
+  }
+  seq_val(): number {
+    return this.seq;
+  }
   readonly lines: {
     key: string;
     variantId: string;
     quantity: number;
     appAdded: boolean;
     propKey: string;
+    finalLinePrice: number;
   }[] = [];
 
   seedPaid(variantId: string, quantity: number): void {
     this.seq += 1;
-    this.lines.push({ key: `k${this.seq}`, variantId, quantity, appAdded: false, propKey: '{}' });
+    this.lines.push({
+      key: `k${this.seq}`,
+      variantId,
+      quantity,
+      appAdded: false,
+      propKey: '{}',
+      finalLinePrice: quantity * 1000,
+    });
   }
-  seedGift(variantId: string, quantity: number): void {
+  seedGift(variantId: string, quantity: number, finalLinePrice = 0): void {
     this.seq += 1;
     const propKey = JSON.stringify({ _fge_gift: '1' });
-    this.lines.push({ key: `k${this.seq}`, variantId, quantity, appAdded: true, propKey });
+    this.lines.push({
+      key: `k${this.seq}`,
+      variantId,
+      quantity,
+      appAdded: true,
+      propKey,
+      finalLinePrice,
+    });
   }
   add(variantId: string, quantity: number, properties: Record<string, string> | undefined): void {
     const propKey = JSON.stringify(properties ?? {});
@@ -51,6 +72,7 @@ class FakeCart {
       quantity,
       appAdded: properties?.['_fge_gift'] != null,
       propKey,
+      finalLinePrice: 0, // new gift adds are assumed discounted
     });
   }
   change(id: string, quantity: number): boolean {
@@ -113,6 +135,7 @@ function makeIo(
           variantId: l.variantId,
           quantity: l.quantity,
           appAdded: l.appAdded,
+          finalLinePrice: l.finalLinePrice,
         })),
         currency: 'CAD',
       }),
@@ -332,7 +355,7 @@ describe('reconcileSettled (pure convergence predicate)', () => {
 });
 
 describe('reconcileGiftCart — round-trip reduction (step 3a)', () => {
-  it('clean apply converges in ONE pass: a single /validate and a single cart read', async () => {
+  it('clean apply converges in ONE pass: a single /validate and TWO cart reads (plan + invariant)', async () => {
     const cart = new FakeCart();
     cart.seedPaid(PAID, 5);
     let validateCalls = 0;
@@ -354,7 +377,7 @@ describe('reconcileGiftCart — round-trip reduction (step 3a)', () => {
     expect(outcome.converged).toBe(true);
     expect(outcome.passes).toBe(1);
     expect(validateCalls).toBe(1); // no confirming SECOND /validate
-    expect(readCalls).toBe(1); // no confirming SECOND /cart.js re-read
+    expect(readCalls).toBe(2); // plan read + charged-gift invariant check
     expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 });
   });
 
@@ -408,5 +431,93 @@ describe('reconcileGiftCart — safety', () => {
     expect(outcome.converged).toBe(false);
     expect(io.posts.filter((p) => p.path !== 'cart/update.js')).toHaveLength(0); // no cart writes
     expect(cart.giftLines()).toHaveLength(1); // untouched
+  });
+});
+
+describe('reconcileGiftCart — charged gift convergence (FGE #3)', () => {
+  it('removes a duplicated charged gift and leaves a single $0 line', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    cart.seedGift(ICE, 1, 4250); // line A: charged copy ($42.50)
+    cart.seedGift(ICE, 1, 0); // line B: free copy ($0)
+    const io = makeIo(cart, () => giftResult([ICE], 'CODE-ICE'));
+
+    await reconcileGiftCart(io);
+
+    expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 });
+    const remaining = cart.giftLines().find((l) => l.variantId === ICE);
+    expect(remaining?.finalLinePrice).toBe(0);
+  });
+
+  it('removes a sole charged gift and re-adds it so BXGY creates a $0 copy', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    cart.seedGift(ICE, 1, 4250); // only copy is charged
+    const io = makeIo(cart, () => giftResult([ICE], 'CODE-ICE'));
+
+    await reconcileGiftCart(io);
+
+    expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 });
+    const remaining = cart.giftLines().find((l) => l.variantId === ICE);
+    expect(remaining?.finalLinePrice).toBe(0); // re-added as $0
+  });
+
+  it('dropping to a lower tier removes charged copies of the old gift entirely', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    cart.seedGift(ICE, 1, 4250);
+    cart.seedGift(ICE, 1, 0);
+    const io = makeIo(cart, () => giftResult([BRUSH], 'CODE-BRUSH'));
+
+    await reconcileGiftCart(io);
+
+    expect(countGift(cart, ICE)).toEqual({ lines: 0, qty: 0 });
+    expect(countGift(cart, BRUSH)).toEqual({ lines: 1, qty: 1 });
+  });
+
+  it('hard invariant: a charged gift persisting after settled is swept before convergence', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    // Simulate a post-add charged gift that survives the plan (e.g. discount not settled).
+    // We start with a charged copy. The plan removes it and re-adds. But if the re-added copy
+    // is also charged (modeled here by making new adds finalLinePrice > 0), the invariant sweep
+    // catches it.
+    let addCount = 0;
+    const base = makeIo(cart, () => giftResult([ICE], 'CODE-ICE'));
+    const io: GiftCartIo = {
+      ...base,
+      post: async (path, body) => {
+        if (path === 'cart/add.js') {
+          addCount++;
+          // First add produces a charged line (simulating the race); second add is $0.
+          const items = (
+            body as {
+              items: { id: number; quantity: number; properties?: Record<string, string> }[];
+            }
+          ).items;
+          for (const it of items) {
+            const propKey = JSON.stringify(it.properties ?? {});
+            cart.seq_bump();
+            cart.lines.push({
+              key: `k${cart.seq_val()}`,
+              variantId: gidOf(it.id),
+              quantity: it.quantity,
+              appAdded: it.properties?.['_fge_gift'] != null,
+              propKey,
+              finalLinePrice: addCount === 1 ? 4250 : 0,
+            });
+          }
+          return res(true);
+        }
+        return base.post(path, body);
+      },
+    };
+
+    const outcome = await reconcileGiftCart(io, { maxPasses: 4 });
+
+    expect(outcome.converged).toBe(true);
+    expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 });
+    const remaining = cart.giftLines().find((l) => l.variantId === ICE);
+    expect(remaining?.finalLinePrice).toBe(0);
   });
 });

@@ -234,6 +234,59 @@ describe('reconcileGiftLines — gift-unavailable', () => {
   });
 });
 
+describe('reconcileGiftLines — charged gift convergence (FGE #3)', () => {
+  function chargedGift(id: string, variantId: string, finalLinePrice: number): CartLineView {
+    return { id, variantId, quantity: 1, appAdded: true, finalLinePrice };
+  }
+
+  it('removes a charged gift line even when the variant is desired, and re-adds it', () => {
+    const cart: CartLineView[] = [paidLine('l1', PAID), chargedGift('g1', ICE, 4250)];
+    const r = reconcileGiftLines(cart, gift([ICE]));
+    expect(r.remove).toEqual([{ id: 'g1', variantId: ICE }]);
+    expect(variants(r).add).toEqual([ICE]);
+  });
+
+  it('keeps the $0 copy and removes the charged copy when both exist (same variant)', () => {
+    const cart: CartLineView[] = [
+      paidLine('l1', PAID),
+      chargedGift('g1', ICE, 4250),
+      { id: 'g2', variantId: ICE, quantity: 1, appAdded: true, finalLinePrice: 0 },
+    ];
+    const r = reconcileGiftLines(cart, gift([ICE]));
+    expect(r.remove.map((x) => x.id)).toEqual(['g1']);
+    expect(r.add).toEqual([]);
+  });
+
+  it('keeps the $0 copy when it appears first, removes charged surplus', () => {
+    const cart: CartLineView[] = [
+      paidLine('l1', PAID),
+      { id: 'g1', variantId: ICE, quantity: 1, appAdded: true, finalLinePrice: 0 },
+      chargedGift('g2', ICE, 4250),
+    ];
+    const r = reconcileGiftLines(cart, gift([ICE]));
+    expect(r.remove.map((x) => x.id)).toEqual(['g2']);
+    expect(r.add).toEqual([]);
+  });
+
+  it('removes ALL charged gift lines when dropping to no-gift', () => {
+    const cart: CartLineView[] = [
+      paidLine('l1', PAID),
+      chargedGift('g1', ICE, 4250),
+      { id: 'g2', variantId: ICE, quantity: 1, appAdded: true, finalLinePrice: 0 },
+    ];
+    const r = reconcileGiftLines(cart, noGift('below-threshold'));
+    expect(new Set(r.remove.map((x) => x.id))).toEqual(new Set(['g1', 'g2']));
+    expect(r.add).toEqual([]);
+  });
+
+  it('backward compatible: omitted finalLinePrice is treated as $0 (free)', () => {
+    const r = reconcileGiftLines([giftLine('g1', ICE)], gift([ICE]));
+    expect(r.remove).toEqual([]);
+    expect(r.add).toEqual([]);
+    expect(r.adjust).toEqual([]);
+  });
+});
+
 describe('reconcileGiftLines — never touches the shopper’s own lines', () => {
   it('leaves a paid line alone and never removes it', () => {
     const r = reconcileGiftLines([paidLine('l1', PAID)], noGift('below-threshold'));

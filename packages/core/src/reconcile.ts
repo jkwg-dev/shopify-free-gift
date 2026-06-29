@@ -18,6 +18,10 @@ export type CartLineView = {
   readonly variantId: string;
   readonly quantity: number;
   readonly appAdded: boolean;
+  // Minor-unit final price after discounts. When present, the reconciler treats a charged gift
+  // (finalLinePrice > 0) as removable — a $0 copy is always preferred. Optional so existing
+  // callers that don't supply it still work (treated as 0, i.e. "free").
+  readonly finalLinePrice?: number;
 };
 
 export type GiftLineAdd = {
@@ -78,6 +82,12 @@ export function reconcileGiftLines(
   for (const line of appAddedGiftLines) {
     if (!desiredSet.has(line.variantId)) {
       remove.push({ id: line.id, variantId: line.variantId }); // undesired (e.g. previous tier)
+      continue;
+    }
+    // A charged gift (finalLinePrice > 0) is always wrong — remove it. A $0 copy of the same
+    // variant later in the list (or a re-add on the next pass) will replace it.
+    if ((line.finalLinePrice ?? 0) > 0) {
+      remove.push({ id: line.id, variantId: line.variantId });
       continue;
     }
     if (kept.has(line.variantId)) {

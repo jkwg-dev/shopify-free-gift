@@ -84,9 +84,12 @@ export async function reconcileGiftCart(
     }
 
     const plan = reconcileGiftLines(lines, result);
-    const add = plan.add.filter((a) => !addAttempted.has(a.variantId));
     const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
     const codeNeedsChange = plan.applyCode !== appliedCode;
+
+    // Filter adds BEFORE convergence check (same as before) — but we'll recompute after removes
+    // in case `addAttempted` entries are cleared for removed variants.
+    let add = plan.add.filter((a) => !addAttempted.has(a.variantId));
 
     if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
       return { passes: pass, converged: true, appliedCode, failures }; // cart already matches
@@ -108,6 +111,15 @@ export async function reconcileGiftCart(
       removed.push(...res.removed);
       adjusted.push(...res.adjusted);
       passFailures.push(...res.failures);
+      // A successfully removed variant must be re-addable: a charged copy was just cleared, so the
+      // re-add (which creates a fresh $0 copy) must not be blocked by the once-per-run guard.
+      for (const r of plan.remove) {
+        if (removed.includes(r.id)) {
+          addAttempted.delete(r.variantId);
+        }
+      }
+      // Recompute adds after clearing — a variant that was blocked is now eligible.
+      add = plan.add.filter((a) => !addAttempted.has(a.variantId));
     }
     if (codeNeedsChange) {
       await io.setDiscount(plan.applyCode);
@@ -138,6 +150,18 @@ export async function reconcileGiftCart(
       },
     );
     if (settled) {
+      // Hard invariant: no _fge_gift line may remain with finalLinePrice > 0 in the settled cart.
+      // Re-read and sweep before converging — if any charged gift survives (e.g. discount hasn't
+      // settled), remove it and fall through to re-validate on the next pass.
+      const postCart = await io.readCart();
+      const charged = postCart.lines.filter((l) => l.appAdded && (l.finalLinePrice ?? 0) > 0);
+      if (charged.length > 0) {
+        const updates: Record<string, number> = {};
+        for (const l of charged) updates[l.id] = 0;
+        await io.post('cart/update.js', { updates });
+        for (const l of charged) addAttempted.delete(l.variantId);
+        continue; // re-validate on next pass
+      }
       return { passes: pass, converged: true, appliedCode, failures };
     }
   }

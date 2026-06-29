@@ -11,6 +11,7 @@
   // ../core/src/reconcile.ts
   var GIFT_LINE_PROPERTY = "_fge_gift";
   function reconcileGiftLines(cart, result) {
+    var _a2;
     const desired = result.status === "gift" ? result.giftVariantIds : [];
     const desiredSet = new Set(desired);
     const appAddedGiftLines = cart.filter((line) => line.appAdded);
@@ -19,6 +20,10 @@
     const kept = /* @__PURE__ */ new Set();
     for (const line of appAddedGiftLines) {
       if (!desiredSet.has(line.variantId)) {
+        remove.push({ id: line.id, variantId: line.variantId });
+        continue;
+      }
+      if (((_a2 = line.finalLinePrice) != null ? _a2 : 0) > 0) {
         remove.push({ id: line.id, variantId: line.variantId });
         continue;
       }
@@ -1506,9 +1511,9 @@
         return { passes: pass, converged: false, appliedCode, failures };
       }
       const plan = reconcileGiftLines(lines, result);
-      const add = plan.add.filter((a) => !addAttempted.has(a.variantId));
       const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
       const codeNeedsChange = plan.applyCode !== appliedCode;
+      let add = plan.add.filter((a) => !addAttempted.has(a.variantId));
       if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
         return { passes: pass, converged: true, appliedCode, failures };
       }
@@ -1521,6 +1526,12 @@
         removed.push(...res.removed);
         adjusted.push(...res.adjusted);
         passFailures.push(...res.failures);
+        for (const r of plan.remove) {
+          if (removed.includes(r.id)) {
+            addAttempted.delete(r.variantId);
+          }
+        }
+        add = plan.add.filter((a) => !addAttempted.has(a.variantId));
       }
       if (codeNeedsChange) {
         await io.setDiscount(plan.applyCode);
@@ -1546,6 +1557,20 @@
         }
       );
       if (settled) {
+        const postCart = await io.readCart();
+        const charged = postCart.lines.filter(
+          (l) => {
+            var _a3;
+            return l.appAdded && ((_a3 = l.finalLinePrice) != null ? _a3 : 0) > 0;
+          }
+        );
+        if (charged.length > 0) {
+          const updates = {};
+          for (const l of charged) updates[l.id] = 0;
+          await io.post("cart/update.js", { updates });
+          for (const l of charged) addAttempted.delete(l.variantId);
+          continue;
+        }
         return { passes: pass, converged: true, appliedCode, failures };
       }
     }
@@ -2020,12 +2045,16 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   }
   async function readCartLines() {
     const cart = await getCart();
-    const lines = cart.items.map((item) => ({
-      id: item.key,
-      variantId: toGid(item.variant_id),
-      quantity: item.quantity,
-      appAdded: isGiftLine(item)
-    }));
+    const lines = cart.items.map((item) => {
+      var _a2;
+      return {
+        id: item.key,
+        variantId: toGid(item.variant_id),
+        quantity: item.quantity,
+        appAdded: isGiftLine(item),
+        finalLinePrice: (_a2 = item.final_line_price) != null ? _a2 : 0
+      };
+    });
     return { lines, currency: cart.currency };
   }
   async function reconcileOnce(config) {

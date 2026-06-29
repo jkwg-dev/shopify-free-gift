@@ -205,6 +205,7 @@ async function readCartLines(): Promise<{ lines: CartLineView[]; currency: strin
     variantId: toGid(item.variant_id),
     quantity: item.quantity,
     appAdded: isGiftLine(item),
+    finalLinePrice: item.final_line_price ?? 0,
   }));
   return { lines, currency: cart.currency };
 }
