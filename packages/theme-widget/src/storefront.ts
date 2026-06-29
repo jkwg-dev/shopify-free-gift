@@ -256,6 +256,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     }
     markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
+    await refreshDawnTotals(); // refresh the full cart body so line items + subtotal match post-reconcile state
     await refreshGrouping(); // recompute + re-apply the two-group line transform from the final cart
   } finally {
     markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
