@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  // ../core/src/money.ts
+  // packages/core/src/money.ts
   function money(amountMinor, currency) {
     if (!Number.isInteger(amountMinor)) {
       throw new RangeError(`Money amount must be an integer minor-unit value, got ${amountMinor}`);
@@ -8,7 +8,7 @@
     return { amountMinor, currency };
   }
 
-  // ../core/src/reconcile.ts
+  // packages/core/src/reconcile.ts
   var GIFT_LINE_PROPERTY = "_fge_gift";
   function reconcileGiftLines(cart, result) {
     const desired = result.status === "gift" ? result.giftVariantIds : [];
@@ -46,7 +46,7 @@
     };
   }
 
-  // src/cartSections.ts
+  // packages/theme-widget/src/cartSections.ts
   var DRAWER_SELECTORS = [
     "cart-drawer",
     "#CartDrawer",
@@ -232,7 +232,7 @@
     return specs.map(mountOne);
   }
 
-  // src/cartGrouping.ts
+  // packages/theme-widget/src/cartGrouping.ts
   function isZeroedByOurCode(line, ourCode) {
     return line.finalLinePrice === 0 && ourCode !== null && line.allocationTitles.includes(ourCode);
   }
@@ -298,7 +298,7 @@
     });
   }
 
-  // src/groupingTransform.ts
+  // packages/theme-widget/src/groupingTransform.ts
   var BUYS_HEADER = "Your purchase";
   var GETS_HEADER_ONE = "Your free gift";
   var GETS_HEADER_MANY = "Your free gifts";
@@ -510,12 +510,16 @@
     return false;
   }
   function injectBadge(node, text) {
-    var _a2;
+    var _a2, _b2, _c2;
     if (node.querySelector(".fge-line-badge") !== null) return;
     const host = (_a2 = findFirst2(node, BADGE_HOST_SELECTORS)) != null ? _a2 : node;
     const badge = document.createElement("span");
     badge.className = "fge fge-line-badge";
     badge.textContent = text;
+    const hostStyle = (_b2 = globalThis.getComputedStyle) == null ? void 0 : _b2.call(globalThis, host);
+    if ((_c2 = hostStyle == null ? void 0 : hostStyle.display) == null ? void 0 : _c2.includes("flex")) {
+      host.style.flexWrap = "wrap";
+    }
     host.prepend(badge);
   }
   function makeHeader(line, text, sub) {
@@ -629,8 +633,25 @@
     }
     return true;
   }
+  function syncNativeInputs(itemsEl, actualQuantities) {
+    if (itemsEl === null) return;
+    const lineNodes = findLineNodes(itemsEl);
+    if (lineNodes.length !== actualQuantities.length) return;
+    for (let i = 0; i < lineNodes.length; i++) {
+      const node = lineNodes[i];
+      if (node.querySelector(".fge-merged-stepper") !== null) continue;
+      const input = findFirst2(node, QTY_INPUT_SELECTORS);
+      if (input instanceof HTMLInputElement) {
+        const actual = String(actualQuantities[i]);
+        if (input.value !== actual) {
+          input.value = actual;
+          input.setAttribute("value", actual);
+        }
+      }
+    }
+  }
 
-  // src/cartMutations.ts
+  // packages/theme-widget/src/cartMutations.ts
   var toNumericId = (gid) => Number(gid.split("/").pop());
   var addItem = (a) => ({
     id: toNumericId(a.variantId),
@@ -738,7 +759,7 @@
     (_a2 = c == null ? void 0 : c.warn) == null ? void 0 : _a2.call(c, `[free-gift] ${message}`, body.slice(0, 300));
   }
 
-  // src/notice.ts
+  // packages/theme-widget/src/notice.ts
   var NOTICE_ID = "fge-notice";
   var VISIBLE_MS = 6e3;
   var hideTimer;
@@ -767,7 +788,7 @@
     }, VISIBLE_MS);
   }
 
-  // src/choices.ts
+  // packages/theme-widget/src/choices.ts
   function groupGiftOptionsByProduct(options) {
     const order = [];
     const byProduct = /* @__PURE__ */ new Map();
@@ -800,7 +821,7 @@
     return choices;
   }
 
-  // src/chooser.ts
+  // packages/theme-widget/src/chooser.ts
   function buildChooserModel(config, state) {
     var _a2;
     if (config.status !== "active") {
@@ -1028,7 +1049,7 @@
     return label;
   }
 
-  // src/configClient.ts
+  // packages/theme-widget/src/configClient.ts
   var DEFAULT_CONFIG_PATH = "/apps/free-gift/config";
   async function getConfig(request, options = {}) {
     var _a2, _b2;
@@ -1051,7 +1072,7 @@
     return { ok: true, config: body };
   }
 
-  // src/pending.ts
+  // packages/theme-widget/src/pending.ts
   var PENDING_MIN_MS = 500;
   var PENDING_MAX_MS = 8e3;
   function pendingShouldClear(workDone, minElapsed) {
@@ -1101,7 +1122,7 @@
     }
   }
 
-  // src/progressGraph.ts
+  // packages/theme-widget/src/progressGraph.ts
   function giftLabelFor(gift) {
     if (gift.kind === "AND") {
       return gift.gifts.map((g) => g.variantLabel).join(" + ");
@@ -1287,7 +1308,7 @@
     }
   }
 
-  // src/reconcileLoop.ts
+  // packages/theme-widget/src/reconcileLoop.ts
   function reconcileSettled(expected, applied) {
     return applied.failed === 0 && applied.added === expected.adds && applied.removed === expected.removes && applied.adjusted === expected.adjusts;
   }
@@ -1350,7 +1371,7 @@
     return { passes: maxPasses, converged: false, appliedCode, failures };
   }
 
-  // src/styles.ts
+  // packages/theme-widget/src/styles.ts
   var FGE_STYLE_ID = "fge-styles";
   var FGE_CSS = `
 .fge{
@@ -1549,7 +1570,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
 /* The "Free gift" / "Free gift \u2014 pending" badge injected into a gift line when the theme shows no
    discount label, and the relabeled discount node. */
 .fge-line-badge, .fge-free-badge{
-  display:block; font-size:11px; font-weight:700; color:#111111; text-transform:none;
+  display:block; width:100%; font-size:11px; font-weight:700; color:#111111; text-transform:none;
   letter-spacing:normal; margin-bottom:2px;
 }
 .fge-gift-line--pending .fge-line-badge{ color:#8a6d00; } /* amber: not-yet-free, needs attention */
@@ -1628,7 +1649,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     doc.head.append(style);
   }
 
-  // src/validateClient.ts
+  // packages/theme-widget/src/validateClient.ts
   var DEFAULT_PROXY_PATH = "/apps/free-gift/validate";
   async function postValidate(request, options = {}) {
     var _a2, _b2;
@@ -1650,7 +1671,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     return { ok: true, result: body };
   }
 
-  // src/storefront.ts
+  // packages/theme-widget/src/storefront.ts
   var SOURCE = "free-gift-engine";
   var CART_UPDATE_EVENT = "cart-update";
   var DEBOUNCE_MS = 300;
@@ -1709,10 +1730,12 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       };
     });
   }
+  var lastCartQuantities = [];
   async function refreshGrouping() {
     try {
       const cart = await getCart();
       lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+      lastCartQuantities = cart.items.map((item) => item.quantity);
     } catch {
       return;
     }
@@ -1933,10 +1956,40 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       await new Promise((resolve) => idleResolvers.push(resolve));
     }
   }
+  function detectDrawerSectionId() {
+    var _a2, _b2, _c2, _d;
+    const drawer = document.querySelector(
+      'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart'
+    );
+    if (drawer === null) return "cart-drawer";
+    const section = (_a2 = drawer.closest('[id^="shopify-section-"]')) != null ? _a2 : drawer.querySelector('[id^="shopify-section-"]');
+    if (section !== null) {
+      return section.id.replace("shopify-section-", "");
+    }
+    const dataId = (_d = (_b2 = drawer.closest("[data-section-id]")) == null ? void 0 : _b2.dataset["sectionId"]) != null ? _d : (_c2 = drawer.dataset) == null ? void 0 : _c2["sectionId"];
+    if (dataId !== void 0 && dataId !== "") return dataId;
+    return "cart-drawer";
+  }
+  function detectBadgeSectionId() {
+    const bubble = document.getElementById("cart-icon-bubble");
+    if (bubble !== null) {
+      const section = bubble.closest('[id^="shopify-section-"]');
+      if (section !== null) return section.id.replace("shopify-section-", "");
+    }
+    return "cart-icon-bubble";
+  }
+  var DRAWER_FOOTER_SELECTORS = [
+    ".cart-drawer__footer",
+    ".drawer__footer",
+    '[class*="drawer__footer" i]',
+    '[class*="cart-footer" i]'
+  ];
   async function refreshDawnTotals() {
-    var _a2;
+    var _a2, _b2, _c2, _d;
     try {
-      const sectionIds = ["cart-drawer", "cart-icon-bubble"];
+      const drawerSectionId = detectDrawerSectionId();
+      const badgeSectionId = detectBadgeSectionId();
+      const sectionIds = [drawerSectionId, badgeSectionId];
       const pageFooterEl = document.getElementById("main-cart-footer");
       const pageFooterSection = pageFooterEl == null ? void 0 : pageFooterEl.dataset["id"];
       if (pageFooterSection !== void 0 && pageFooterSection !== "") {
@@ -1947,23 +2000,44 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       });
       if (!res.ok) return;
       const data = await res.json();
-      const drawerHtml = data["cart-drawer"];
+      const drawerHtml = data[drawerSectionId];
       if (drawerHtml !== void 0) {
         const parsed = new DOMParser().parseFromString(drawerHtml, "text/html");
-        const newTotals = parsed.querySelector(".cart-drawer__footer");
-        const liveTotals = document.querySelector("cart-drawer .cart-drawer__footer");
-        if (newTotals !== null && liveTotals !== null) {
-          liveTotals.innerHTML = newTotals.innerHTML;
+        const drawer = document.querySelector(
+          'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart'
+        );
+        let replaced = false;
+        if (drawer !== null) {
+          for (const sel of DRAWER_FOOTER_SELECTORS) {
+            const newTotals = parsed.querySelector(sel);
+            const liveTotals = drawer.querySelector(sel);
+            if (newTotals !== null && liveTotals !== null) {
+              liveTotals.innerHTML = newTotals.innerHTML;
+              replaced = true;
+              break;
+            }
+          }
+          if (!replaced) {
+            const sectionWrapper = (_a2 = drawer.closest(".shopify-section")) != null ? _a2 : drawer.querySelector(".shopify-section");
+            const newSection = parsed.querySelector(".shopify-section");
+            if (sectionWrapper !== null && newSection !== null) {
+              sectionWrapper.innerHTML = newSection.innerHTML;
+              (_c2 = (_b2 = globalThis.console) == null ? void 0 : _b2.warn) == null ? void 0 : _c2.call(
+                _b2,
+                "[free-gift] refreshDawnTotals: footer selector miss \u2014 used full-section fallback"
+              );
+            }
+          }
         }
       }
-      const badgeHtml = data["cart-icon-bubble"];
+      const badgeHtml = data[badgeSectionId];
       if (badgeHtml !== void 0) {
         const liveBadge = document.getElementById("cart-icon-bubble");
         if (liveBadge !== null) {
           const parsed = new DOMParser().parseFromString(badgeHtml, "text/html");
           const newBadge = parsed.querySelector(".shopify-section");
           if (newBadge !== null) {
-            ((_a2 = liveBadge.querySelector(".shopify-section")) != null ? _a2 : liveBadge).innerHTML = newBadge.innerHTML;
+            ((_d = liveBadge.querySelector(".shopify-section")) != null ? _d : liveBadge).innerHTML = newBadge.innerHTML;
           }
         }
       }
@@ -2054,12 +2128,14 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
     document.querySelectorAll(`[${MASK_ATTR}]`).forEach((el) => {
       el.setAttribute(GROUPED_ATTR, "");
+      el.removeAttribute(MASK_ATTR);
     });
   }
   function remask(itemsEl) {
     var _a2;
     const host = (_a2 = itemsEl == null ? void 0 : itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl;
-    if (host !== null && host.hasAttribute(MASK_ATTR)) {
+    if (host !== null) {
+      host.setAttribute(MASK_ATTR, "");
       host.removeAttribute(GROUPED_ATTR);
       if (maskTimer === void 0) {
         maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
@@ -2071,6 +2147,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     const host = (_a2 = itemsEl == null ? void 0 : itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl;
     if (host !== null && host.hasAttribute(MASK_ATTR)) {
       host.setAttribute(GROUPED_ATTR, "");
+      host.removeAttribute(MASK_ATTR);
     }
   }
   async function loadCampaignConfig(config) {
@@ -2102,6 +2179,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         remask(itemsEl);
         if (lastPlan === null) {
           liftMask(itemsEl);
+          syncNativeInputs(itemsEl, lastCartQuantities);
           return;
         }
         if (!applyTwoGroupLayout(itemsEl, lastPlan, {
@@ -2110,6 +2188,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         })) {
           liftMask(itemsEl);
         }
+        syncNativeInputs(itemsEl, lastCartQuantities);
       }
     });
     applyInitialMask();

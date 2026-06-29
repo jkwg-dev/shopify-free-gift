@@ -21,7 +21,11 @@ import {
   type GroupingPlan,
   type RawCartLine,
 } from './cartGrouping.js';
-import { applyTwoGroupLayout, type MergedQtyChangeResult } from './groupingTransform.js';
+import {
+  applyTwoGroupLayout,
+  syncNativeInputs,
+  type MergedQtyChangeResult,
+} from './groupingTransform.js';
 import { applyMergedBuyEdit, failedAddVariantIds } from './cartMutations.js';
 import { showNotice } from './notice.js';
 import { defaultGiftChoices } from './choices.js';
@@ -148,10 +152,14 @@ function toGroupingLines(cart: AjaxCart): RawCartLine[] {
 // Recompute the grouping plan from the live cart and re-apply it to every surface. Fail-open: on any
 // error we keep the previous plan / the theme's untouched list. ourCode = the applied discount (the
 // per-line allocation title for our BXGY code), so gets are scoped to OUR discount.
+// The most recent authoritative per-line quantities from cart.js, for syncing native theme steppers.
+let lastCartQuantities: readonly number[] = [];
+
 async function refreshGrouping(): Promise<void> {
   try {
     const cart = await getCart();
     lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+    lastCartQuantities = cart.items.map((item) => item.quantity);
   } catch {
     return;
   }
@@ -429,13 +437,55 @@ async function whenReconcileIdle(): Promise<void> {
   }
 }
 
-// Refresh Dawn's footer subtotal + cart-count badge via Section Rendering (defect A revision). The
-// pubsub nudge was wrong: Dawn's CartDrawerItems.onCartUpdate only re-renders ITEMS (not footer/badge),
-// AND its innerHTML wipe clobbers our stepper. Instead we fetch the sections ourselves and surgically
-// replace only the totals + badge — the items list is untouched, so the stepper and grouping survive.
+// Detect the Shopify section ID for the cart drawer from the live DOM. Themes wrap each section in a
+// `<div id="shopify-section-<id>" class="shopify-section">`, so we walk up from the drawer element to
+// find that wrapper and extract the ID suffix. Falls back to the Dawn default 'cart-drawer'.
+function detectDrawerSectionId(): string {
+  const drawer = document.querySelector(
+    'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart',
+  );
+  if (drawer === null) return 'cart-drawer';
+  // Check the element itself, then walk parents for the shopify-section wrapper.
+  const section =
+    drawer.closest<HTMLElement>('[id^="shopify-section-"]') ??
+    drawer.querySelector<HTMLElement>('[id^="shopify-section-"]');
+  if (section !== null) {
+    return section.id.replace('shopify-section-', '');
+  }
+  // Some themes set data-section-id on the section wrapper or the drawer itself.
+  const dataId =
+    drawer.closest<HTMLElement>('[data-section-id]')?.dataset['sectionId'] ??
+    (drawer as HTMLElement).dataset?.['sectionId'];
+  if (dataId !== undefined && dataId !== '') return dataId;
+  return 'cart-drawer';
+}
+
+// Detect the section ID for the cart icon badge. Same pattern as the drawer.
+function detectBadgeSectionId(): string {
+  const bubble = document.getElementById('cart-icon-bubble');
+  if (bubble !== null) {
+    const section = bubble.closest<HTMLElement>('[id^="shopify-section-"]');
+    if (section !== null) return section.id.replace('shopify-section-', '');
+  }
+  return 'cart-icon-bubble';
+}
+
+// Selectors to try for the subtotal/footer area, in order of specificity.
+const DRAWER_FOOTER_SELECTORS = [
+  '.cart-drawer__footer',
+  '.drawer__footer',
+  '[class*="drawer__footer" i]',
+  '[class*="cart-footer" i]',
+];
+
+// Refresh the cart drawer's footer subtotal + cart-count badge via Section Rendering. Resilient to
+// different theme structures: detects the section ID from the DOM, tries multiple footer selectors,
+// and falls back to a full-section innerHTML swap if the surgical replace can't find the target.
 async function refreshDawnTotals(): Promise<void> {
   try {
-    const sectionIds = ['cart-drawer', 'cart-icon-bubble'];
+    const drawerSectionId = detectDrawerSectionId();
+    const badgeSectionId = detectBadgeSectionId();
+    const sectionIds = [drawerSectionId, badgeSectionId];
     const pageFooterEl = document.getElementById('main-cart-footer');
     const pageFooterSection = pageFooterEl?.dataset['id'];
     if (pageFooterSection !== undefined && pageFooterSection !== '') {
@@ -447,20 +497,43 @@ async function refreshDawnTotals(): Promise<void> {
     if (!res.ok) return;
     const data = (await res.json()) as Record<string, string>;
 
-    // Drawer: replace the subtotal block (.cart-drawer__footer) — NOT the whole .drawer__footer, so the
-    // cart note and checkout CTA are preserved.
-    const drawerHtml = data['cart-drawer'];
+    // Drawer: try surgical footer replace first, then fall back to full-section swap.
+    const drawerHtml = data[drawerSectionId];
     if (drawerHtml !== undefined) {
       const parsed = new DOMParser().parseFromString(drawerHtml, 'text/html');
-      const newTotals = parsed.querySelector('.cart-drawer__footer');
-      const liveTotals = document.querySelector('cart-drawer .cart-drawer__footer');
-      if (newTotals !== null && liveTotals !== null) {
-        liveTotals.innerHTML = newTotals.innerHTML;
+      const drawer = document.querySelector(
+        'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart',
+      );
+      let replaced = false;
+      if (drawer !== null) {
+        for (const sel of DRAWER_FOOTER_SELECTORS) {
+          const newTotals = parsed.querySelector(sel);
+          const liveTotals = drawer.querySelector(sel);
+          if (newTotals !== null && liveTotals !== null) {
+            liveTotals.innerHTML = newTotals.innerHTML;
+            replaced = true;
+            break;
+          }
+        }
+        // Fallback: replace the shopify-section wrapper's full content (heavier but correct).
+        if (!replaced) {
+          const sectionWrapper =
+            drawer.closest<HTMLElement>('.shopify-section') ??
+            drawer.querySelector<HTMLElement>('.shopify-section');
+          const newSection = parsed.querySelector('.shopify-section');
+          if (sectionWrapper !== null && newSection !== null) {
+            sectionWrapper.innerHTML = newSection.innerHTML;
+            // warn so we can optimize later
+            globalThis.console?.warn?.(
+              '[free-gift] refreshDawnTotals: footer selector miss — used full-section fallback',
+            );
+          }
+        }
       }
     }
 
-    // Badge: replace the cart-icon-bubble content (same pattern as Dawn's getSectionInnerHTML).
-    const badgeHtml = data['cart-icon-bubble'];
+    // Badge: replace the cart-icon-bubble content.
+    const badgeHtml = data[badgeSectionId];
     if (badgeHtml !== undefined) {
       const liveBadge = document.getElementById('cart-icon-bubble');
       if (liveBadge !== null) {
@@ -587,12 +660,14 @@ function ensureUnmasked(): void {
   }
   document.querySelectorAll<HTMLElement>(`[${MASK_ATTR}]`).forEach((el) => {
     el.setAttribute(GROUPED_ATTR, '');
+    el.removeAttribute(MASK_ATTR);
   });
 }
 
 function remask(itemsEl: HTMLElement | null): void {
   const host = itemsEl?.closest<HTMLElement>('cart-drawer-items, cart-items') ?? itemsEl;
-  if (host !== null && host.hasAttribute(MASK_ATTR)) {
+  if (host !== null) {
+    host.setAttribute(MASK_ATTR, '');
     host.removeAttribute(GROUPED_ATTR);
     if (maskTimer === undefined) {
       maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
@@ -604,6 +679,7 @@ function liftMask(itemsEl: HTMLElement | null): void {
   const host = itemsEl?.closest<HTMLElement>('cart-drawer-items, cart-items') ?? itemsEl;
   if (host !== null && host.hasAttribute(MASK_ATTR)) {
     host.setAttribute(GROUPED_ATTR, '');
+    host.removeAttribute(MASK_ATTR);
   }
 }
 
@@ -640,6 +716,7 @@ function init(): void {
       remask(itemsEl);
       if (lastPlan === null) {
         liftMask(itemsEl);
+        syncNativeInputs(itemsEl, lastCartQuantities);
         return;
       }
       if (
@@ -650,6 +727,7 @@ function init(): void {
       ) {
         liftMask(itemsEl);
       }
+      syncNativeInputs(itemsEl, lastCartQuantities);
     },
   });
 

@@ -311,6 +311,11 @@ function injectBadge(node: HTMLElement, text: string): void {
   const badge = document.createElement('span');
   badge.className = 'fge fge-line-badge';
   badge.textContent = text;
+  // Ensure the badge takes its own line even in flex containers (prod themes may flex the price cell).
+  const hostStyle = globalThis.getComputedStyle?.(host);
+  if (hostStyle?.display?.includes('flex')) {
+    host.style.flexWrap = 'wrap';
+  }
   host.prepend(badge);
 }
 
@@ -466,4 +471,28 @@ export function applyTwoGroupLayout(
   }
 
   return true;
+}
+
+// Sync native theme quantity inputs to authoritative cart values. Called after a reconcile when the
+// theme may have rendered a stale requested qty (e.g. add qty 4 with only 1 in stock → theme shows
+// 4, actual cart has 1). Only touches inputs outside our merged stepper (those are already synced).
+export function syncNativeInputs(
+  itemsEl: HTMLElement | null,
+  actualQuantities: readonly number[],
+): void {
+  if (itemsEl === null) return;
+  const lineNodes = findLineNodes(itemsEl);
+  if (lineNodes.length !== actualQuantities.length) return;
+  for (let i = 0; i < lineNodes.length; i++) {
+    const node = lineNodes[i]!;
+    if (node.querySelector('.fge-merged-stepper') !== null) continue;
+    const input = findFirst(node, QTY_INPUT_SELECTORS);
+    if (input instanceof HTMLInputElement) {
+      const actual = String(actualQuantities[i]);
+      if (input.value !== actual) {
+        input.value = actual;
+        input.setAttribute('value', actual);
+      }
+    }
+  }
 }

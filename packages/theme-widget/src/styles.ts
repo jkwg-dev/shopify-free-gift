@@ -203,7 +203,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
 /* The "Free gift" / "Free gift — pending" badge injected into a gift line when the theme shows no
    discount label, and the relabeled discount node. */
 .fge-line-badge, .fge-free-badge{
-  display:block; font-size:11px; font-weight:700; color:#111111; text-transform:none;
+  display:block; width:100%; font-size:11px; font-weight:700; color:#111111; text-transform:none;
   letter-spacing:normal; margin-bottom:2px;
 }
 .fge-gift-line--pending .fge-line-badge{ color:#8a6d00; } /* amber: not-yet-free, needs attention */
