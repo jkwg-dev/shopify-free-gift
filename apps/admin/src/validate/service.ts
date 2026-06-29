@@ -57,8 +57,8 @@ export type ValidateServiceDeps = {
   // activation (tag gifts → ensure collection → wait for exclusion) before any code is minted.
   readonly qualifyingCollectionId: string;
   readonly now: () => Date;
-  // Stacking policy for minted gift codes. Defaults to GIFT_COMBINES_WITH (productDiscounts:false so
-  // gift offers are mutually exclusive; combines with order/shipping discounts).
+  // Stacking policy for minted gift codes. Defaults to GIFT_COMBINES_WITH (productDiscounts:true so
+  // FGE coexists with other BXGY discounts on different line items).
   readonly giftCombinesWith?: DiscountCombinesWith;
 };
 
@@ -70,12 +70,14 @@ export class ValidateBadRequestError extends Error {
   }
 }
 
-// Gift codes are mutually exclusive at the discount layer via productDiscounts:false (the core
-// suppression requirement; also backed by server highest-only resolution). They MAY coexist with
-// order/shipping discounts. GreenTee runs promos via direct price edits (not product discount
-// codes), so "gift not combinable with other product discounts" is an accepted side effect.
+// Gift codes allow product-discount combination so FGE coexists with other BXGY discounts (e.g.
+// Kite BOGO) on different line items — both sides must set productDiscounts:true for Shopify to
+// let them coexist. On Advanced, two product discounts cannot STACK on the same line (Plus-only);
+// they coexist on different products. Suppression (highest-tier-only) is enforced server-side by
+// /validate handing out a single code; a lower-tier code discovered manually would not stack with
+// the highest-tier code on the same gift line.
 export const GIFT_COMBINES_WITH: DiscountCombinesWith = {
-  productDiscounts: false,
+  productDiscounts: true,
   orderDiscounts: true,
   shippingDiscounts: true,
 };

@@ -64,7 +64,7 @@ Core `Money` is integer minor units, but the minor-unit exponent depends on the 
 - **Base-currency minimum**: the discount's minimum-purchase condition is set in the store's base currency so a single code serves all markets; Shopify applies the native market conversion at checkout. We do not mint a code per market.
 - `configVersionHash` covers the campaign config that affects pricing/scope (tiers, thresholds, gift-sets, suppression mode). On a config change the hash changes, so a **new** code is minted and **stale codes are deactivated**; we **never mutate a live code's scope or minimum** in place. Live codes are immutable; supersede, don't edit.
 - The hash inputs — the resolved tier and resolved gift-set — are produced by the pure functions in `packages/core` (unit-testable here). The actual Shopify code creation + Postgres persistence stays in `packages/shopify` / the `/validate` route.
-- **Gift codes are non-combinable among themselves (this is what makes reusable codes safe for suppression)**. Every gift code is created with `combinesWith.productDiscounts: false`. Our gift codes are product-class code discounts, so Shopify allows only one product-class discount per cart — a shopper who discovers a lower-tier code cannot manually stack it on top of the highest-tier code. Suppression is therefore enforced at the **discount layer**, not only by `/validate` handing out a single code. (Confirmed against 2026-04: combinability is governed solely by `combinesWith`; `productDiscounts` defaults to `false`, and same-line product-discount stacking requires Plus + `productDiscounts: true`, which we are on Advanced and never set.) If a campaign ever needs a gift to stack with a _separate_ promo (e.g. an order-level percentage code), it may set `orderDiscounts`/`shippingDiscounts` true but MUST keep `productDiscounts: false`, or suppression breaks. The admin UI MUST NOT expose any toggle that can set `productDiscounts: true` for gift codes.
+- **Gift codes allow product-discount combination (`combinesWith.productDiscounts: true`)**. This lets FGE coexist with other BXGY product discounts (e.g. Kite BOGO) on **different line items** — both sides must set `productDiscounts: true` for Shopify to let them coexist. On Advanced, two product discounts cannot **stack on the same line item** (Plus-only); they coexist on different products. Suppression (highest-tier-only) is enforced **server-side** by `/validate` handing out a single code; a lower-tier code discovered manually cannot stack with the highest-tier code on the same gift line because Shopify resolves the conflict. `orderDiscounts` and `shippingDiscounts` are also true.
 
 ### Decision: qualifying scope is a smart collection; gift products are INCLUDED (model C)
 
@@ -172,11 +172,11 @@ Locked decisions (unchanged from Stage A):
   collection is correct — below.)
 - **Single shared qualifying collection** (`fge-qualifying`): with only one active campaign, one shared
   smart collection serves it. No per-campaign collections.
-- **`combinesWith.productDiscounts:false` stays** — a free gift should NOT stack with another product
-  discount; "not combinable" is the intended default. PRODUCTION LAUNCH-GATE CHECK (dev can't
-  reproduce; no Kite): a Kite "BOGO 50%" runs in prod and is itself BXGY — verify in production which
-  one wins when a cart qualifies for both, and that it isn't confusing. FUTURE: a per-campaign "allow
-  combining" toggle (default off).
+- **`combinesWith.productDiscounts:true`** — FGE gift codes allow product-discount combination so they
+  coexist with other BXGY discounts (e.g. Kite BOGO) on different line items. On Advanced, two product
+  discounts cannot stack on the same line (Plus-only); they coexist on different products. Verified
+  live: with both sides allowing product-discount combination, Kite keeps its discount on Kite products
+  and FGE's gift discount applies to FGE's gift products; neither removes the other.
 - **Channel/availability scope = `read_publications`** (CORRECTED — `read_products` alone is denied;
   Stage E §5c). `Product.publishedOnPublication(<Online Store>)` gives the channel-publication boolean
   but the prod token got `ACCESS_DENIED` until `read_publications` was added (requires re-consent). We do

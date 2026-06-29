@@ -51,7 +51,7 @@ const baseInput: ScopedGiftDiscountInput = {
   minimumSubtotal: money(10000, 'USD'),
   qualifyingCollectionId: COLLECTION,
   startsAt: '2026-06-01T00:00:00.000Z',
-  combinesWith: { productDiscounts: false, orderDiscounts: true, shippingDiscounts: true },
+  combinesWith: { productDiscounts: true, orderDiscounts: true, shippingDiscounts: true },
 };
 
 const createOk = {
