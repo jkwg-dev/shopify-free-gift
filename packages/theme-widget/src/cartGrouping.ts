@@ -72,6 +72,15 @@ function isZeroedByOurCode(line: RawCartLine, ourCode: string | null): boolean {
   return line.finalLinePrice === 0 && ourCode !== null && line.allocationTitles.includes(ourCode);
 }
 
+// Stage 2 (defect B): the line keys to zero when a buy delete/reduce orphans the gift — the
+// reconcile-OWNED gift lines only (realized $0 gets + not-yet-free lingering), NEVER a raw `_fge_gift`
+// marker. An issue-#6 paid unit (marked, WITH a zeroed same-variant sibling) is classified into a
+// BuyRow (readOnlyIndexes), not into gets/lingering, so it is never returned here — a paid unit the
+// shopper bought is never deleted by the merged-buy control.
+export function giftLineKeysToRemove(plan: GroupingPlan): string[] {
+  return [...plan.gets.map((g) => g.key), ...plan.lingering.map((l) => l.key)];
+}
+
 // Classify every line and merge the buys. Pure + order-preserving (DOM correlates by `index`).
 export function classifyAndGroup(
   lines: readonly RawCartLine[],

@@ -145,6 +145,61 @@ export async function setMergedQuantity(
   return { ok: false, status: res.status, body };
 }
 
+// Stage 2 (defect B): atomically zero a set of line keys in ONE cart/update.js. Used to remove the
+// reconcile-owned gift line(s) the merged-buy edit orphans (an AND tier removes both gifts together —
+// one atomic update, never a per-line loop, so an intermediate "one gift still non-free" state that the
+// VF would reject never exists). `keys` MUST be gift-line keys only (gets ∪ lingering), never a paid line.
+export async function removeLines(
+  post: CartPost,
+  keys: readonly string[],
+): Promise<MergedQuantityResult> {
+  if (keys.length === 0) return { ok: true, status: 200 }; // nothing to remove — no-op.
+  const updates: Record<string, number> = {};
+  for (const k of keys) updates[k] = 0;
+  const res = await post('cart/update.js', { updates });
+  if (res.ok) return { ok: true, status: res.status };
+  const body = await res.text();
+  logFailure(`cart/update.js gift-removal failed (${res.status})`, body);
+  return { ok: false, status: res.status, body };
+}
+
+export type MergedBuyEditResult = {
+  // true => the buy edit is now reflected in the cart; false => caller must roll back its optimistic UI.
+  readonly applied: boolean;
+  // The raw response body of the FAILING write, for a display-only message (logic never branches on it).
+  readonly failureBody: string | null;
+};
+
+// Stage 2 (defect B): apply a merged buy-row edit to the absolute target T, removing the orphaned gift
+// first if the edit drops the cart below the gift's tier. PURE w.r.t. the DOM — `post` and `readGiftKeys`
+// are injected so this is unit-testable. Flow (see docs/cart-two-group-grouping-design.md §M):
+//   1. Attempt 1 — BUY-ONLY write. A within-tier reduce succeeds here (one write, no gift touched).
+//   2. On any non-200, gate the retry on whether gift lines EXIST NOW (readGiftKeys), NOT on the 422 body
+//      (a 422 can have other causes; core logic must never depend on the body text). No gift lines => fail.
+//   3. Gift-FIRST atomic sequence — Step A zeroes the orphaned gift key(s) while the cart STILL qualifies
+//      (no marked line remains => the VF passes); Step B applies the buy target (now below threshold => no
+//      marked line => the VF passes). Gift-first guarantees every intermediate cart is VF-valid, with no
+//      assumption about WHEN the VF evaluates a combined update.
+// On any failure the cart is left as the last successful write; the caller re-validates via reconcile.
+export async function applyMergedBuyEdit(
+  post: CartPost,
+  writableKeys: readonly string[],
+  targetQty: number,
+  readGiftKeys: () => Promise<readonly string[]>,
+): Promise<MergedBuyEditResult> {
+  const r1 = await setMergedQuantity(post, writableKeys, targetQty);
+  if (r1.ok) return { applied: true, failureBody: null };
+
+  const giftKeys = await readGiftKeys();
+  if (giftKeys.length === 0) return { applied: false, failureBody: r1.body ?? null };
+
+  const rA = await removeLines(post, giftKeys);
+  if (!rA.ok) return { applied: false, failureBody: rA.body ?? null };
+  const rB = await setMergedQuantity(post, writableKeys, targetQty);
+  if (!rB.ok) return { applied: false, failureBody: rB.body ?? null };
+  return { applied: true, failureBody: null };
+}
+
 // The gift VARIANT GIDs that FAILED to add (e.g. 422 — unpublished/sold-out). Feeds the chooser's
 // runtime `unavailableVariantIds` so the option is disabled + noted and never shown as added.
 export function failedAddVariantIds(failures: readonly CartMutationFailure[]): string[] {

@@ -236,6 +236,9 @@
   function isZeroedByOurCode(line, ourCode) {
     return line.finalLinePrice === 0 && ourCode !== null && line.allocationTitles.includes(ourCode);
   }
+  function giftLineKeysToRemove(plan) {
+    return [...plan.gets.map((g) => g.key), ...plan.lingering.map((l) => l.key)];
+  }
   function classifyAndGroup(lines, ourCode) {
     const zeroedVariantIds = /* @__PURE__ */ new Set();
     for (const line of lines) {
@@ -447,21 +450,32 @@
       for (const b of [dec, inc, del]) b.disabled = d;
       wrap.classList.toggle("is-busy", d);
     };
+    const repaint = (q) => {
+      qtyEl.textContent = String(q);
+      if (q === 0) {
+        node.style.display = "none";
+        node.setAttribute("data-fge-merged-removed", "");
+      } else {
+        node.style.display = "";
+        node.removeAttribute("data-fge-merged-removed");
+        setLineTotals(node, Math.round(perUnitFinal * q), Math.round(perUnitOriginal * q));
+      }
+    };
     const onAct = (target) => {
       if (inFlight) return;
       inFlight = true;
       setDisabled(true);
+      const prev = current;
       current = Math.max(0, target);
-      qtyEl.textContent = String(current);
-      if (current === 0) {
-        node.style.display = "none";
-        node.setAttribute("data-fge-merged-removed", "");
-      } else {
-        setLineTotals(node, Math.round(perUnitFinal * current), Math.round(perUnitOriginal * current));
-      }
-      Promise.resolve(onChange(writableKeys, current)).finally(() => {
+      repaint(current);
+      Promise.resolve(onChange(writableKeys, current)).then((applied) => {
+        if (applied === false) {
+          current = prev;
+          repaint(prev);
+        }
+      }).finally(() => {
         inFlight = false;
-        if (node.isConnected && current > 0) setDisabled(false);
+        if (node.isConnected) setDisabled(false);
       });
     };
     dec.addEventListener("click", () => onAct(current - 1));
@@ -672,6 +686,28 @@
     logFailure(`cart/update.js merged-qty failed (${res.status})`, body);
     return { ok: false, status: res.status, body };
   }
+  async function removeLines(post, keys) {
+    if (keys.length === 0) return { ok: true, status: 200 };
+    const updates = {};
+    for (const k of keys) updates[k] = 0;
+    const res = await post("cart/update.js", { updates });
+    if (res.ok) return { ok: true, status: res.status };
+    const body = await res.text();
+    logFailure(`cart/update.js gift-removal failed (${res.status})`, body);
+    return { ok: false, status: res.status, body };
+  }
+  async function applyMergedBuyEdit(post, writableKeys, targetQty, readGiftKeys) {
+    var _a2, _b2, _c2;
+    const r1 = await setMergedQuantity(post, writableKeys, targetQty);
+    if (r1.ok) return { applied: true, failureBody: null };
+    const giftKeys = await readGiftKeys();
+    if (giftKeys.length === 0) return { applied: false, failureBody: (_a2 = r1.body) != null ? _a2 : null };
+    const rA = await removeLines(post, giftKeys);
+    if (!rA.ok) return { applied: false, failureBody: (_b2 = rA.body) != null ? _b2 : null };
+    const rB = await setMergedQuantity(post, writableKeys, targetQty);
+    if (!rB.ok) return { applied: false, failureBody: (_c2 = rB.body) != null ? _c2 : null };
+    return { applied: true, failureBody: null };
+  }
   function failedAddVariantIds(failures) {
     return failures.filter((f) => f.kind === "add").map((f) => f.variantId);
   }
@@ -679,6 +715,35 @@
     var _a2;
     const c = globalThis.console;
     (_a2 = c == null ? void 0 : c.warn) == null ? void 0 : _a2.call(c, `[free-gift] ${message}`, body.slice(0, 300));
+  }
+
+  // src/notice.ts
+  var NOTICE_ID = "fge-notice";
+  var VISIBLE_MS = 6e3;
+  var hideTimer;
+  function showNotice(message) {
+    const doc = globalThis.document;
+    if (doc === void 0 || message.trim() === "") {
+      return;
+    }
+    let el = doc.getElementById(NOTICE_ID);
+    if (el === null) {
+      el = doc.createElement("div");
+      el.id = NOTICE_ID;
+      el.className = "fge fge-notice";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "assertive");
+      doc.body.append(el);
+    }
+    el.textContent = message;
+    el.classList.add("is-visible");
+    if (hideTimer !== void 0) {
+      clearTimeout(hideTimer);
+    }
+    hideTimer = setTimeout(() => {
+      el == null ? void 0 : el.classList.remove("is-visible");
+      hideTimer = void 0;
+    }, VISIBLE_MS);
   }
 
   // src/choices.ts
@@ -1529,6 +1594,17 @@ body.fge-checkout-pending .cart__checkout-button::after{
 .fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; }
 /* A marked overlap unit kept read-only in the buys group (issue-#6 / \xA7M): subtly de-emphasized. */
 .fge-buy-line--locked{ opacity:.9; }
+
+/* --- Stage 2 (defect B.1): a transient failure notice (e.g. a VF-blocked update). Fixed bottom-center
+   toast, appended to <body>; hidden until is-visible. Reduced-motion friendly (opacity only). --- */
+.fge-notice{
+  position:fixed; left:50%; bottom:20px; transform:translateX(-50%);
+  z-index:2147483000; max-width:min(92vw,420px); padding:11px 16px;
+  font-size:13px; font-weight:600; line-height:1.35; color:#ffffff;
+  background:#1a1a1a; border-radius:10px; box-shadow:0 6px 24px rgba(0,0,0,.28);
+  opacity:0; pointer-events:none; transition:opacity .2s ease;
+}
+.fge-notice.is-visible{ opacity:1; }
 `;
   function injectStyles() {
     const doc = globalThis.document;
@@ -1822,16 +1898,51 @@ body.fge-checkout-pending .cart__checkout-button::after{
       await new Promise((resolve) => idleResolvers.push(resolve));
     }
   }
+  function nudgeDawn() {
+    var _a2;
+    (_a2 = w.publish) == null ? void 0 : _a2.call(w, CART_UPDATE_EVENT, { source: SOURCE });
+  }
+  async function currentGiftLineKeys() {
+    try {
+      const cart = await getCart();
+      return giftLineKeysToRemove(classifyAndGroup(toGroupingLines(cart), lastDiscount));
+    } catch {
+      return [];
+    }
+  }
+  function surfaceMergedWriteFailure(failureBody) {
+    const fallback = "Couldn't update your cart \u2014 your free gift requires this item.";
+    let message = fallback;
+    if (failureBody !== null) {
+      try {
+        const parsed = JSON.parse(failureBody);
+        if (typeof parsed.description === "string" && parsed.description !== "") {
+          message = parsed.description;
+        } else if (typeof parsed.message === "string" && parsed.message !== "") {
+          message = parsed.message;
+        }
+      } catch {
+      }
+    }
+    showNotice(message);
+    announcePending(message);
+  }
   async function onMergedBuyQtyChange(writableKeys, targetQty) {
-    if (perceptionConfig === null) return;
+    if (perceptionConfig === null) return false;
     await whenReconcileIdle();
     selfMutating = true;
+    let result;
     try {
-      await setMergedQuantity(cartPost, writableKeys, targetQty);
+      result = await applyMergedBuyEdit(cartPost, writableKeys, targetQty, currentGiftLineKeys);
     } finally {
       selfMutating = false;
     }
+    if (!result.applied) {
+      surfaceMergedWriteFailure(result.failureBody);
+    }
+    nudgeDawn();
     schedule(perceptionConfig);
+    return result.applied;
   }
   async function initPerception(config) {
     injectStyles();

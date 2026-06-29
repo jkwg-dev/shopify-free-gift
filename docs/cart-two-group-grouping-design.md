@@ -221,3 +221,69 @@ carries no revenue risk. This supersedes the looser §M.1 wording ("the buys row
 full-price unit but its control operates only on the unmarked units"): the displayed qty/price of the
 **interactive** row are the controllable units only; the marked unit is shown on its own read-only line,
 not folded into the interactive row.
+
+## N. RESOLVED — defect A (stale Dawn totals) + defect B (VF-blocked merged delete/reduce)
+
+Found on dev verify of the first Stage-2 build; design red-teamed before re-coding (write-safety lens
+returned a blocker + serious findings, all folded in below). The VF (`extensions/checkout-validation`)
+blocks IFF a line carrying the `_fge_gift` marker has `total > 0` — it keys on the **marker**, not the
+discount allocation.
+
+### Defect A — stale Dawn footer/badge after a SUCCESSFUL within-tier merged write
+
+A raw `cart/update.js` fires **no** Dawn pubsub / Section Rendering, and a within-tier edit triggers no
+reconcile mutation (so reconcile's conditional `nudge` never fires) — Dawn's footer Subtotal + cart-count
+badge never refresh, contradicting the widget-owned line total.
+
+**Fix A:** after **any** successful merged write, explicitly publish `cart-update {source: SOURCE}`
+(`nudgeDawn`). Dawn's `CartItems.onCartUpdate` re-fetches sections → footer + badge refresh from the
+server cart. Safe: the section **GET** isn't matched by the storefront fetch-patch regex (no reconcile
+re-trigger), and our own subscriber ignores `source===SOURCE` (no echo loop). The optimistic
+widget-owned repaint stays for instant feedback before Dawn's async re-render lands.
+
+### Defect B — a merged delete/reduce below the gift's tier is VF-blocked
+
+Removing the qualifying purchase orphans the `_fge_gift` line (now non-free) → the atomic `cart/update.js`
+**422s**. The first build left the optimistic UI diverged (empty purchase shown while the cart still held
+the goods). Two parts, both required:
+
+**B.1 — never leave the UI diverged (MUST).** On any final non-200 merged write: (1) the stepper does a
+**self-contained DOM rollback** to the pre-click state (restore qty + line total, un-hide a deleted row,
+re-enable) — it does NOT depend on a re-render, so a non-Dawn theme self-heals too; (2) the storefront
+`nudgeDawn`s (convergence on Dawn) and **surfaces the failure message** (a transient `fge-notice` toast +
+AT announce; message parsed from the response body, **display-only** — no logic branches on it).
+
+**B.2 — let the shopper actually empty their cart (the real fix): 422-triggered, gift-FIRST atomic
+sequence.** `applyMergedBuyEdit` (pure, unit-tested):
+
+1. **Attempt 1 — buy-only.** A within-tier reduce succeeds here (one write, gift untouched).
+2. On any non-200, gate the retry on whether **gift lines EXIST NOW** (`giftLineKeysToRemove` over a fresh
+   `cart.js` classify) — **NOT** on the 422 body (a 422 can have other causes; never branch on the text).
+   No gift lines → report failure → B.1 rollback.
+3. **Gift-first atomic sequence:** **Step A** zeroes the orphaned gift key(s) in ONE `cart/update.js`
+   (gets ∪ lingering only — an AND tier removes both gifts together; an issue-#6 **paid** unit is in a
+   `readOnlyIndexes`/buy row, never in this set, so it is never deleted) while the cart STILL qualifies →
+   no marked line remains → VF passes. **Step B** applies the buy target (now below threshold) → no marked
+   line → VF passes. Gift-first guarantees every intermediate cart is VF-valid, with **no** assumption
+   about when the VF evaluates a combined update. On any step failure → B.1 rollback.
+
+After the edit (success or failure) the storefront re-validates via `schedule(reconcile)` — so a tier
+**downgrade** re-adds the correct lower-tier gift, and a stale code is cleared. Write-safety preserved:
+the only `_fge_gift` keys ever written are gets ∪ lingering, only after the server's own 422 proves the
+gift is orphaned, only to **remove** them — never a paid unit, never an in-place re-price.
+
+**Scoped carve-out vs ⓥ3:** ⓥ3 ("a buy control never writes a marked key") is amended for exactly this
+case — the gift removal targets reconcile-owned gift lines (gets ∪ lingering, classified, never raw
+markers), gated on the server's 422 + gift-line existence, followed immediately by reconcile.
+
+**Deferred (separate follow-up, not Stage 2):** the **generic reconcile** removal path
+(`applyCartPlan` per-line `cart/change.js`) can deadlock an **AND-tier drop-below-threshold** under the
+write-blocking VF (removing one gift leaves the other orphaned → 422). This is **pre-existing** (hits any
+AND-tier reduction, independent of the merged stepper) and touching `reconcileLoop`/`applyCartPlan` is
+outside the Stage-2 guardrail. The merged-stepper path is self-contained and correct (Step A is atomic).
+
+**Open validate-assumption (does NOT block Stage 2):** whether the live whole-cart "anything" campaign
+can produce a marker on a **full-price split** (issue-#6 reachable). If so, a below-threshold reduce there
+is refused (Step A 422s because the paid marked line remains) → B.1 rollback + message — worst case is
+"can't delete, message shown," **never a leak**. If common, a separate fix (removable read-only marked
+line / marker-allocation) is filed.

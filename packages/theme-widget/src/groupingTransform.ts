@@ -168,10 +168,12 @@ function hideNativeStepper(node: HTMLElement): void {
   if (input instanceof HTMLInputElement) input.readOnly = true; // belt-and-suspenders if the widget shows
 }
 
+// Resolves true if the absolute-target write was applied to the cart, false if it failed — on false the
+// stepper rolls its optimistic repaint back to the pre-click state (self-contained, no re-render needed).
 export type MergedQtyChange = (
   writableKeys: readonly string[],
   targetQty: number,
-) => Promise<void> | void;
+) => Promise<boolean> | boolean;
 
 // Inject the interactive merged +/−/delete stepper into a SPLIT buy row's qty cell, wired to the
 // absolute-target write callback (§4). The widget OWNS the displayed qty + price (ⓥ1): a click
@@ -225,29 +227,41 @@ function injectMergedStepper(
     for (const b of [dec, inc, del]) b.disabled = d;
     wrap.classList.toggle('is-busy', d);
   };
+  // Repaint the row to an absolute quantity q: qty text + line total, hiding the whole row at q==0.
+  const repaint = (q: number): void => {
+    qtyEl.textContent = String(q);
+    if (q === 0) {
+      node.style.display = 'none';
+      node.setAttribute('data-fge-merged-removed', '');
+    } else {
+      node.style.display = '';
+      node.removeAttribute('data-fge-merged-removed');
+      setLineTotals(node, Math.round(perUnitFinal * q), Math.round(perUnitOriginal * q));
+    }
+  };
   const onAct = (target: number): void => {
     if (inFlight) return; // §5.1: ignore compounding clicks while a write is in flight
     inFlight = true;
     setDisabled(true);
+    const prev = current; // pre-click state, for a self-contained rollback on failure (B.1)
     current = Math.max(0, target);
     // Optimistic widget-owned repaint (ⓥ1): qty + line total reflect T at once; siblings were already
     // hidden when the row was grouped. A delete (T==0) hides the whole interactive row.
-    qtyEl.textContent = String(current);
-    if (current === 0) {
-      node.style.display = 'none';
-      node.setAttribute('data-fge-merged-removed', '');
-    } else {
-      setLineTotals(
-        node,
-        Math.round(perUnitFinal * current),
-        Math.round(perUnitOriginal * current),
-      );
-    }
-    Promise.resolve(onChange(writableKeys, current)).finally(() => {
-      inFlight = false;
-      // Re-enable only if this row survived (a tier-change re-render replaces the node entirely).
-      if (node.isConnected && current > 0) setDisabled(false);
-    });
+    repaint(current);
+    Promise.resolve(onChange(writableKeys, current))
+      .then((applied) => {
+        if (applied === false) {
+          // B.1 self-contained rollback — restore the pre-click row WITHOUT depending on a re-render
+          // (a non-Dawn theme may not repaint). The storefront also surfaces the failure message + nudges.
+          current = prev;
+          repaint(prev);
+        }
+      })
+      .finally(() => {
+        inFlight = false;
+        // Re-enable if the row still exists (a tier-change re-render replaces the node, leaving it stale).
+        if (node.isConnected) setDisabled(false);
+      });
   };
   dec.addEventListener('click', () => onAct(current - 1));
   inc.addEventListener('click', () => onAct(current + 1));

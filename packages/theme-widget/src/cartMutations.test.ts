@@ -2,7 +2,9 @@ import type { GiftReconciliation } from '@free-gift-engine/core';
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyCartPlan,
+  applyMergedBuyEdit,
   failedAddVariantIds,
+  removeLines,
   setMergedQuantity,
   type CartMutationFailure,
   type CartPost,
@@ -190,6 +192,94 @@ describe('setMergedQuantity — atomic merged buy-line write (defect #2)', () =>
     expect(result).toEqual({ ok: false, status: 422, body: 'cart locked' });
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('removeLines — atomic gift removal (defect B, Step A)', () => {
+  it('zeroes ALL given keys in ONE cart/update.js (AND tier: both gifts together)', async () => {
+    const { post, calls } = recordingPost(() => res(true));
+
+    const result = await removeLines(post, ['g1', 'g2']);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.path).toBe('cart/update.js');
+    expect(calls[0]!.body).toEqual({ updates: { g1: 0, g2: 0 } });
+    expect(result.ok).toBe(true);
+  });
+
+  it('empty keys is a no-op (never posts)', async () => {
+    const { post, calls } = recordingPost(() => res(true));
+    const result = await removeLines(post, []);
+    expect(calls).toHaveLength(0);
+    expect(result.ok).toBe(true);
+  });
+
+  it('surfaces a failed removal (ok:false + body) without throwing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { post } = recordingPost(() => res(false, 422, 'blocked'));
+    const result = await removeLines(post, ['g1']);
+    expect(result).toEqual({ ok: false, status: 422, body: 'blocked' });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe('applyMergedBuyEdit — buy edit with gift-first orphan handling (defect B)', () => {
+  const giftKeys = (...keys: string[]): (() => Promise<string[]>) => {
+    return () => Promise.resolve(keys);
+  };
+
+  it('within-tier reduce: Attempt 1 (buy-only) succeeds in ONE write, gift never touched', async () => {
+    const readGifts = vi.fn(giftKeys('g1'));
+    const { post, calls } = recordingPost(() => res(true));
+
+    const result = await applyMergedBuyEdit(post, ['k0', 'k1'], 6, readGifts);
+
+    expect(result).toEqual({ applied: true, failureBody: null });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.body).toEqual({ updates: { k0: 6, k1: 0 } });
+    expect(readGifts).not.toHaveBeenCalled(); // no 422 => no gift read, no gift touched
+  });
+
+  it('below-threshold reduce: Attempt 1 422s => gift-FIRST (Step A zero gifts, Step B buy)', async () => {
+    let firstBuy = true;
+    const { post, calls } = recordingPost((path, body) => {
+      const u = (body as { updates: Record<string, number> }).updates;
+      // The buy-only attempt 1 (only writableKeys present) 422s; the gift removal + final buy succeed.
+      if (path === 'cart/update.js' && u['k0'] !== undefined && u['g1'] === undefined && firstBuy) {
+        firstBuy = false;
+        return res(false, 422, 'gift orphaned');
+      }
+      return res(true);
+    });
+
+    const result = await applyMergedBuyEdit(post, ['k0', 'k1'], 0, giftKeys('g1', 'g2'));
+
+    expect(result).toEqual({ applied: true, failureBody: null });
+    expect(calls.map((c) => c.body)).toEqual([
+      { updates: { k0: 0, k1: 0 } }, // attempt 1 (buy-only) — 422
+      { updates: { g1: 0, g2: 0 } }, // Step A — atomic gift removal (cart still qualifies)
+      { updates: { k0: 0, k1: 0 } }, // Step B — buy write (now below threshold)
+    ]);
+  });
+
+  it('422 with NO gift lines present => no retry, reports failure (caller rolls back)', async () => {
+    const { post, calls } = recordingPost(() => res(false, 422, 'some other error'));
+
+    const result = await applyMergedBuyEdit(post, ['k0'], 2, giftKeys());
+
+    expect(result).toEqual({ applied: false, failureBody: 'some other error' });
+    expect(calls).toHaveLength(1); // only attempt 1; no gift keys => no gift-first sequence
+  });
+
+  it('gift-first Step A fails (e.g. issue-#6 marked paid line remains) => not applied, surfaces body', async () => {
+    // Attempt 1 422s; gift removal also 422s (a marked paid line still leaves the VF blocking).
+    const { post, calls } = recordingPost(() => res(false, 422, 'still blocked'));
+
+    const result = await applyMergedBuyEdit(post, ['k0'], 0, giftKeys('g1'));
+
+    expect(result).toEqual({ applied: false, failureBody: 'still blocked' });
+    expect(calls).toHaveLength(2); // attempt 1 (422) + Step A (422) — no Step B
   });
 });
 

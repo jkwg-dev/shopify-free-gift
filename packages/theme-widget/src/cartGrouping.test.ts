@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { classifyAndGroup, mergeBuysByVariant, type RawCartLine } from './cartGrouping.js';
+import {
+  classifyAndGroup,
+  giftLineKeysToRemove,
+  mergeBuysByVariant,
+  type RawCartLine,
+} from './cartGrouping.js';
 
 const OUR = 'OURCODE';
 
@@ -171,6 +176,49 @@ describe('classifyAndGroup', () => {
     );
     expect(plan.gets).toEqual([]);
     expect(plan.lingering.map((l) => l.variantId)).toEqual([9]);
+  });
+});
+
+describe('giftLineKeysToRemove (defect B — gift-first atomic removal key set)', () => {
+  it('common case: returns the realized $0 gift key', () => {
+    const plan = classifyAndGroup([line({ index: 0, variantId: 1, quantity: 2 }), gift(1, 9)], OUR);
+    expect(giftLineKeysToRemove(plan)).toEqual(['k1']);
+  });
+
+  it('AND tier: returns BOTH gift keys (removed together in one atomic update)', () => {
+    const plan = classifyAndGroup([line({ index: 0, variantId: 1 }), gift(1, 8), gift(2, 9)], OUR);
+    expect(giftLineKeysToRemove(plan)).toEqual(['k1', 'k2']);
+  });
+
+  it('lingering gift (pending, not yet $0) is included', () => {
+    const plan = classifyAndGroup(
+      [
+        line({ index: 0, variantId: 1 }),
+        line({ index: 1, variantId: 9, finalLinePrice: 1000, marked: true }),
+      ],
+      OUR,
+    );
+    expect(giftLineKeysToRemove(plan)).toEqual(['k1']);
+  });
+
+  it('issue-#6: the MARKED paid unit is EXCLUDED — only the $0 gets key is returned', () => {
+    const zeroed = line({
+      index: 0,
+      variantId: 9,
+      finalLinePrice: 0,
+      marked: false,
+      allocationTitles: [OUR],
+    });
+    const paidMarked = line({ index: 1, variantId: 9, finalLinePrice: 1000, marked: true });
+    const plan = classifyAndGroup([zeroed, paidMarked], OUR);
+    // k1 (the marked paid unit) must NOT be in the removal set — it is a purchase, not the gift.
+    expect(giftLineKeysToRemove(plan)).toEqual(['k0']);
+    expect(plan.buys[0]!.readOnlyIndexes).toEqual([1]);
+  });
+
+  it('no gift lines => empty set (so the gift-first retry never fires)', () => {
+    const plan = classifyAndGroup([line({ index: 0, variantId: 1 })], OUR);
+    expect(giftLineKeysToRemove(plan)).toEqual([]);
   });
 });
 

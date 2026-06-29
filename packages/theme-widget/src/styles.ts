@@ -236,6 +236,17 @@ body.fge-checkout-pending .cart__checkout-button::after{
 .fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; }
 /* A marked overlap unit kept read-only in the buys group (issue-#6 / §M): subtly de-emphasized. */
 .fge-buy-line--locked{ opacity:.9; }
+
+/* --- Stage 2 (defect B.1): a transient failure notice (e.g. a VF-blocked update). Fixed bottom-center
+   toast, appended to <body>; hidden until is-visible. Reduced-motion friendly (opacity only). --- */
+.fge-notice{
+  position:fixed; left:50%; bottom:20px; transform:translateX(-50%);
+  z-index:2147483000; max-width:min(92vw,420px); padding:11px 16px;
+  font-size:13px; font-weight:600; line-height:1.35; color:#ffffff;
+  background:#1a1a1a; border-radius:10px; box-shadow:0 6px 24px rgba(0,0,0,.28);
+  opacity:0; pointer-events:none; transition:opacity .2s ease;
+}
+.fge-notice.is-visible{ opacity:1; }
 `;
 
 export function injectStyles(): void {

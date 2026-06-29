@@ -15,9 +15,15 @@ import {
   type ValidateResult,
 } from '@free-gift-engine/core';
 import { mountCartContexts, type CartSection } from './cartSections.js';
-import { classifyAndGroup, type GroupingPlan, type RawCartLine } from './cartGrouping.js';
+import {
+  classifyAndGroup,
+  giftLineKeysToRemove,
+  type GroupingPlan,
+  type RawCartLine,
+} from './cartGrouping.js';
 import { applyTwoGroupLayout } from './groupingTransform.js';
-import { failedAddVariantIds, setMergedQuantity } from './cartMutations.js';
+import { applyMergedBuyEdit, failedAddVariantIds } from './cartMutations.js';
+import { showNotice } from './notice.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
@@ -392,25 +398,72 @@ async function whenReconcileIdle(): Promise<void> {
   }
 }
 
-// Stage 2 (defect #2): the interactive merged buy stepper's absolute-target write. Sequenced so it
-// never overlaps a reconcile (§5): wait for reconcile idle, then do ONE atomic `cart/update.js` under
-// `selfMutating` (so the fetch-patch doesn't re-trigger us), then explicitly re-validate the tier — a
-// drop below threshold removes the gift + clears the code (and nudges Dawn to re-render). Write-safety:
-// `writableKeys` carries only UNMARKED line keys (cartGrouping ⓥ3), so a `_fge_gift` line is never
-// zeroed. Reconcile only ever writes gift lines, so a user's buy edit can never be reverted.
+// Nudge Dawn to re-render its line list + footer subtotal + cart-count badge from the server cart
+// (defect A). A raw cart/update.js fires no pubsub, so within-tier edits would otherwise leave Dawn's
+// totals stale. Tagged with our SOURCE so our own subscriber ignores the echo; Dawn's CartItems re-fetch
+// is a section GET that the fetch-patch regex doesn't match, so it never re-triggers a reconcile.
+function nudgeDawn(): void {
+  w.publish?.(CART_UPDATE_EVENT, { source: SOURCE });
+}
+
+// The reconcile-owned gift line keys currently in the cart (realized $0 gets + lingering), for the
+// gift-first orphan removal (defect B). Pure classification — an issue-#6 paid unit is never included.
+async function currentGiftLineKeys(): Promise<readonly string[]> {
+  try {
+    const cart = await getCart();
+    return giftLineKeysToRemove(classifyAndGroup(toGroupingLines(cart), lastDiscount));
+  } catch {
+    return [];
+  }
+}
+
+// Surface a cart-write failure to the shopper (defect B.1). Display-only: the message text is parsed
+// from the response body, but NO control flow depends on it (the retry is gated on gift-line existence).
+function surfaceMergedWriteFailure(failureBody: string | null): void {
+  const fallback = "Couldn't update your cart — your free gift requires this item.";
+  let message = fallback;
+  if (failureBody !== null) {
+    try {
+      const parsed = JSON.parse(failureBody) as { description?: unknown; message?: unknown };
+      if (typeof parsed.description === 'string' && parsed.description !== '') {
+        message = parsed.description;
+      } else if (typeof parsed.message === 'string' && parsed.message !== '') {
+        message = parsed.message;
+      }
+    } catch {
+      // Non-JSON body — keep the fallback.
+    }
+  }
+  showNotice(message);
+  announcePending(message); // also announce to assistive tech
+}
+
+// Stage 2 (defect #2 + B): the interactive merged buy stepper's absolute-target write. Sequenced so it
+// never overlaps a reconcile (§5): wait for reconcile idle, then run the buy edit under `selfMutating`
+// (so the fetch-patch doesn't re-trigger us). The edit is buy-only first; if it 422s and the cart still
+// holds gift lines, it removes the orphaned gift FIRST then applies the buy (gift-first atomic sequence,
+// docs §M) so a legitimate "remove my purchase" is never VF-blocked. Write-safety: `writableKeys` are
+// UNMARKED keys, and the gift removal targets only gets ∪ lingering (never a paid unit). Returns whether
+// the edit applied — the stepper rolls back its optimistic UI on false. Always re-validates via reconcile.
 async function onMergedBuyQtyChange(
   writableKeys: readonly string[],
   targetQty: number,
-): Promise<void> {
-  if (perceptionConfig === null) return;
+): Promise<boolean> {
+  if (perceptionConfig === null) return false;
   await whenReconcileIdle();
   selfMutating = true;
+  let result: { applied: boolean; failureBody: string | null };
   try {
-    await setMergedQuantity(cartPost, writableKeys, targetQty);
+    result = await applyMergedBuyEdit(cartPost, writableKeys, targetQty, currentGiftLineKeys);
   } finally {
     selfMutating = false;
   }
-  schedule(perceptionConfig); // re-validate tier for the new cart (may add/remove gifts + nudge Dawn)
+  if (!result.applied) {
+    surfaceMergedWriteFailure(result.failureBody);
+  }
+  nudgeDawn(); // defect A: refresh footer + badge (success) / converge from the real cart (failure)
+  schedule(perceptionConfig); // re-validate tier: re-add a lower-tier gift / clear a stale code as needed
+  return result.applied;
 }
 
 // Inject the two perception sections into EVERY present cart surface (drawer + full /cart page): a
