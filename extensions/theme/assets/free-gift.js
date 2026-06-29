@@ -1944,6 +1944,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   async function reconcileOnce(config) {
     selfMutating = true;
     beginGiftPending();
+    const lastPriorCode = lastDiscount;
     try {
       const outcome = await reconcileGiftCart(
         {
@@ -1988,7 +1989,10 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       }
       markGiftWorkDone();
       renderPerception(config);
-      await refreshDawnTotals();
+      const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
+      if (cartMutated) {
+        await refreshDawnTotals();
+      }
       await refreshGrouping();
     } finally {
       markGiftWorkDone();

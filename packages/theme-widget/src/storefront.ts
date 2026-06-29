@@ -209,6 +209,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
   // still picked up by the next pass's read + re-validate. getCart / /validate are not cart writes.
   selfMutating = true;
   beginGiftPending(); // INSTANT feedback the moment the reconcile begins (held >= PENDING_MIN_MS)
+  const lastPriorCode = lastDiscount;
   try {
     const outcome = await reconcileGiftCart(
       {
@@ -256,7 +257,14 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     }
     markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
-    await refreshDawnTotals(); // refresh the full cart body so line items + subtotal match post-reconcile state
+    // Only refresh the cart body when the reconcile actually mutated the cart (added/removed a gift,
+    // changed the discount code). A no-op reconcile (cart already correct) skips the body refresh so
+    // it doesn't overwrite the theme's own section re-render with a stale sections response — that
+    // race caused the stepper to show an old qty and the gift to flash visible.
+    const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
+    if (cartMutated) {
+      await refreshDawnTotals();
+    }
     await refreshGrouping(); // recompute + re-apply the two-group line transform from the final cart
   } finally {
     markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
