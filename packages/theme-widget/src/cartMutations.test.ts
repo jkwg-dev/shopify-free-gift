@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyCartPlan,
   failedAddVariantIds,
+  setMergedQuantity,
   type CartMutationFailure,
   type CartPost,
   type PostResponse,
@@ -130,6 +131,65 @@ describe('applyCartPlan — remove path', () => {
     expect(result.failures).toEqual([
       { kind: 'remove', variantId: HIDDEN, status: 404, body: 'gone' },
     ]);
+  });
+});
+
+describe('setMergedQuantity — atomic merged buy-line write (defect #2)', () => {
+  it('folds the whole target onto the first key and zeroes the rest in ONE cart/update.js', async () => {
+    const { post, calls } = recordingPost(() => res(true));
+
+    const result = await setMergedQuantity(post, ['k0', 'k1', 'k2'], 5);
+
+    expect(calls).toHaveLength(1); // ONE request, never sequential per-key
+    expect(calls[0]!.path).toBe('cart/update.js');
+    expect(calls[0]!.body).toEqual({ updates: { k0: 5, k1: 0, k2: 0 } });
+    expect(result.ok).toBe(true);
+  });
+
+  it('delete (target 0) zeroes every key', async () => {
+    const { post, calls } = recordingPost(() => res(true));
+
+    await setMergedQuantity(post, ['k0', 'k1'], 0);
+
+    expect(calls[0]!.body).toEqual({ updates: { k0: 0, k1: 0 } });
+  });
+
+  it('single (unsplit) key still uses the atomic update path', async () => {
+    const { post, calls } = recordingPost(() => res(true));
+
+    await setMergedQuantity(post, ['k0'], 3);
+
+    expect(calls[0]!.body).toEqual({ updates: { k0: 3 } });
+  });
+
+  it('no controllable keys (all-marked group) is a no-op — never posts', async () => {
+    const { post, calls } = recordingPost(() => res(true));
+
+    const result = await setMergedQuantity(post, [], 2);
+
+    expect(calls).toHaveLength(0);
+    expect(result.ok).toBe(true);
+  });
+
+  it('clamps negatives/fractions to a whole, non-negative target', async () => {
+    const { post, calls } = recordingPost(() => res(true));
+
+    await setMergedQuantity(post, ['k0'], -1);
+    await setMergedQuantity(post, ['k1'], 2.9);
+
+    expect((calls[0]!.body as { updates: Record<string, number> }).updates).toEqual({ k0: 0 });
+    expect((calls[1]!.body as { updates: Record<string, number> }).updates).toEqual({ k1: 2 });
+  });
+
+  it('surfaces a failed write (returns ok:false + body, warns) without throwing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { post } = recordingPost(() => res(false, 422, 'cart locked'));
+
+    const result = await setMergedQuantity(post, ['k0', 'k1'], 4);
+
+    expect(result).toEqual({ ok: false, status: 422, body: 'cart locked' });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 

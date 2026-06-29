@@ -42,6 +42,9 @@ const PRICE_WRAPPER = '.cart-item__price-wrapper';
 const QTY_CELL_SELECTORS = ['.cart-item__quantity'];
 const QTY_INPUT_SELECTORS = ['.quantity__input', 'input[name="updates[]"]'];
 const QTY_BUTTON_SELECTORS = ['.quantity__button', 'cart-remove-button', '.button--tertiary'];
+// Native qty WIDGET (the whole stepper) — hidden on split rows so its per-split-key write (the source
+// of defect #2) can't fire; we inject our own merged control in the cell instead.
+const QTY_WIDGET_SELECTORS = ['quantity-input', '.quantity', '.cart-item__quantity-wrapper'];
 const REMOVE_SELECTORS = ['cart-remove-button', '.button--tertiary', '[id^="Remove-"]'];
 const DISCOUNT_SELECTORS = ['ul.discounts', '.cart-item__discounts', '.discounts'];
 const BADGE_HOST_SELECTORS = [TOTALS_SELECTOR, PRICE_WRAPPER, '.cart-item__price'];
@@ -144,6 +147,113 @@ function hideControls(node: HTMLElement): void {
   }
 }
 
+// A MARKED overlap unit that landed in a buy group (issue-#6 / §M): keep its price visible but
+// neutralize its controls — it is reconcile-owned, so a buy control must never write it. Distinct class
+// so it reads as a separate (locked) line, not folded into the interactive merged row.
+function renderReadOnlyBuyLine(node: HTMLElement): void {
+  node.classList.add('fge-buy-line--locked');
+  hideNativeStepper(node);
+}
+
+// Hide Dawn's native qty widget + per-line remove on a row (their write targets a SINGLE split key —
+// defect #2). Keeps the .cart-item__quantity CELL itself visible so we can inject our merged control.
+function hideNativeStepper(node: HTMLElement): void {
+  for (const sel of [...QTY_WIDGET_SELECTORS, ...REMOVE_SELECTORS]) {
+    node.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+      el.style.display = 'none';
+      el.setAttribute('aria-hidden', 'true');
+    });
+  }
+  const input = findFirst(node, QTY_INPUT_SELECTORS);
+  if (input instanceof HTMLInputElement) input.readOnly = true; // belt-and-suspenders if the widget shows
+}
+
+export type MergedQtyChange = (
+  writableKeys: readonly string[],
+  targetQty: number,
+) => Promise<void> | void;
+
+// Inject the interactive merged +/−/delete stepper into a SPLIT buy row's qty cell, wired to the
+// absolute-target write callback (§4). The widget OWNS the displayed qty + price (ⓥ1): a click
+// optimistically repaints this row to the new target T immediately (a raw cart/update.js does not make
+// Dawn redraw), then `onChange` performs the atomic write + a tier re-validate. T is ABSOLUTE, never a
+// delta: "+" → q+1, "−" → q−1 (q==1 ⇒ T=0 deletes, matching Dawn), "remove" → T=0. Buttons disable
+// while a write is in flight so compounding clicks can't compute T off a stale base (§5.1).
+function injectMergedStepper(
+  node: HTMLElement,
+  qty: number,
+  finalLinePrice: number,
+  originalLinePrice: number,
+  writableKeys: readonly string[],
+  onChange: MergedQtyChange,
+): void {
+  hideNativeStepper(node);
+  node.querySelector('.fge-merged-stepper')?.remove(); // defensive: never duplicate
+  const cell = findFirst(node, QTY_CELL_SELECTORS) ?? node;
+
+  // Per-unit prices for the optimistic repaint (linear; reconcile/Dawn re-render reconfirm the exact sum).
+  const perUnitFinal = qty > 0 ? finalLinePrice / qty : 0;
+  const perUnitOriginal = qty > 0 ? originalLinePrice / qty : 0;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'fge fge-merged-stepper';
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-label', 'Quantity');
+
+  const mkBtn = (act: 'dec' | 'inc' | 'del', label: string, text: string): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = act === 'del' ? 'fge-merged-stepper__remove' : 'fge-merged-stepper__btn';
+    b.setAttribute('data-fge-act', act);
+    b.setAttribute('aria-label', label);
+    b.textContent = text;
+    return b;
+  };
+  const dec = mkBtn('dec', 'Decrease quantity', '−');
+  const inc = mkBtn('inc', 'Increase quantity', '+');
+  const del = mkBtn('del', 'Remove item', 'Remove');
+  const qtyEl = document.createElement('span');
+  qtyEl.className = 'fge-merged-stepper__qty';
+  qtyEl.setAttribute('aria-live', 'polite');
+  qtyEl.textContent = String(qty);
+  wrap.append(dec, qtyEl, inc, del);
+  cell.append(wrap);
+
+  let current = qty;
+  let inFlight = false;
+  const setDisabled = (d: boolean): void => {
+    for (const b of [dec, inc, del]) b.disabled = d;
+    wrap.classList.toggle('is-busy', d);
+  };
+  const onAct = (target: number): void => {
+    if (inFlight) return; // §5.1: ignore compounding clicks while a write is in flight
+    inFlight = true;
+    setDisabled(true);
+    current = Math.max(0, target);
+    // Optimistic widget-owned repaint (ⓥ1): qty + line total reflect T at once; siblings were already
+    // hidden when the row was grouped. A delete (T==0) hides the whole interactive row.
+    qtyEl.textContent = String(current);
+    if (current === 0) {
+      node.style.display = 'none';
+      node.setAttribute('data-fge-merged-removed', '');
+    } else {
+      setLineTotals(
+        node,
+        Math.round(perUnitFinal * current),
+        Math.round(perUnitOriginal * current),
+      );
+    }
+    Promise.resolve(onChange(writableKeys, current)).finally(() => {
+      inFlight = false;
+      // Re-enable only if this row survived (a tier-change re-render replaces the node entirely).
+      if (node.isConnected && current > 0) setDisabled(false);
+    });
+  };
+  dec.addEventListener('click', () => onAct(current - 1));
+  inc.addEventListener('click', () => onAct(current + 1));
+  del.addEventListener('click', () => onAct(0));
+}
+
 // Rewrite the theme-rendered discount label to "Free gift" when it is OUR code (a merchant's other
 // promo is left untouched). Returns whether a label was found + relabeled.
 function relabelOurDiscount(node: HTMLElement, ourCode: string | null): boolean {
@@ -194,8 +304,10 @@ function makeHeader(line: HTMLElement, text: string, sub: string | null): HTMLEl
 
 export type GroupingTransformOptions = {
   readonly ourCode: string | null;
-  // Stage 1 only: show the split-buy quantity read-only (the merged +/- write is Stage 2).
-  readonly disableSplitBuyStepper: boolean;
+  // Stage 2: the absolute-target write for the interactive merged stepper. When provided, a SPLIT buy
+  // row gets the live +/−/delete control; when omitted (or undefined), it falls back to the Stage-1
+  // read-only merged quantity.
+  readonly onMergedQtyChange?: MergedQtyChange | undefined;
 };
 
 // Apply the two-group layout to one theme items container. Returns true if it grouped, false if it
@@ -209,12 +321,8 @@ export function applyTwoGroupLayout(
   if (itemsEl === null) return false;
 
   const lineNodes = findLineNodes(itemsEl);
-  const total =
-    plan.gets.length +
-    plan.lingering.length +
-    plan.buys.reduce((n, b) => n + b.displayIndexes.length, 0);
   // FAIL OPEN: nothing to group, or the rendered list doesn't match the plan we built from /cart.js.
-  if (total === 0 || lineNodes.length !== total) return false;
+  if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) return false;
 
   // Idempotency: already grouped THIS render (our header present) -> no-op.
   if (itemsEl.querySelector('.fge-group-head') !== null) return true;
@@ -223,7 +331,7 @@ export function applyTwoGroupLayout(
   // leave a stale total contradicting the subtotal — bail to the untouched theme list instead.
   for (const row of plan.buys) {
     if (!row.split) continue;
-    const keep = lineNodes[row.displayIndexes[0] ?? -1];
+    const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
     if (keep == null || keep.querySelector(TOTALS_SELECTOR) === null) return false;
   }
 
@@ -233,27 +341,50 @@ export function applyTwoGroupLayout(
   itemsEl.setAttribute(MARK, '');
 
   if (plan.buys.length > 0 && plan.hasGifts) {
-    const firstBuy = lineNodes[plan.buys[0]!.displayIndexes[0]!];
+    const firstRow = plan.buys[0]!;
+    const firstIdx =
+      firstRow.interactiveIndex ?? firstRow.readOnlyIndexes[0] ?? firstRow.hideIndexes[0];
+    const firstBuy = firstIdx === undefined ? null : lineNodes[firstIdx];
     if (firstBuy != null) parent.insertBefore(makeHeader(firstBuy, BUYS_HEADER, null), firstBuy);
   }
   for (const row of plan.buys) {
-    const [keepIdx, ...hideIdxs] = row.displayIndexes;
-    const keep = keepIdx === undefined ? null : lineNodes[keepIdx];
-    if (keep == null) continue;
-    if (row.split) {
-      // Only split rows need correction: overwrite the line total (every responsive cell) with the sum
-      // and show the merged qty read-only. Non-split rows keep the theme's native (correct) numbers +
-      // interactive stepper.
-      setLineTotals(keep, row.totalFinalPrice, row.totalOriginalPrice);
-      if (opts.disableSplitBuyStepper) showMergedQtyReadOnly(keep, row.totalQuantity);
+    const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
+    if (keep != null) {
+      if (row.split) {
+        // Split rows need correction: overwrite the line total (every responsive cell) with the
+        // controllable sum, then either inject the interactive merged stepper (Stage 2) or — when no
+        // write callback is wired — fall back to the read-only merged quantity (Stage 1).
+        setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
+        if (opts.onMergedQtyChange !== undefined) {
+          injectMergedStepper(
+            keep,
+            row.controllableQuantity,
+            row.controllableFinalPrice,
+            row.controllableOriginalPrice,
+            row.writableKeys,
+            opts.onMergedQtyChange,
+          );
+        } else {
+          showMergedQtyReadOnly(keep, row.controllableQuantity);
+        }
+      }
+      // Non-split rows keep the theme's native (correct) numbers + interactive stepper.
+      parent.append(keep); // reorder: buys first, in first-occurrence order
     }
-    parent.append(keep); // reorder: buys first, in first-occurrence order
-    for (const hideIdx of hideIdxs) {
+    for (const hideIdx of row.hideIndexes) {
       const sib = lineNodes[hideIdx];
       if (sib != null) {
         sib.style.display = 'none';
         sib.setAttribute(HIDDEN_MARK, '');
         parent.append(sib);
+      }
+    }
+    // Marked overlap units (issue-#6 / §M): keep read-only in the buys group after the interactive row.
+    for (const roIdx of row.readOnlyIndexes) {
+      const ro = lineNodes[roIdx];
+      if (ro != null) {
+        renderReadOnlyBuyLine(ro);
+        parent.append(ro);
       }
     }
   }

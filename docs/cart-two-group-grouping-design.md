@@ -192,3 +192,32 @@ be $0 **via our code**, not bare $0).
 7. **AND-tier:** all gifts under one "Your free gifts" header (recommended).
 8. **Stage-1 interim:** disable the buy stepper on split rows until Stage 2 ships (recommended) vs.
    leave it as-is.
+
+## M. RESOLVED — issue-#6 × delete residual (Stage 2 controllable-units model)
+
+**The residual:** when a gift product is BOTH bought full-price and received free, the `_fge_gift`
+marker can migrate onto a **buy** (full-price) line (CLAUDE.md issue #6 / §M.1 above). ⓥ3 forbids the
+buy control from writing that marked key. So if a marked unit were folded into the interactive merged
+row's _displayed_ quantity but the control couldn't write it, a "−"/"delete" could compute a target the
+write can't reach — a silent no-op (control shows qty 2 → user clicks delete → only the unmarked unit
+clears → row still shows the marked unit at qty 1). Display and control would disagree.
+
+**Decision — display and control over the SAME set.** The interactive merged buy row reflects ONLY the
+**controllable** (unmarked) units of the variant:
+
+- `controllableQuantity` / `controllableFinalPrice` / `controllableOriginalPrice` sum only the unmarked
+  lines. The +/−/delete stepper drives that quantity, the row's price shows that sum, and `writableKeys`
+  contains only those (unmarked) keys — so a control's target is always reachable; it can never no-op.
+- A **marked** overlap unit in the buy group is excluded from the interactive row and surfaced as a
+  **read-only** line (`readOnlyIndexes`) — price shown, no controls — visually distinct so the shopper
+  sees their extra full-price unit but the widget never writes it (reconcile owns it).
+- If a variant's entire buy group is marked (`controllableQuantity == 0`, `interactiveIndex == null`),
+  there is **no** interactive row — just the read-only line(s).
+- **Common case (no marked unit in any buy group): `controllable == total`**, so +/−/delete fully drive
+  the whole merged quantity exactly as §4 describes. The split is invisible to the shopper.
+
+The VF still hard-blocks checkout if any `_fge_gift` line ends non-free, so this presentation choice
+carries no revenue risk. This supersedes the looser §M.1 wording ("the buys row still displays the
+full-price unit but its control operates only on the unmarked units"): the displayed qty/price of the
+**interactive** row are the controllable units only; the marked unit is shown on its own read-only line,
+not folded into the interactive row.

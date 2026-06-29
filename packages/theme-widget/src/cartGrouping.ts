@@ -32,16 +32,25 @@ export type GiftLineRef = {
   readonly variantId: number;
 };
 
-// One merged purchase row: all same-variant non-gift lines collapsed. `displayIndexes[0]` is the node
-// the adapter keeps + relabels; the rest are removed. `writableKeys` (Stage 2) excludes any marked
-// line so a buy control never zeroes a reconcile-owned gift line (issue-#6 write-safety).
+// One merged purchase row. The INTERACTIVE row reflects ONLY the controllable (unmarked) units —
+// display + control are over the same set, so a +/-/delete can never no-op (issue-#6 decision §M).
+// A `_fge_gift`-MARKED unit that lands in a buy group (rare model-C overlap) is excluded here and
+// surfaced read-only (`readOnlyIndexes`); the buy control never writes a marked key (write-safety).
 export type BuyRow = {
   readonly variantId: number;
-  readonly totalQuantity: number;
-  readonly totalFinalPrice: number;
-  readonly totalOriginalPrice: number;
-  readonly displayIndexes: readonly number[];
+  // Controllable (unmarked) units — what the interactive merged row shows and its controls drive.
+  readonly controllableQuantity: number;
+  readonly controllableFinalPrice: number;
+  readonly controllableOriginalPrice: number;
+  // Cart index of the line node made interactive (first unmarked line); null if the group is all-marked.
+  readonly interactiveIndex: number | null;
+  // Other unmarked line indexes — hidden in place (their qty/price are folded into the interactive row).
+  readonly hideIndexes: readonly number[];
+  // Marked line indexes in this variant group (issue-#6) — rendered read-only, never written.
+  readonly readOnlyIndexes: readonly number[];
+  // Unmarked line keys; [0] is the canonical write target, the rest are zeroed in one atomic update.
   readonly writableKeys: readonly string[];
+  // >1 unmarked line (Shopify-split) → the merged control needs the atomic multi-key write.
   readonly split: boolean;
 };
 
@@ -54,6 +63,9 @@ export type GroupingPlan = {
   readonly buys: readonly BuyRow[];
   // Whether to show the two-group framing (+ the "Your purchase" header). False => buys-only, no header.
   readonly hasGifts: boolean;
+  // Total cart lines the plan was built from — the DOM transform fails open if the rendered line
+  // count differs (stale plan mid-re-render / a theme it can't correlate).
+  readonly lineCount: number;
 };
 
 function isZeroedByOurCode(line: RawCartLine, ourCode: string | null): boolean {
@@ -90,7 +102,13 @@ export function classifyAndGroup(
   }
 
   const buys = mergeBuysByVariant(buyLines);
-  return { gets, lingering, buys, hasGifts: gets.length > 0 || lingering.length > 0 };
+  return {
+    gets,
+    lingering,
+    buys,
+    hasGifts: gets.length > 0 || lingering.length > 0,
+    lineCount: lines.length,
+  };
 }
 
 // Merge buy lines by variant, preserving first-occurrence order. Exported for direct testing.
@@ -109,15 +127,18 @@ export function mergeBuysByVariant(buyLines: readonly RawCartLine[]): BuyRow[] {
 
   return order.map((variantId) => {
     const group = byVariant.get(variantId) as RawCartLine[];
+    const unmarked = group.filter((l) => !l.marked); // controllable + writable
+    const marked = group.filter((l) => l.marked); // issue-#6 overlap: read-only, never written
     return {
       variantId,
-      totalQuantity: group.reduce((n, l) => n + l.quantity, 0),
-      totalFinalPrice: group.reduce((n, l) => n + l.finalLinePrice, 0),
-      totalOriginalPrice: group.reduce((n, l) => n + l.originalLinePrice, 0),
-      displayIndexes: group.map((l) => l.index),
-      // Stage-2 write safety: never write a reconcile-owned (marked) line via a buy control.
-      writableKeys: group.filter((l) => !l.marked).map((l) => l.key),
-      split: group.length > 1,
+      controllableQuantity: unmarked.reduce((n, l) => n + l.quantity, 0),
+      controllableFinalPrice: unmarked.reduce((n, l) => n + l.finalLinePrice, 0),
+      controllableOriginalPrice: unmarked.reduce((n, l) => n + l.originalLinePrice, 0),
+      interactiveIndex: unmarked[0]?.index ?? null,
+      hideIndexes: unmarked.slice(1).map((l) => l.index),
+      readOnlyIndexes: marked.map((l) => l.index),
+      writableKeys: unmarked.map((l) => l.key),
+      split: unmarked.length > 1,
     };
   });
 }

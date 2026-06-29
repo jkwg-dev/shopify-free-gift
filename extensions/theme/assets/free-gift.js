@@ -256,7 +256,13 @@
       }
     }
     const buys = mergeBuysByVariant(buyLines);
-    return { gets, lingering, buys, hasGifts: gets.length > 0 || lingering.length > 0 };
+    return {
+      gets,
+      lingering,
+      buys,
+      hasGifts: gets.length > 0 || lingering.length > 0,
+      lineCount: lines.length
+    };
   }
   function mergeBuysByVariant(buyLines) {
     const order = [];
@@ -271,16 +277,20 @@
       }
     }
     return order.map((variantId) => {
+      var _a2, _b2;
       const group = byVariant.get(variantId);
+      const unmarked = group.filter((l) => !l.marked);
+      const marked = group.filter((l) => l.marked);
       return {
         variantId,
-        totalQuantity: group.reduce((n, l) => n + l.quantity, 0),
-        totalFinalPrice: group.reduce((n, l) => n + l.finalLinePrice, 0),
-        totalOriginalPrice: group.reduce((n, l) => n + l.originalLinePrice, 0),
-        displayIndexes: group.map((l) => l.index),
-        // Stage-2 write safety: never write a reconcile-owned (marked) line via a buy control.
-        writableKeys: group.filter((l) => !l.marked).map((l) => l.key),
-        split: group.length > 1
+        controllableQuantity: unmarked.reduce((n, l) => n + l.quantity, 0),
+        controllableFinalPrice: unmarked.reduce((n, l) => n + l.finalLinePrice, 0),
+        controllableOriginalPrice: unmarked.reduce((n, l) => n + l.originalLinePrice, 0),
+        interactiveIndex: (_b2 = (_a2 = unmarked[0]) == null ? void 0 : _a2.index) != null ? _b2 : null,
+        hideIndexes: unmarked.slice(1).map((l) => l.index),
+        readOnlyIndexes: marked.map((l) => l.index),
+        writableKeys: unmarked.map((l) => l.key),
+        split: unmarked.length > 1
       };
     });
   }
@@ -292,7 +302,13 @@
   var GETS_SUBLABEL = "Added free";
   var LINGERING_LABEL = "Free gift \u2014 pending";
   var FREE_GIFT_LABEL = "Free gift";
-  var LINE_SELECTORS = [".cart-item", '[id^="CartDrawer-Item-"]', '[id^="CartItem-"]', "cart-item", ".cart__row"];
+  var LINE_SELECTORS = [
+    ".cart-item",
+    '[id^="CartDrawer-Item-"]',
+    '[id^="CartItem-"]',
+    "cart-item",
+    ".cart__row"
+  ];
   var TOTALS_SELECTOR = ".cart-item__totals";
   var FINAL_PRICE_SELECTORS = [".price--end", ".cart-item__final-price"];
   var OLD_PRICE_SELECTORS = [".cart-item__old-price"];
@@ -300,6 +316,7 @@
   var QTY_CELL_SELECTORS = [".cart-item__quantity"];
   var QTY_INPUT_SELECTORS = [".quantity__input", 'input[name="updates[]"]'];
   var QTY_BUTTON_SELECTORS = [".quantity__button", "cart-remove-button", ".button--tertiary"];
+  var QTY_WIDGET_SELECTORS = ["quantity-input", ".quantity", ".cart-item__quantity-wrapper"];
   var REMOVE_SELECTORS = ["cart-remove-button", ".button--tertiary", '[id^="Remove-"]'];
   var DISCOUNT_SELECTORS = ["ul.discounts", ".cart-item__discounts", ".discounts"];
   var BADGE_HOST_SELECTORS = [TOTALS_SELECTOR, PRICE_WRAPPER, ".cart-item__price"];
@@ -381,6 +398,76 @@
       });
     }
   }
+  function renderReadOnlyBuyLine(node) {
+    node.classList.add("fge-buy-line--locked");
+    hideNativeStepper(node);
+  }
+  function hideNativeStepper(node) {
+    for (const sel of [...QTY_WIDGET_SELECTORS, ...REMOVE_SELECTORS]) {
+      node.querySelectorAll(sel).forEach((el) => {
+        el.style.display = "none";
+        el.setAttribute("aria-hidden", "true");
+      });
+    }
+    const input = findFirst2(node, QTY_INPUT_SELECTORS);
+    if (input instanceof HTMLInputElement) input.readOnly = true;
+  }
+  function injectMergedStepper(node, qty, finalLinePrice, originalLinePrice, writableKeys, onChange) {
+    var _a2, _b2;
+    hideNativeStepper(node);
+    (_a2 = node.querySelector(".fge-merged-stepper")) == null ? void 0 : _a2.remove();
+    const cell = (_b2 = findFirst2(node, QTY_CELL_SELECTORS)) != null ? _b2 : node;
+    const perUnitFinal = qty > 0 ? finalLinePrice / qty : 0;
+    const perUnitOriginal = qty > 0 ? originalLinePrice / qty : 0;
+    const wrap = document.createElement("div");
+    wrap.className = "fge fge-merged-stepper";
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", "Quantity");
+    const mkBtn = (act, label, text) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = act === "del" ? "fge-merged-stepper__remove" : "fge-merged-stepper__btn";
+      b.setAttribute("data-fge-act", act);
+      b.setAttribute("aria-label", label);
+      b.textContent = text;
+      return b;
+    };
+    const dec = mkBtn("dec", "Decrease quantity", "\u2212");
+    const inc = mkBtn("inc", "Increase quantity", "+");
+    const del = mkBtn("del", "Remove item", "Remove");
+    const qtyEl = document.createElement("span");
+    qtyEl.className = "fge-merged-stepper__qty";
+    qtyEl.setAttribute("aria-live", "polite");
+    qtyEl.textContent = String(qty);
+    wrap.append(dec, qtyEl, inc, del);
+    cell.append(wrap);
+    let current = qty;
+    let inFlight = false;
+    const setDisabled = (d) => {
+      for (const b of [dec, inc, del]) b.disabled = d;
+      wrap.classList.toggle("is-busy", d);
+    };
+    const onAct = (target) => {
+      if (inFlight) return;
+      inFlight = true;
+      setDisabled(true);
+      current = Math.max(0, target);
+      qtyEl.textContent = String(current);
+      if (current === 0) {
+        node.style.display = "none";
+        node.setAttribute("data-fge-merged-removed", "");
+      } else {
+        setLineTotals(node, Math.round(perUnitFinal * current), Math.round(perUnitOriginal * current));
+      }
+      Promise.resolve(onChange(writableKeys, current)).finally(() => {
+        inFlight = false;
+        if (node.isConnected && current > 0) setDisabled(false);
+      });
+    };
+    dec.addEventListener("click", () => onAct(current - 1));
+    inc.addEventListener("click", () => onAct(current + 1));
+    del.addEventListener("click", () => onAct(0));
+  }
   function relabelOurDiscount(node, ourCode) {
     var _a2;
     const discountEl = findFirst2(node, DISCOUNT_SELECTORS);
@@ -425,34 +512,46 @@
     return header;
   }
   function applyTwoGroupLayout(itemsEl, plan, opts) {
-    var _a2, _b2, _c2, _d, _e, _f;
+    var _a2, _b2, _c2, _d, _e, _f, _g;
     if (itemsEl === null) return false;
     const lineNodes = findLineNodes(itemsEl);
-    const total = plan.gets.length + plan.lingering.length + plan.buys.reduce((n, b) => n + b.displayIndexes.length, 0);
-    if (total === 0 || lineNodes.length !== total) return false;
+    if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) return false;
     if (itemsEl.querySelector(".fge-group-head") !== null) return true;
     for (const row of plan.buys) {
       if (!row.split) continue;
-      const keep = lineNodes[(_a2 = row.displayIndexes[0]) != null ? _a2 : -1];
+      const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
       if (keep == null || keep.querySelector(TOTALS_SELECTOR) === null) return false;
     }
-    const parent = (_c2 = (_b2 = lineNodes[0]) == null ? void 0 : _b2.parentElement) != null ? _c2 : null;
+    const parent = (_b2 = (_a2 = lineNodes[0]) == null ? void 0 : _a2.parentElement) != null ? _b2 : null;
     if (parent === null) return false;
     itemsEl.setAttribute(MARK, "");
     if (plan.buys.length > 0 && plan.hasGifts) {
-      const firstBuy = lineNodes[plan.buys[0].displayIndexes[0]];
+      const firstRow = plan.buys[0];
+      const firstIdx = (_d = (_c2 = firstRow.interactiveIndex) != null ? _c2 : firstRow.readOnlyIndexes[0]) != null ? _d : firstRow.hideIndexes[0];
+      const firstBuy = firstIdx === void 0 ? null : lineNodes[firstIdx];
       if (firstBuy != null) parent.insertBefore(makeHeader(firstBuy, BUYS_HEADER, null), firstBuy);
     }
     for (const row of plan.buys) {
-      const [keepIdx, ...hideIdxs] = row.displayIndexes;
-      const keep = keepIdx === void 0 ? null : lineNodes[keepIdx];
-      if (keep == null) continue;
-      if (row.split) {
-        setLineTotals(keep, row.totalFinalPrice, row.totalOriginalPrice);
-        if (opts.disableSplitBuyStepper) showMergedQtyReadOnly(keep, row.totalQuantity);
+      const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
+      if (keep != null) {
+        if (row.split) {
+          setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
+          if (opts.onMergedQtyChange !== void 0) {
+            injectMergedStepper(
+              keep,
+              row.controllableQuantity,
+              row.controllableFinalPrice,
+              row.controllableOriginalPrice,
+              row.writableKeys,
+              opts.onMergedQtyChange
+            );
+          } else {
+            showMergedQtyReadOnly(keep, row.controllableQuantity);
+          }
+        }
+        parent.append(keep);
       }
-      parent.append(keep);
-      for (const hideIdx of hideIdxs) {
+      for (const hideIdx of row.hideIndexes) {
         const sib = lineNodes[hideIdx];
         if (sib != null) {
           sib.style.display = "none";
@@ -460,13 +559,22 @@
           parent.append(sib);
         }
       }
+      for (const roIdx of row.readOnlyIndexes) {
+        const ro = lineNodes[roIdx];
+        if (ro != null) {
+          renderReadOnlyBuyLine(ro);
+          parent.append(ro);
+        }
+      }
     }
     if (plan.hasGifts) {
       const giftCount = plan.gets.length + plan.lingering.length;
-      const firstGiftIdx = (_f = (_d = plan.gets[0]) == null ? void 0 : _d.index) != null ? _f : (_e = plan.lingering[0]) == null ? void 0 : _e.index;
+      const firstGiftIdx = (_g = (_e = plan.gets[0]) == null ? void 0 : _e.index) != null ? _g : (_f = plan.lingering[0]) == null ? void 0 : _f.index;
       const firstGift = firstGiftIdx === void 0 ? null : lineNodes[firstGiftIdx];
       if (firstGift != null) {
-        parent.append(makeHeader(firstGift, giftCount > 1 ? GETS_HEADER_MANY : GETS_HEADER_ONE, GETS_SUBLABEL));
+        parent.append(
+          makeHeader(firstGift, giftCount > 1 ? GETS_HEADER_MANY : GETS_HEADER_ONE, GETS_SUBLABEL)
+        );
       }
       for (const ref of plan.gets) {
         const node = lineNodes[ref.index];
@@ -546,6 +654,23 @@
       }
     }
     return { added, removed, adjusted, failures };
+  }
+  async function setMergedQuantity(post, writableKeys, targetQty) {
+    if (writableKeys.length === 0) {
+      return { ok: true, status: 200 };
+    }
+    const target = Math.max(0, Math.trunc(targetQty));
+    const updates = {};
+    for (const [i, key] of writableKeys.entries()) {
+      updates[key] = i === 0 ? target : 0;
+    }
+    const res = await post("cart/update.js", { updates });
+    if (res.ok) {
+      return { ok: true, status: res.status };
+    }
+    const body = await res.text();
+    logFailure(`cart/update.js merged-qty failed (${res.status})`, body);
+    return { ok: false, status: res.status, body };
   }
   function failedAddVariantIds(failures) {
     return failures.filter((f) => f.kind === "add").map((f) => f.variantId);
@@ -1375,6 +1500,35 @@ body.fge-checkout-pending .cart__checkout-button::after{
   letter-spacing:normal;
 }
 .fge-gift-line--pending .fge-line-badge{ color:#8a6d00; } /* amber: not-yet-free, needs attention */
+
+/* --- Stage 2: the interactive merged stepper injected on a SPLIT buy row (replaces the theme's native
+   per-split stepper, which would write only one split key). A slim \u2212/qty/+ group + a quiet "Remove",
+   styled to read like a cart control without depending on the theme's button CSS. --- */
+.fge-merged-stepper{
+  display:inline-flex; align-items:center; gap:2px; flex-wrap:wrap;
+}
+.fge-merged-stepper__btn{
+  appearance:none; -webkit-appearance:none; cursor:pointer;
+  min-width:30px; height:30px; padding:0 6px; line-height:1;
+  font-size:15px; font-weight:600; color:#111111;
+  background:#ffffff; border:1px solid #cfcfcf; border-radius:6px;
+}
+.fge-merged-stepper__qty{
+  min-width:28px; padding:0 6px; text-align:center; font-size:13px; font-weight:600; color:#111111;
+}
+.fge-merged-stepper__remove{
+  appearance:none; -webkit-appearance:none; cursor:pointer;
+  margin-left:6px; padding:0 2px; height:30px; line-height:1;
+  font-size:11px; font-weight:600; color:#707070; text-decoration:underline;
+  background:transparent; border:0;
+}
+.fge-merged-stepper__btn:focus-visible, .fge-merged-stepper__remove:focus-visible{
+  outline:2px solid var(--fge-brand); outline-offset:2px;
+}
+.fge-merged-stepper.is-busy{ opacity:.55; }
+.fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; }
+/* A marked overlap unit kept read-only in the buys group (issue-#6 / \xA7M): subtly de-emphasized. */
+.fge-buy-line--locked{ opacity:.9; }
 `;
   function injectStyles() {
     const doc = globalThis.document;
@@ -1644,6 +1798,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
       section.attach();
     }
   }
+  var idleResolvers = [];
   function schedule(config) {
     if (running) {
       pending = true;
@@ -1655,8 +1810,28 @@ body.fge-checkout-pending .cart__checkout-button::after{
       if (pending) {
         pending = false;
         schedule(config);
+      } else {
+        const resolvers = idleResolvers;
+        idleResolvers = [];
+        for (const resolve of resolvers) resolve();
       }
     });
+  }
+  async function whenReconcileIdle() {
+    while (running) {
+      await new Promise((resolve) => idleResolvers.push(resolve));
+    }
+  }
+  async function onMergedBuyQtyChange(writableKeys, targetQty) {
+    if (perceptionConfig === null) return;
+    await whenReconcileIdle();
+    selfMutating = true;
+    try {
+      await setMergedQuantity(cartPost, writableKeys, targetQty);
+    } finally {
+      selfMutating = false;
+    }
+    schedule(perceptionConfig);
   }
   async function initPerception(config) {
     injectStyles();
@@ -1668,8 +1843,8 @@ body.fge-checkout-pending .cart__checkout-button::after{
         }
         applyTwoGroupLayout(itemsEl, lastPlan, {
           ourCode: lastDiscount,
-          disableSplitBuyStepper: true
-          // Stage 1: the merged-control write is Stage 2
+          onMergedQtyChange: onMergedBuyQtyChange
+          // Stage 2: live merged +/−/delete writes
         });
       }
     });

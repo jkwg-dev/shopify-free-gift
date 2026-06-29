@@ -109,6 +109,42 @@ export async function applyCartPlan(
   return { added, removed, adjusted, failures };
 }
 
+export type MergedQuantityResult = {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly body?: string;
+};
+
+// Stage 2 (defect #2): set the merged quantity of a Shopify-SPLIT buy variant in ONE atomic
+// `cart/update.js`. `writableKeys` are the UNMARKED line keys of the variant (ⓥ3 write-safety — a
+// `_fge_gift`-marked line is never in this list, so a buy control can't zero a reconcile-owned line).
+// We fold the whole controllable quantity onto the FIRST key and zero the rest, so the post-update
+// cart has a single line for the variant (no lingering empty splits). Absolute target — never a delta:
+//   "+" → T = Q+1, "−" → T = Q−1 (T=0 deletes the variant's controllable units), delete → T = 0.
+// ONE request resolves all keys against the pre-update state at once; sequential per-key writes would
+// re-split/re-allocate and invalidate the remaining keys — that hazard IS defect #2.
+export async function setMergedQuantity(
+  post: CartPost,
+  writableKeys: readonly string[],
+  targetQty: number,
+): Promise<MergedQuantityResult> {
+  if (writableKeys.length === 0) {
+    return { ok: true, status: 200 }; // nothing controllable to write (all-marked group) — no-op.
+  }
+  const target = Math.max(0, Math.trunc(targetQty));
+  const updates: Record<string, number> = {};
+  for (const [i, key] of writableKeys.entries()) {
+    updates[key] = i === 0 ? target : 0; // first key carries the total; siblings collapse to 0.
+  }
+  const res = await post('cart/update.js', { updates });
+  if (res.ok) {
+    return { ok: true, status: res.status };
+  }
+  const body = await res.text();
+  logFailure(`cart/update.js merged-qty failed (${res.status})`, body);
+  return { ok: false, status: res.status, body };
+}
+
 // The gift VARIANT GIDs that FAILED to add (e.g. 422 — unpublished/sold-out). Feeds the chooser's
 // runtime `unavailableVariantIds` so the option is disabled + noted and never shown as added.
 export function failedAddVariantIds(failures: readonly CartMutationFailure[]): string[] {

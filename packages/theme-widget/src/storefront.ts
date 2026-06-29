@@ -17,7 +17,7 @@ import {
 import { mountCartContexts, type CartSection } from './cartSections.js';
 import { classifyAndGroup, type GroupingPlan, type RawCartLine } from './cartGrouping.js';
 import { applyTwoGroupLayout } from './groupingTransform.js';
-import { failedAddVariantIds } from './cartMutations.js';
+import { failedAddVariantIds, setMergedQuantity } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
@@ -360,6 +360,10 @@ function renderPerception(config: WidgetConfig): void {
   }
 }
 
+// Resolved when the reconcile single-flight goes fully idle (no run in progress, none pending). The
+// merged-buy write awaits this so its cart mutation never interleaves with a reconcile's mutations.
+let idleResolvers: (() => void)[] = [];
+
 function schedule(config: WidgetConfig): void {
   if (running) {
     pending = true;
@@ -373,8 +377,40 @@ function schedule(config: WidgetConfig): void {
       if (pending) {
         pending = false;
         schedule(config);
+      } else {
+        const resolvers = idleResolvers;
+        idleResolvers = [];
+        for (const resolve of resolvers) resolve();
       }
     });
+}
+
+async function whenReconcileIdle(): Promise<void> {
+  // Re-checks after each settle: a chained (pending) reconcile keeps us waiting until the chain ends.
+  while (running) {
+    await new Promise<void>((resolve) => idleResolvers.push(resolve));
+  }
+}
+
+// Stage 2 (defect #2): the interactive merged buy stepper's absolute-target write. Sequenced so it
+// never overlaps a reconcile (§5): wait for reconcile idle, then do ONE atomic `cart/update.js` under
+// `selfMutating` (so the fetch-patch doesn't re-trigger us), then explicitly re-validate the tier — a
+// drop below threshold removes the gift + clears the code (and nudges Dawn to re-render). Write-safety:
+// `writableKeys` carries only UNMARKED line keys (cartGrouping ⓥ3), so a `_fge_gift` line is never
+// zeroed. Reconcile only ever writes gift lines, so a user's buy edit can never be reverted.
+async function onMergedBuyQtyChange(
+  writableKeys: readonly string[],
+  targetQty: number,
+): Promise<void> {
+  if (perceptionConfig === null) return;
+  await whenReconcileIdle();
+  selfMutating = true;
+  try {
+    await setMergedQuantity(cartPost, writableKeys, targetQty);
+  } finally {
+    selfMutating = false;
+  }
+  schedule(perceptionConfig); // re-validate tier for the new cart (may add/remove gifts + nudge Dawn)
 }
 
 // Inject the two perception sections into EVERY present cart surface (drawer + full /cart page): a
@@ -394,7 +430,7 @@ async function initPerception(config: WidgetConfig): Promise<void> {
       }
       applyTwoGroupLayout(itemsEl, lastPlan, {
         ourCode: lastDiscount,
-        disableSplitBuyStepper: true, // Stage 1: the merged-control write is Stage 2
+        onMergedQtyChange: onMergedBuyQtyChange, // Stage 2: live merged +/−/delete writes
       });
     },
   });

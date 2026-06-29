@@ -207,6 +207,35 @@ body.fge-checkout-pending .cart__checkout-button::after{
   letter-spacing:normal;
 }
 .fge-gift-line--pending .fge-line-badge{ color:#8a6d00; } /* amber: not-yet-free, needs attention */
+
+/* --- Stage 2: the interactive merged stepper injected on a SPLIT buy row (replaces the theme's native
+   per-split stepper, which would write only one split key). A slim −/qty/+ group + a quiet "Remove",
+   styled to read like a cart control without depending on the theme's button CSS. --- */
+.fge-merged-stepper{
+  display:inline-flex; align-items:center; gap:2px; flex-wrap:wrap;
+}
+.fge-merged-stepper__btn{
+  appearance:none; -webkit-appearance:none; cursor:pointer;
+  min-width:30px; height:30px; padding:0 6px; line-height:1;
+  font-size:15px; font-weight:600; color:#111111;
+  background:#ffffff; border:1px solid #cfcfcf; border-radius:6px;
+}
+.fge-merged-stepper__qty{
+  min-width:28px; padding:0 6px; text-align:center; font-size:13px; font-weight:600; color:#111111;
+}
+.fge-merged-stepper__remove{
+  appearance:none; -webkit-appearance:none; cursor:pointer;
+  margin-left:6px; padding:0 2px; height:30px; line-height:1;
+  font-size:11px; font-weight:600; color:#707070; text-decoration:underline;
+  background:transparent; border:0;
+}
+.fge-merged-stepper__btn:focus-visible, .fge-merged-stepper__remove:focus-visible{
+  outline:2px solid var(--fge-brand); outline-offset:2px;
+}
+.fge-merged-stepper.is-busy{ opacity:.55; }
+.fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; }
+/* A marked overlap unit kept read-only in the buys group (issue-#6 / §M): subtly de-emphasized. */
+.fge-buy-line--locked{ opacity:.9; }
 `;
 
 export function injectStyles(): void {

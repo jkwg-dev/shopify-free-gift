@@ -27,7 +27,15 @@ describe('classifyAndGroup', () => {
     expect(plan.gets).toEqual([]);
     expect(plan.lingering).toEqual([]);
     expect(plan.buys).toHaveLength(1);
-    expect(plan.buys[0]).toMatchObject({ variantId: 1, totalQuantity: 1, split: false });
+    expect(plan.buys[0]).toMatchObject({
+      variantId: 1,
+      controllableQuantity: 1,
+      interactiveIndex: 0,
+      hideIndexes: [],
+      readOnlyIndexes: [],
+      split: false,
+    });
+    expect(plan.lineCount).toBe(1);
   });
 
   it('defect #1 — merges a Shopify-split buy variant into one row (combined qty + price)', () => {
@@ -54,10 +62,12 @@ describe('classifyAndGroup', () => {
     expect(plan.buys).toHaveLength(1);
     expect(plan.buys[0]).toMatchObject({
       variantId: 1,
-      totalQuantity: 7,
-      totalFinalPrice: 7000,
-      totalOriginalPrice: 7000,
-      displayIndexes: [0, 1],
+      controllableQuantity: 7,
+      controllableFinalPrice: 7000,
+      controllableOriginalPrice: 7000,
+      interactiveIndex: 0,
+      hideIndexes: [1],
+      readOnlyIndexes: [],
       writableKeys: ['k0', 'k1'],
       split: true,
     });
@@ -92,9 +102,40 @@ describe('classifyAndGroup', () => {
     expect(plan.gets).toEqual([{ index: 0, key: 'k0', variantId: 9 }]);
     expect(plan.lingering).toEqual([]); // NOT lingering — it has a zeroed sibling
     expect(plan.buys).toHaveLength(1);
-    expect(plan.buys[0]).toMatchObject({ variantId: 9, totalQuantity: 1, totalFinalPrice: 1000 });
+    // §M issue-#6 × controllable units: the marked paid line is read-only, controllable=0, so the
+    // interactive row never renders for it and a +/-/delete can't no-op against a reconcile-owned line.
+    expect(plan.buys[0]).toMatchObject({
+      variantId: 9,
+      controllableQuantity: 0,
+      controllableFinalPrice: 0,
+      interactiveIndex: null,
+      hideIndexes: [],
+      readOnlyIndexes: [1],
+      split: false,
+    });
     // write-safety: the marked paid line's key is EXCLUDED from writableKeys (reconcile owns it).
     expect(plan.buys[0]!.writableKeys).toEqual([]);
+  });
+
+  it('§M — variant bought paid (unmarked) AND a marked overlap unit: controllable row + read-only line', () => {
+    // Worst-case model-C residual: variant 9 has a genuine paid unit (unmarked) PLUS a marked unit the
+    // gift marker migrated onto. The interactive merged row drives ONLY the unmarked paid unit; the
+    // marked unit is surfaced read-only and never written.
+    const paidUnmarked = line({ index: 0, variantId: 9, quantity: 2, finalLinePrice: 2000 });
+    const paidMarked = line({ index: 1, variantId: 9, finalLinePrice: 1000, marked: true });
+    const plan = classifyAndGroup([paidUnmarked, paidMarked, gift(2, 9)], OUR);
+    expect(plan.gets.map((g) => g.variantId)).toEqual([9]);
+    expect(plan.buys).toHaveLength(1);
+    expect(plan.buys[0]).toMatchObject({
+      variantId: 9,
+      controllableQuantity: 2,
+      controllableFinalPrice: 2000,
+      interactiveIndex: 0,
+      hideIndexes: [],
+      readOnlyIndexes: [1],
+      writableKeys: ['k0'],
+      split: false,
+    });
   });
 
   it('lingering — marked, not zeroed, no zeroed sibling -> "pending" gets, never a buy', () => {
@@ -143,10 +184,12 @@ describe('mergeBuysByVariant', () => {
     expect(rows.map((r) => r.variantId)).toEqual([2, 1]); // first-occurrence order
     expect(rows[0]).toMatchObject({
       variantId: 2,
-      totalQuantity: 5,
-      totalFinalPrice: 2500,
+      controllableQuantity: 5,
+      controllableFinalPrice: 2500,
+      interactiveIndex: 0,
+      hideIndexes: [2],
       split: true,
     });
-    expect(rows[1]).toMatchObject({ variantId: 1, totalQuantity: 3, split: false });
+    expect(rows[1]).toMatchObject({ variantId: 1, controllableQuantity: 3, split: false });
   });
 });
