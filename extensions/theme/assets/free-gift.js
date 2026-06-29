@@ -1605,6 +1605,11 @@
 .fge-step__dot,
 .fge-card__img{ display:block !important; }
 
+/* THEME-OVERRIDE: hide per-line totals when our grouping is active \u2014 the subtotal in the footer
+   is sufficient, and the line totals create visual noise (especially with the discount code tag
+   Dawn renders). Scoped to the grouped container so ungrouped fallback shows them. */
+[data-fge-grouped] .cart-item__totals{ display:none !important; }
+
 /* THEME-OVERRIDE: Dawn renders TWO "Your cart" titles inside the drawer \u2014 the H2.drawer__heading
    (header) and the H1.title--primary (cart section title, normally suppressed). Our injected layout
    surfaces both, so we hide the section-title duplicate \u2014 SCOPED to drawer containers only, so the
@@ -1616,7 +1621,7 @@ cart-drawer .title--primary,
 /* --- gift panel: lives INSIDE the drawer's scrollable items region, after the line items, so it
    scrolls with the cart (no inner max-height/scroll \u2014 that would nest a scrollbar and pin it). --- */
 .fge-gift{
-  border-top:1px solid var(--fge-line); padding-top:12px; margin-top:8px;
+  border-top:1px solid var(--fge-line); padding:12px 14px 0; margin-top:8px;
 }
 .fge-gift__title{ margin:0 0 8px; font-size:13px; font-weight:700; letter-spacing:.01em; }
 .fge-gift__hint{ margin:0; font-size:13px; color:var(--fge-muted); }
