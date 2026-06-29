@@ -342,9 +342,18 @@ function injectMergedStepper(
         if (node.isConnected) setDisabled(false);
       });
   };
-  dec.addEventListener('click', () => onAct(current - 1));
-  inc.addEventListener('click', () => onAct(current + 1));
-  del.addEventListener('click', () => onAct(0));
+  dec.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onAct(current - 1);
+  });
+  inc.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onAct(current + 1);
+  });
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onAct(0);
+  });
 }
 
 export type GroupingTransformOptions = {

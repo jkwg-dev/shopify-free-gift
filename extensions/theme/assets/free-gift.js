@@ -560,9 +560,18 @@
         if (node.isConnected) setDisabled(false);
       });
     };
-    dec.addEventListener("click", () => onAct(current - 1));
-    inc.addEventListener("click", () => onAct(current + 1));
-    del.addEventListener("click", () => onAct(0));
+    dec.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onAct(current - 1);
+    });
+    inc.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onAct(current + 1);
+    });
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onAct(0);
+    });
   }
   function applyTwoGroupLayout(itemsEl, plan, opts) {
     var _a2, _b2;
@@ -1020,6 +1029,7 @@
     var _a2;
     const card = document.createElement("div");
     card.className = "fge-card is-selected";
+    card.addEventListener("click", (e) => e.stopPropagation());
     const anyAvailable = group.variants.some((v) => v.available);
     if (!anyAvailable) card.classList.add("is-unavailable");
     const selected = (_a2 = group.variants.find((v) => v.variantId === selectedVariantId)) != null ? _a2 : group.variants[0];
@@ -1068,7 +1078,10 @@
         btn.classList.add("is-unavailable");
         btn.setAttribute("aria-label", `${v.variantLabel} (currently unavailable)`);
       } else {
-        btn.addEventListener("click", () => handlers.onChoose(compoundKey, v.variantId));
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          handlers.onChoose(compoundKey, v.variantId);
+        });
       }
       picker.append(btn);
     }
@@ -1098,7 +1111,11 @@
     radio.checked = productSelected;
     radio.disabled = !anyAvailable;
     radio.setAttribute("aria-label", productLabel);
-    radio.addEventListener("change", () => handlers.onChoose(tierId, defaultPick.optionId));
+    card.addEventListener("click", (e) => e.stopPropagation());
+    radio.addEventListener("change", (e) => {
+      e.stopPropagation();
+      handlers.onChoose(tierId, defaultPick.optionId);
+    });
     const body = document.createElement("div");
     body.className = "fge-card__body";
     const name = document.createElement("div");
@@ -1139,7 +1156,10 @@
         btn.classList.add("is-unavailable");
         btn.setAttribute("aria-label", `${opt.variantLabel} (currently unavailable)`);
       } else {
-        btn.addEventListener("click", () => handlers.onChoose(tierId, opt.optionId));
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          handlers.onChoose(tierId, opt.optionId);
+        });
       }
       picker.append(btn);
     }
@@ -1158,7 +1178,11 @@
     radio.value = opt.optionId;
     radio.checked = selected;
     radio.disabled = !available;
-    radio.addEventListener("change", () => handlers.onChoose(tierId, opt.optionId));
+    card.addEventListener("click", (e) => e.stopPropagation());
+    radio.addEventListener("change", (e) => {
+      e.stopPropagation();
+      handlers.onChoose(tierId, opt.optionId);
+    });
     const body = document.createElement("div");
     body.className = "fge-card__body";
     const name = document.createElement("div");
@@ -1185,7 +1209,11 @@
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = !declined2;
-    cb.addEventListener("change", () => handlers.onDeclineToggle(!cb.checked));
+    label.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", (e) => {
+      e.stopPropagation();
+      handlers.onDeclineToggle(!cb.checked);
+    });
     label.append(cb, document.createTextNode(" Add my free gift"));
     return label;
   }
@@ -2222,6 +2250,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
     const row = preRow !== void 0 ? lastPlan.buys.find((r) => r.variantId === preRow.variantId) : void 0;
     await refreshDawnTotals();
+    for (const section of sections) section.attach();
     schedule(perceptionConfig);
     if (!result.applied) return fail;
     return {

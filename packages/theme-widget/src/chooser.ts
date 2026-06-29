@@ -280,6 +280,7 @@ function renderAndProductCard(
 ): HTMLElement {
   const card = document.createElement('div');
   card.className = 'fge-card is-selected';
+  card.addEventListener('click', (e) => e.stopPropagation());
   const anyAvailable = group.variants.some((v) => v.available);
   if (!anyAvailable) card.classList.add('is-unavailable');
 
@@ -340,7 +341,10 @@ function renderAndVariantChips(
       btn.classList.add('is-unavailable');
       btn.setAttribute('aria-label', `${v.variantLabel} (currently unavailable)`);
     } else {
-      btn.addEventListener('click', () => handlers.onChoose(compoundKey, v.variantId));
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handlers.onChoose(compoundKey, v.variantId);
+      });
     }
     picker.append(btn);
   }
@@ -388,7 +392,11 @@ function renderProductGroup(
   // Clean accessible name = the product name. Without it the label-text name would also absorb the
   // variant chips' button text ("Ice Dawn"). The chips are separately navigable buttons.
   radio.setAttribute('aria-label', productLabel);
-  radio.addEventListener('change', () => handlers.onChoose(tierId, defaultPick.optionId));
+  card.addEventListener('click', (e) => e.stopPropagation());
+  radio.addEventListener('change', (e) => {
+    e.stopPropagation();
+    handlers.onChoose(tierId, defaultPick.optionId);
+  });
 
   const body = document.createElement('div');
   body.className = 'fge-card__body';
@@ -441,7 +449,10 @@ function renderVariantChips(
       btn.classList.add('is-unavailable');
       btn.setAttribute('aria-label', `${opt.variantLabel} (currently unavailable)`);
     } else {
-      btn.addEventListener('click', () => handlers.onChoose(tierId, opt.optionId));
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handlers.onChoose(tierId, opt.optionId);
+      });
     }
     picker.append(btn);
   }
@@ -468,7 +479,11 @@ function renderOptionCard(
   radio.value = opt.optionId;
   radio.checked = selected;
   radio.disabled = !available;
-  radio.addEventListener('change', () => handlers.onChoose(tierId, opt.optionId));
+  card.addEventListener('click', (e) => e.stopPropagation());
+  radio.addEventListener('change', (e) => {
+    e.stopPropagation();
+    handlers.onChoose(tierId, opt.optionId);
+  });
 
   const body = document.createElement('div');
   body.className = 'fge-card__body';
@@ -499,7 +514,11 @@ function renderDecline(declined: boolean, handlers: ChooserHandlers): HTMLElemen
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.checked = !declined;
-  cb.addEventListener('change', () => handlers.onDeclineToggle(!cb.checked));
+  label.addEventListener('click', (e) => e.stopPropagation());
+  cb.addEventListener('change', (e) => {
+    e.stopPropagation();
+    handlers.onDeclineToggle(!cb.checked);
+  });
   label.append(cb, document.createTextNode(' Add my free gift'));
   return label;
 }

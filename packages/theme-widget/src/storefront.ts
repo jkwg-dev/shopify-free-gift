@@ -627,6 +627,9 @@ async function onMergedBuyQtyChange(
   const row =
     preRow !== undefined ? lastPlan.buys.find((r) => r.variantId === preRow.variantId) : undefined;
   await refreshDawnTotals();
+  // The section swap wipes our line transforms (hidden gifts, steppers); explicitly re-attach so the
+  // chooser is re-mounted and applyTwoGroupLayout re-hides gift lines + re-injects steppers.
+  for (const section of sections) section.attach();
   schedule(perceptionConfig);
   if (!result.applied) return fail;
   return {
