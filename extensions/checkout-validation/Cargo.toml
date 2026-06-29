@@ -1,0 +1,17 @@
+[package]
+name = "fge_checkout_gift_gate"
+version = "0.1.0"
+edition = "2021"
+
+# Cart & Checkout Validation Function (Approach A). RUST is a deliberate, documented exception to the
+# repo's "TypeScript everywhere" rule (the JS/TS Function build does not work under pnpm + Shopify CLI
+# 3.91 / Javy). This crate is isolated: NOT a pnpm/Turborepo package (no package.json), built only by
+# `cargo` (the Shopify CLI runs [build].command at deploy). No effect on the JS packages.
+
+[dependencies]
+shopify_function = "1.1.0"
+
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true

@@ -1,0 +1,22 @@
+# Cart & Checkout Validation Function (RUST). Blocks checkout when an FGE `_fge_gift` line is no longer
+# free (Approach A — see docs/checkout-validation-function-design.md). RUST is a deliberate, documented
+# exception to the repo's "TypeScript everywhere" rule: the JS/TS Function build does not work under
+# pnpm + Shopify CLI 3.91 (Javy), whereas Rust compiles directly to wasm via cargo. VF-1 declares intent
+# + builds the wasm; deploy/activation is VF-2.
+api_version = "2026-04"
+
+[[extensions]]
+uid = "6d8f62f5-68de-fb89-8b03-169c05eaef7ca98ca7c8"
+type = "function"
+name = "FGE free-gift checkout gate"
+handle = "fge-checkout-gift-gate"
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/cart_validations_generate_run.graphql"
+  export = "cart_validations_generate_run"
+
+  [extensions.build]
+  command = "cargo build --target=wasm32-unknown-unknown --release"
+  path = "target/wasm32-unknown-unknown/release/fge_checkout_gift_gate.wasm"
+  watch = ["src/**/*.rs"]

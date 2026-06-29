@@ -1,0 +1,15 @@
+query Input {
+  cart {
+    lines {
+      quantity
+      cost {
+        totalAmount {
+          amount
+        }
+      }
+      attribute(key: "_fge_gift") {
+        value
+      }
+    }
+  }
+}

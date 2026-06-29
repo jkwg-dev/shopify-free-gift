@@ -1,20 +1,21 @@
 # Design — Cart & Checkout Validation Function: hard-block a non-qualifying free-gift line
 
-**Status:** ⛔ **SHELVED at VF-2 (build/deploy) — the function logic + design are sound; the BUILD
-toolchain is the blocker.** Shopify CLI 3.91.0 will not build a JS/TS function in this pnpm + Turborepo
-monorepo: it demands an explicit `[build].command` that emits `dist/index.wasm` (the documented JS
-auto-build never engaged even with `@shopify/shopify_function` v2 installed + resolvable), it shells out
-to `npm` (conflicting with the pnpm workspace — the CLI scaffold itself failed: "Cannot convert undefined
-or null to object"), and a self-written Javy build can't inject the Shopify `ShopifyFunction` host glue
-(so it would build a Wasm that fails at runtime). Decision: **do not ship a Function.** The
-`extensions/checkout-validation` package was **removed** (a non-building Function extension breaks
-`shopify app deploy` for ALL extensions). The drop-below-threshold race remains mitigated by the **native
-BXGY discount minimum** (Shopify reverts a lingering gift to full price below the tier minimum — no
-revenue leak, empirically confirmed) **+ the storefront widget's reconciliation**; the **accepted
-residual** is that an express-checkout (Shop Pay / Apple Pay) lingering gift line is **charged, not
-hard-blocked**. To revisit: a **Rust** function (deterministic `cargo`→wasm, Shopify-recommended, no
-Javy/npm/pnpm friction) is the clean path — the rule below ports directly. Everything below is retained
-as the spec for that future revisit.
+**Status:** ✅ **VF-1 BUILT in RUST** (`extensions/checkout-validation`) — `cargo build --target
+wasm32-unknown-unknown --release` → 52 kB wasm (< 256 kB limit), `cargo test` 6/6, JS gate unaffected.
+VF-2 (deploy/activate) + VF-3 (dev verify) PENDING.
+
+**Why Rust (history):** the JS/TS path was abandoned — Shopify CLI 3.91.0 won't build a JS/TS function in
+this pnpm + Turborepo monorepo (Javy auto-build never engaged even with `@shopify/shopify_function` v2
+resolvable; the CLI shells out to npm; a self-built Javy can't inject the Shopify `ShopifyFunction` host
+glue). Rust compiles directly to wasm via `cargo` with zero Javy/npm/pnpm friction — Shopify's first-class
+Function language. It is a **deliberate, documented exception to "TypeScript everywhere"** (the only non-TS
+code), **isolated** from the pnpm/Turborepo pipeline (no `package.json`, built only by `cargo`). Crate
+`shopify_function` 1.1.1; `#[typegen]`+`#[query]` generate types from `schema.graphql` (via
+`shopify app function schema`, which DID work in the monorepo) + the input query; `#[shopify_function]`
+exports `cart_validations_generate_run`. The pure rule (`has_unqualified_gift_line`) is unit-tested; the
+adapter maps the generated input to it. **PROD prereqs:** store on checkout extensibility (no
+`checkout.liquid`); build machine/CI has `rustup` + `wasm32-unknown-unknown`. The Approach-A logic below
+is unchanged; the native BXGY discount minimum + widget reconciliation remain as the layered backstops.
 **Goal:** an authoritative, server-side, can't-be-bypassed gate that blocks checkout when an FGE
 `_fge_gift` line is present but the cart no longer qualifies for that gift — covering the race where the
 client-side auto-remove lags, AND **express checkouts (Shop Pay / Apple Pay / Google Pay / PayPal) that
