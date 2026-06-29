@@ -366,11 +366,35 @@ export type GroupingTransformOptions = {
   readonly onMergedQtyChange?: MergedQtyChange | undefined;
 };
 
+// Reset ALL FGE-applied state on every line node so the next apply starts from a clean slate.
+// This is what makes the transform self-healing: a buy row wrongly hidden by a stale plan is
+// un-hidden before the current plan re-applies.
+function resetRows(lineNodes: HTMLElement[]): void {
+  for (const node of lineNodes) {
+    node.style.display = '';
+    node.removeAttribute(HIDDEN_MARK);
+    node.removeAttribute('data-fge-merged-removed');
+    node.querySelector('.fge-merged-stepper')?.remove();
+    // Restore native stepper elements that hideNativeStepper set display:none on.
+    for (const sel of [...QTY_WIDGET_SELECTORS, ...REMOVE_SELECTORS]) {
+      node.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+        el.style.display = '';
+        el.removeAttribute('aria-hidden');
+      });
+    }
+    const input = findFirst(node, QTY_INPUT_SELECTORS);
+    if (input instanceof HTMLInputElement) {
+      input.readOnly = false;
+      input.style.pointerEvents = '';
+    }
+  }
+}
+
 // Apply the chooser-only layout to one theme items container. Returns true if it applied, false if
 // it failed open. Gift lines (gets + lingering) are hidden — the chooser is the sole gift
 // representation. Split buy lines are merged; the FGE stepper is injected on all buy rows when
-// opts.onMergedQtyChange is provided. No reordering, no group headers. Idempotent: re-running on an
-// already-transformed render is a no-op; the theme's next re-render wipes our markers.
+// opts.onMergedQtyChange is provided. Self-healing: every pass resets ALL prior hides then re-applies
+// from the CURRENT plan, so a wrongly-hidden buy row never persists.
 export function applyTwoGroupLayout(
   itemsEl: HTMLElement | null,
   plan: GroupingPlan,
@@ -405,15 +429,6 @@ export function applyTwoGroupLayout(
     return false;
   }
 
-  // Idempotency: already transformed THIS render → no-op.
-  if (
-    itemsEl.querySelector('.fge-merged-stepper') !== null ||
-    itemsEl.querySelector(`[${HIDDEN_MARK}]`) !== null
-  ) {
-    (itemsEl.closest('cart-drawer-items, cart-items') ?? itemsEl).setAttribute(MARK, '');
-    return true;
-  }
-
   // FAIL OPEN (before mutating): a split buy row whose canonical node has NO line-total cell would
   // leave a stale total contradicting the subtotal — bail to the untouched theme list instead.
   for (const row of plan.buys) {
@@ -429,6 +444,9 @@ export function applyTwoGroupLayout(
     }
   }
 
+  // RESET: clear ALL prior hides, marks, and injected steppers so no stale state persists.
+  resetRows(lineNodes);
+
   // Mark on the custom-element host (cart-drawer-items / cart-items) so the FOUC mask CSS can gate on
   // it; falls back to itemsEl if no host is found (e.g. a non-Dawn theme).
   (itemsEl.closest('cart-drawer-items, cart-items') ?? itemsEl).setAttribute(MARK, '');
@@ -439,8 +457,10 @@ export function applyTwoGroupLayout(
   // single writableKey; the atomic cart/update.js with one key is trivially correct. When there are
   // no gifts, leave unsplit rows on Dawn's native stepper (no deadlock risk without a gift).
   const needsMergedOnAll = plan.hasGifts && opts.onMergedQtyChange !== undefined;
+  const buyIndexes = new Set<number>();
   let steppersInjected = 0;
   for (const row of plan.buys) {
+    if (row.interactiveIndex !== null) buyIndexes.add(row.interactiveIndex);
     const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
     if (keep != null) {
       if (row.split) {
@@ -461,6 +481,7 @@ export function applyTwoGroupLayout(
       }
     }
     for (const hideIdx of row.hideIndexes) {
+      buyIndexes.add(hideIdx);
       const sib = lineNodes[hideIdx];
       if (sib != null) {
         sib.style.display = 'none';
@@ -482,6 +503,18 @@ export function applyTwoGroupLayout(
     if (node != null) {
       node.style.display = 'none';
       node.setAttribute(HIDDEN_MARK, '');
+    }
+  }
+
+  // Final invariant: every buy row MUST be visible. If any ended up hidden (e.g. a stale plan
+  // applied on a prior pass, or a stepper repaint set display:none during a qty-0 delete), correct
+  // it and log a warning so regressions are visible.
+  for (const row of plan.buys) {
+    if (row.interactiveIndex === null) continue;
+    const node = lineNodes[row.interactiveIndex];
+    if (node != null && node.style.display === 'none' && !node.hasAttribute(HIDDEN_MARK)) {
+      node.style.display = '';
+      diag('buy row was wrongly hidden, corrected', { variant: row.variantId });
     }
   }
 

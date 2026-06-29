@@ -593,8 +593,28 @@
       onAct(0);
     });
   }
+  function resetRows(lineNodes) {
+    var _a2;
+    for (const node of lineNodes) {
+      node.style.display = "";
+      node.removeAttribute(HIDDEN_MARK);
+      node.removeAttribute("data-fge-merged-removed");
+      (_a2 = node.querySelector(".fge-merged-stepper")) == null ? void 0 : _a2.remove();
+      for (const sel of [...QTY_WIDGET_SELECTORS, ...REMOVE_SELECTORS]) {
+        node.querySelectorAll(sel).forEach((el) => {
+          el.style.display = "";
+          el.removeAttribute("aria-hidden");
+        });
+      }
+      const input = findFirst2(node, QTY_INPUT_SELECTORS);
+      if (input instanceof HTMLInputElement) {
+        input.readOnly = false;
+        input.style.pointerEvents = "";
+      }
+    }
+  }
   function applyTwoGroupLayout(itemsEl, plan, opts) {
-    var _a2, _b2;
+    var _a2;
     if (itemsEl === null) return false;
     const lineNodes = findLineNodes(itemsEl);
     diag("applyTwoGroupLayout entry:", {
@@ -618,10 +638,6 @@
       );
       return false;
     }
-    if (itemsEl.querySelector(".fge-merged-stepper") !== null || itemsEl.querySelector(`[${HIDDEN_MARK}]`) !== null) {
-      ((_a2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl).setAttribute(MARK, "");
-      return true;
-    }
     for (const row of plan.buys) {
       if (!row.split) continue;
       const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
@@ -634,10 +650,13 @@
         return false;
       }
     }
-    ((_b2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _b2 : itemsEl).setAttribute(MARK, "");
+    resetRows(lineNodes);
+    ((_a2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl).setAttribute(MARK, "");
     const needsMergedOnAll = plan.hasGifts && opts.onMergedQtyChange !== void 0;
+    const buyIndexes = /* @__PURE__ */ new Set();
     let steppersInjected = 0;
     for (const row of plan.buys) {
+      if (row.interactiveIndex !== null) buyIndexes.add(row.interactiveIndex);
       const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
       if (keep != null) {
         if (row.split) {
@@ -658,6 +677,7 @@
         }
       }
       for (const hideIdx of row.hideIndexes) {
+        buyIndexes.add(hideIdx);
         const sib = lineNodes[hideIdx];
         if (sib != null) {
           sib.style.display = "none";
@@ -677,6 +697,14 @@
       if (node != null) {
         node.style.display = "none";
         node.setAttribute(HIDDEN_MARK, "");
+      }
+    }
+    for (const row of plan.buys) {
+      if (row.interactiveIndex === null) continue;
+      const node = lineNodes[row.interactiveIndex];
+      if (node != null && node.style.display === "none" && !node.hasAttribute(HIDDEN_MARK)) {
+        node.style.display = "";
+        diag("buy row was wrongly hidden, corrected", { variant: row.variantId });
       }
     }
     diag("applyTwoGroupLayout done:", {
@@ -2496,7 +2524,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       onReattach: (_context, itemsEl) => {
         remask(itemsEl);
         const workPending = running || pending || timer !== void 0;
-        if (lastPlan === null) {
+        if (lastPlan === null || workPending) {
           if (!workPending) liftMask(itemsEl);
           syncNativeInputs(itemsEl, lastCartQuantities);
           return;
@@ -2504,7 +2532,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         if (!applyTwoGroupLayout(itemsEl, lastPlan, {
           onMergedQtyChange: onMergedBuyQtyChange
         })) {
-          if (!workPending) liftMask(itemsEl);
+          liftMask(itemsEl);
         }
         syncNativeInputs(itemsEl, lastCartQuantities);
       }

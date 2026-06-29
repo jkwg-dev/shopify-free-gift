@@ -749,11 +749,12 @@ function init(): void {
     drawerSelector: config.drawerSelector,
     onReattach: (_context, itemsEl) => {
       remask(itemsEl);
-      // Don't show raw (ungrouped) state while a reconcile is running, queued, or about to start
-      // (debounce timer pending). The reconcile's refreshGrouping will re-call attach() with a
-      // fresh plan that matches the new DOM. The 2s mask timeout is the backstop.
+      // Don't apply a stale plan while a reconcile is running, queued, or about to start (debounce
+      // timer pending). The reconcile's refreshGrouping will re-call attach() with a fresh plan
+      // that matches the new DOM. The mask covers the brief ungrouped window; the 2s timeout is
+      // the backstop.
       const workPending = running || pending || timer !== undefined;
-      if (lastPlan === null) {
+      if (lastPlan === null || workPending) {
         if (!workPending) liftMask(itemsEl);
         syncNativeInputs(itemsEl, lastCartQuantities);
         return;
@@ -763,7 +764,7 @@ function init(): void {
           onMergedQtyChange: onMergedBuyQtyChange,
         })
       ) {
-        if (!workPending) liftMask(itemsEl);
+        liftMask(itemsEl);
       }
       syncNativeInputs(itemsEl, lastCartQuantities);
     },

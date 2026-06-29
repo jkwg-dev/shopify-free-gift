@@ -175,6 +175,92 @@ describe('applyTwoGroupLayout — merged stepper on unsplit buy rows (Section O)
   });
 });
 
+describe('applyTwoGroupLayout — self-healing (stale-plan regression)', () => {
+  it('a buy row wrongly hidden by a stale plan is un-hidden when the correct plan applies', () => {
+    const itemsEl = buildDawnItems(2);
+    document.body.appendChild(itemsEl);
+
+    // Stale plan: row 0 is a gift, row 1 is a buy.
+    const stalePlan = plan({
+      buys: [buyRow({ variantId: 200, interactiveIndex: 1 })],
+      gets: [{ index: 0, key: 'k0', variantId: 100 }],
+      lineCount: 2,
+    });
+    applyTwoGroupLayout(itemsEl, stalePlan, {});
+
+    const rows = itemsEl.querySelectorAll('.cart-item');
+    expect((rows[0] as HTMLElement).style.display).toBe('none'); // gift hidden
+
+    // Current plan: row 0 is a buy, row 1 is a gift (cart composition changed).
+    const currentPlan = plan({
+      buys: [buyRow({ variantId: 100, interactiveIndex: 0 })],
+      gets: [{ index: 1, key: 'k1', variantId: 200 }],
+      lineCount: 2,
+    });
+    applyTwoGroupLayout(itemsEl, currentPlan, {});
+
+    // Row 0 must be visible (buy), row 1 must be hidden (gift).
+    expect((rows[0] as HTMLElement).style.display).toBe('');
+    expect((rows[1] as HTMLElement).style.display).toBe('none');
+  });
+
+  it('re-applying the same plan re-injects stepper and hides correctly (no idempotency skip)', () => {
+    const itemsEl = buildDawnItems(2);
+    document.body.appendChild(itemsEl);
+
+    const giftRef: GiftLineRef = { index: 1, key: 'k1', variantId: 200 };
+    const p = plan({
+      buys: [buyRow({ variantId: 100, interactiveIndex: 0, writableKeys: ['k0'] })],
+      gets: [giftRef],
+      lineCount: 2,
+    });
+
+    const onChange = vi.fn();
+    applyTwoGroupLayout(itemsEl, p, { onMergedQtyChange: onChange });
+    applyTwoGroupLayout(itemsEl, p, { onMergedQtyChange: onChange });
+
+    const rows = itemsEl.querySelectorAll('.cart-item');
+    expect(rows[0]!.querySelector('.fge-merged-stepper')).not.toBeNull();
+    expect((rows[0] as HTMLElement).style.display).toBe('');
+    expect((rows[1] as HTMLElement).style.display).toBe('none');
+    // Only one stepper per row (not doubled).
+    expect(rows[0]!.querySelectorAll('.fge-merged-stepper')).toHaveLength(1);
+  });
+
+  it('native stepper is restored when gifts disappear and merged stepper is no longer needed', () => {
+    const itemsEl = buildDawnItems(2);
+    document.body.appendChild(itemsEl);
+
+    // First apply: gifts exist, merged stepper injected, native hidden.
+    const withGifts = plan({
+      buys: [buyRow({ variantId: 100, interactiveIndex: 0, writableKeys: ['k0'] })],
+      gets: [{ index: 1, key: 'k1', variantId: 200 }],
+      lineCount: 2,
+    });
+    applyTwoGroupLayout(itemsEl, withGifts, { onMergedQtyChange: vi.fn() });
+
+    const row0 = itemsEl.querySelectorAll('.cart-item')[0]!;
+    expect(row0.querySelector('.fge-merged-stepper')).not.toBeNull();
+    expect((row0.querySelector('quantity-input') as HTMLElement).style.display).toBe('none');
+
+    // Second apply: no gifts, only 1 buy row. Native stepper should be restored.
+    const noGifts = plan({
+      buys: [buyRow({ variantId: 100, interactiveIndex: 0 })],
+      gets: [],
+      lineCount: 1,
+    });
+    // Re-build items to match new lineCount (1 row).
+    const newItems = buildDawnItems(1);
+    document.body.innerHTML = '';
+    document.body.appendChild(newItems);
+    applyTwoGroupLayout(newItems, noGifts, { onMergedQtyChange: vi.fn() });
+
+    const newRow = newItems.querySelectorAll('.cart-item')[0]!;
+    expect(newRow.querySelector('.fge-merged-stepper')).toBeNull();
+    expect((newRow.querySelector('quantity-input') as HTMLElement).style.display).toBe('');
+  });
+});
+
 describe('syncNativeInputs', () => {
   it('syncs native inputs to authoritative quantities, skipping merged steppers', () => {
     const itemsEl = buildDawnItems(2);
