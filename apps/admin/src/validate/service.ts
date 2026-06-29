@@ -239,7 +239,17 @@ export async function resolveValidate(
   // is all-or-nothing: any one unavailable required gift -> the whole tier yields no gift (one BXGY code
   // grants the AND set together; it cannot partially grant). Channel reads only the winning gifts.
   const giftVariantIds = winning.gifts.map((g: Gift) => g.variantId);
-  const channel = await deps.fetchChannelAvailability(giftVariantIds);
+  // The availability lookup is a Shopify call on the checkout-click path; it MUST NOT 500 the widget
+  // (same fail-safe as the mint below). FAIL CLOSED: if we cannot confirm the winning gift is published
+  // + in stock (e.g. publishedOnPublication errors under the read_products token for an unpublished
+  // product), do not promise it — degrade to gift-unavailable so the widget greys it, never throws.
+  let channel: ReadonlyMap<string, GiftChannelAvailability>;
+  try {
+    channel = await deps.fetchChannelAvailability(giftVariantIds);
+  } catch (err) {
+    console.error('[validate] gift channel-availability lookup failed; degrading to no-gift', err);
+    return { status: 'no-gift', reason: 'gift-unavailable', subtotal: resolved.subtotal };
+  }
   for (const variantId of giftVariantIds) {
     const priced = pricingById.has(variantId);
     const ch = channel.get(variantId);

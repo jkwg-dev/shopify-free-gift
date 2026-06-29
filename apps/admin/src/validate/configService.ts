@@ -92,7 +92,16 @@ export async function resolveCampaignConfig(
   const [pricing, meta, channel] = await Promise.all([
     deps.priceVariants(giftVariantIds, { country: request.countryCode }),
     deps.fetchVariantMeta(giftVariantIds),
-    deps.fetchChannelAvailability(giftVariantIds),
+    // The availability lookup MUST NOT 500 the whole config (which would render NOTHING in the widget).
+    // FAIL CLOSED: on error (e.g. publishedOnPublication erroring under read_products for an unpublished
+    // gift), fall back to an empty map -> every gift reads not-published -> greyed, but the structure
+    // still renders. The merchant resolves it by publishing the gift; /validate is the hard backstop.
+    deps
+      .fetchChannelAvailability(giftVariantIds)
+      .catch((err): ReadonlyMap<string, GiftChannelAvailability> => {
+        console.error('[config] gift channel-availability lookup failed; greying gifts', err);
+        return new Map();
+      }),
   ]);
   const pricedIds = new Set(pricing.map((p) => p.id));
   const metaById = new Map(meta.map((m) => [m.id, m] as const));

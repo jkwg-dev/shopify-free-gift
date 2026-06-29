@@ -239,6 +239,24 @@ describe('resolveCampaignConfig', () => {
     expect(ice.variantLabel).toBe(ICE); // fallback label when meta is missing
   });
 
+  it('renders the config with gifts greyed (never 500s) when the channel lookup THROWS', async () => {
+    // Regression: an unpublished gift made the channel fetch throw, 500ing /config so the widget
+    // rendered NOTHING. It must fail closed — return the structure with every gift not-available.
+    const res = await resolveCampaignConfig(
+      's.myshopify.com',
+      { presentmentCurrency: 'USD', countryCode: 'US' },
+      deps(ctx, { fetchChannelAvailability: () => Promise.reject(new Error('channel boom')) }),
+    );
+    expect(res.status).toBe('active');
+    if (res.status !== 'active') return;
+    const t1 = res.tiers[0]!;
+    if (t1.gift.kind !== 'OR') throw new Error('expected OR');
+    expect(t1.gift.options.every((o) => !o.available)).toBe(true); // greyed, not thrown
+    const t2 = res.tiers[1]!;
+    if (t2.gift.kind !== 'AND') throw new Error('expected AND');
+    expect(t2.gift.gifts.every((g) => !g.available)).toBe(true);
+  });
+
   it('marks an in-stock gift unavailable when it is NOT published to the Online Store (the 422 leak)', async () => {
     // Ice is priced + in stock + resolved but its product is not on the Online Store. Pre-Stage-E it
     // would have been offered (available:true) and 422'd at /cart/add; now it is proactively disabled.

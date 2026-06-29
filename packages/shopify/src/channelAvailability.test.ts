@@ -88,6 +88,35 @@ describe('fetchGiftChannelAvailability', () => {
     expect([...map.keys()]).toEqual(['gid://shopify/ProductVariant/1']);
   });
 
+  it('skips a variant whose product is null (partial error) instead of dereferencing it', async () => {
+    const { fetch } = mockFetch([
+      {
+        body: {
+          data: {
+            nodes: [
+              node('gid://shopify/ProductVariant/1', true, true),
+              {
+                __typename: 'ProductVariant',
+                id: 'gid://shopify/ProductVariant/2',
+                availableForSale: true,
+                product: null,
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    const map = await fetchGiftChannelAvailability(
+      client,
+      ['gid://shopify/ProductVariant/1', 'gid://shopify/ProductVariant/2'],
+      PUB,
+    );
+
+    expect([...map.keys()]).toEqual(['gid://shopify/ProductVariant/1']);
+  });
+
   it('batches ids in chunks of 250', async () => {
     const ids = Array.from({ length: 251 }, (_, i) => `gid://shopify/ProductVariant/${i}`);
     const { fetch, calls } = mockFetch([

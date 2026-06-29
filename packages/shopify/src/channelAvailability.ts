@@ -39,8 +39,15 @@ type ChannelNode =
 type ChannelResponse = { readonly nodes: readonly (ChannelNode | null)[] };
 type VariantChannelNode = Extract<ChannelNode, { __typename: 'ProductVariant' }>;
 
+// Defensive: require the nested `product` to be present. A partial GraphQL error could null it while
+// still returning the node — skipping it (rather than dereferencing null) keeps the read from throwing;
+// a missing entry is treated by callers as not-offerable (fail closed).
 function isVariantNode(node: ChannelNode | null): node is VariantChannelNode {
-  return node !== null && node.__typename === 'ProductVariant';
+  return (
+    node !== null &&
+    node.__typename === 'ProductVariant' &&
+    (node as VariantChannelNode).product != null
+  );
 }
 
 // Read per-variant stock + per-product Online-Store publish status for the given gift variants.

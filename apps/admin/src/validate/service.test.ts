@@ -134,6 +134,7 @@ function makeDeps(
     campaign?: Campaign | null;
     prices?: PriceTable;
     channel?: ChannelOverride;
+    channelThrows?: boolean;
     now?: () => Date;
     failMint?: boolean;
   } = {},
@@ -151,7 +152,9 @@ function makeDeps(
         campaign === null ? null : { shopId: 'shop1', baseCurrency: 'USD', campaign },
       ),
     priceVariants: makePricer(options.prices ?? DEFAULT_PRICES),
-    fetchChannelAvailability: makeChannel(options.channel ?? {}),
+    fetchChannelAvailability: options.channelThrows
+      ? () => Promise.reject(new Error('channel boom'))
+      : makeChannel(options.channel ?? {}),
     mappingStore: store,
     qualifyingCollectionId: 'gid://shopify/Collection/test',
     now: options.now ?? (() => NOW),
@@ -541,6 +544,24 @@ describe('resolveValidate — no-gift paths', () => {
       reason: 'gift-unavailable',
       subtotal: money(12000, 'USD'),
     });
+  });
+
+  it('degrades to no-gift (never 500s) when the channel-availability lookup THROWS', async () => {
+    // Regression: an unpublished gift made publishedOnPublication error under read_products, so the
+    // channel fetch threw uncaught and /validate 500'd (widget rendered nothing). It must fail closed.
+    const { deps, gateway } = makeDeps({ channelThrows: true });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }), // $120 -> qualifies t2
+      deps,
+    );
+
+    expect(result).toEqual({
+      status: 'no-gift',
+      reason: 'gift-unavailable',
+      subtotal: money(12000, 'USD'),
+    });
+    expect(gateway.createCount).toBe(0); // never mint when availability is unconfirmable
   });
 
   it('treats an AND tier as all-or-nothing: one unavailable required gift -> no gift', async () => {
