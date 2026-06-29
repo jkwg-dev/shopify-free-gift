@@ -125,7 +125,6 @@ let sections: CartSection[] = [];
 // after each reconcile from a fresh /cart.js read. The cartSections re-attach hook applies it to each
 // surface's line list. Presentation-only — no cart write.
 let lastPlan: GroupingPlan | null = null;
-let lastCurrency = '';
 
 function toGroupingLines(cart: AjaxCart): RawCartLine[] {
   return cart.items.map((item, index) => ({
@@ -146,7 +145,6 @@ function toGroupingLines(cart: AjaxCart): RawCartLine[] {
 async function refreshGrouping(): Promise<void> {
   try {
     const cart = await getCart();
-    lastCurrency = cart.currency;
     lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
   } catch {
     return;
@@ -395,7 +393,6 @@ async function initPerception(config: WidgetConfig): Promise<void> {
         return;
       }
       applyTwoGroupLayout(itemsEl, lastPlan, {
-        currency: lastCurrency,
         ourCode: lastDiscount,
         disableSplitBuyStepper: true, // Stage 1: the merged-control write is Stage 2
       });

@@ -292,18 +292,17 @@
   var GETS_SUBLABEL = "Added free";
   var LINGERING_LABEL = "Free gift \u2014 pending";
   var FREE_GIFT_LABEL = "Free gift";
-  var LINE_SELECTORS = [
-    ".cart-item",
-    '[id^="CartDrawer-Item-"]',
-    '[id^="CartItem-"]',
-    "cart-item",
-    ".cart__row"
-  ];
-  var QTY_TEXT_SELECTORS = [".quantity__input", "input.quantity__input", '[name="updates[]"]'];
-  var QTY_CONTROL_SELECTORS = [".cart-item__quantity", ".quantity", "quantity-input"];
+  var LINE_SELECTORS = [".cart-item", '[id^="CartDrawer-Item-"]', '[id^="CartItem-"]', "cart-item", ".cart__row"];
+  var TOTALS_SELECTOR = ".cart-item__totals";
+  var FINAL_PRICE_SELECTORS = [".price--end", ".cart-item__final-price"];
+  var OLD_PRICE_SELECTORS = [".cart-item__old-price"];
+  var PRICE_WRAPPER = ".cart-item__price-wrapper";
+  var QTY_CELL_SELECTORS = [".cart-item__quantity"];
+  var QTY_INPUT_SELECTORS = [".quantity__input", 'input[name="updates[]"]'];
+  var QTY_BUTTON_SELECTORS = [".quantity__button", "cart-remove-button", ".button--tertiary"];
   var REMOVE_SELECTORS = ["cart-remove-button", ".button--tertiary", '[id^="Remove-"]'];
-  var PRICE_SELECTORS = [".cart-item__price-wrapper", ".cart-item__totals", ".cart-item__price"];
   var DISCOUNT_SELECTORS = ["ul.discounts", ".cart-item__discounts", ".discounts"];
+  var BADGE_HOST_SELECTORS = [TOTALS_SELECTOR, PRICE_WRAPPER, ".cart-item__price"];
   var MARK = "data-fge-grouped";
   var HIDDEN_MARK = "data-fge-merged-hidden";
   function findFirst2(root2, selectors) {
@@ -320,12 +319,87 @@
     }
     return [];
   }
-  function formatMoney(minorUnits, currency) {
-    try {
-      return new Intl.NumberFormat(void 0, { style: "currency", currency }).format(minorUnits / 100);
-    } catch {
-      return String(minorUnits / 100);
+  function reformatPriceText(currentText, sumMinorUnits) {
+    const m = currentText.match(/\d[\d.,\u00A0\u202F' ]*\d|\d/);
+    if (m === null) return null;
+    const token = m[0];
+    const lastDot = token.lastIndexOf(".");
+    const lastComma = token.lastIndexOf(",");
+    const decPos = Math.max(lastDot, lastComma);
+    let decimals = 0;
+    let decimalSep = ".";
+    if (decPos !== -1 && /^\d{1,3}$/.test(token.slice(decPos + 1))) {
+      decimals = token.length - decPos - 1;
+      decimalSep = token.charAt(decPos);
     }
+    const intText = decimals > 0 ? token.slice(0, decPos) : token;
+    const gMatch = intText.match(/[.,\u00A0\u202F' ]/);
+    const groupSep = gMatch !== null ? gMatch[0] : decimalSep === "." ? "," : ".";
+    const fixed = (sumMinorUnits / Math.pow(10, decimals)).toFixed(decimals);
+    const dot = fixed.indexOf(".");
+    const intPart = dot === -1 ? fixed : fixed.slice(0, dot);
+    const fracPart = dot === -1 ? "" : fixed.slice(dot + 1);
+    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, groupSep);
+    const num = decimals > 0 ? `${grouped}${decimalSep}${fracPart}` : grouped;
+    return currentText.replace(token, num);
+  }
+  function reformatInPlace(el, sumMinorUnits) {
+    var _a2;
+    if (el === null) return;
+    const next = reformatPriceText((_a2 = el.textContent) != null ? _a2 : "", sumMinorUnits);
+    if (next !== null) el.textContent = next;
+  }
+  function setLineTotals(node, sumFinal, sumOriginal) {
+    node.querySelectorAll(TOTALS_SELECTOR).forEach((cell) => {
+      var _a2, _b2, _c2;
+      const wrapper = (_a2 = cell.querySelector(PRICE_WRAPPER)) != null ? _a2 : cell;
+      const finalEl = (_c2 = (_b2 = findFirst2(wrapper, FINAL_PRICE_SELECTORS)) != null ? _b2 : wrapper.querySelector(".price:not(.cart-item__old-price)")) != null ? _c2 : wrapper;
+      reformatInPlace(finalEl, sumFinal);
+      reformatInPlace(findFirst2(wrapper, OLD_PRICE_SELECTORS), sumOriginal);
+    });
+  }
+  function showMergedQtyReadOnly(node, qty) {
+    const input = findFirst2(node, QTY_INPUT_SELECTORS);
+    if (input instanceof HTMLInputElement) {
+      input.value = String(qty);
+      input.setAttribute("value", String(qty));
+      input.readOnly = true;
+      input.style.pointerEvents = "none";
+    }
+    for (const sel of QTY_BUTTON_SELECTORS) {
+      node.querySelectorAll(sel).forEach((el) => {
+        el.style.display = "none";
+        el.setAttribute("aria-hidden", "true");
+      });
+    }
+  }
+  function hideControls(node) {
+    for (const sel of [...QTY_CELL_SELECTORS, ...REMOVE_SELECTORS]) {
+      node.querySelectorAll(sel).forEach((el) => {
+        el.style.display = "none";
+        el.setAttribute("aria-hidden", "true");
+      });
+    }
+  }
+  function relabelOurDiscount(node, ourCode) {
+    var _a2;
+    const discountEl = findFirst2(node, DISCOUNT_SELECTORS);
+    if (discountEl === null) return false;
+    if (ourCode === null || ((_a2 = discountEl.textContent) == null ? void 0 : _a2.includes(ourCode)) === true) {
+      discountEl.textContent = FREE_GIFT_LABEL;
+      discountEl.classList.add("fge-free-badge");
+      return true;
+    }
+    return false;
+  }
+  function injectBadge(node, text) {
+    var _a2;
+    if (node.querySelector(".fge-line-badge") !== null) return;
+    const host = (_a2 = findFirst2(node, BADGE_HOST_SELECTORS)) != null ? _a2 : node;
+    const badge = document.createElement("span");
+    badge.className = "fge fge-line-badge";
+    badge.textContent = text;
+    host.prepend(badge);
   }
   function makeHeader(line, text, sub) {
     const isRow = line.tagName === "TR";
@@ -350,54 +424,19 @@
     }
     return header;
   }
-  function setMergedQtyAndPrice(node, qty, finalPrice, currency) {
-    const qtyInput = findFirst2(node, QTY_TEXT_SELECTORS);
-    if (qtyInput instanceof HTMLInputElement) {
-      qtyInput.value = String(qty);
-    } else if (qtyInput !== null) {
-      qtyInput.textContent = String(qty);
-    }
-    const priceEl = findFirst2(node, PRICE_SELECTORS);
-    if (priceEl !== null) {
-      priceEl.textContent = formatMoney(finalPrice, currency);
-    }
-  }
-  function disableControls(node) {
-    for (const sel of [...QTY_CONTROL_SELECTORS, ...REMOVE_SELECTORS]) {
-      node.querySelectorAll(sel).forEach((el) => {
-        el.style.display = "none";
-        el.setAttribute("aria-hidden", "true");
-      });
-    }
-  }
-  function relabelOurDiscount(node, ourCode) {
-    var _a2;
-    const discountEl = findFirst2(node, DISCOUNT_SELECTORS);
-    if (discountEl === null) return false;
-    if (ourCode === null || ((_a2 = discountEl.textContent) == null ? void 0 : _a2.includes(ourCode)) === true) {
-      discountEl.textContent = FREE_GIFT_LABEL;
-      discountEl.classList.add("fge-free-badge");
-      return true;
-    }
-    return false;
-  }
-  function injectBadge(node, text) {
-    var _a2;
-    if (node.querySelector(".fge-line-badge") !== null) return;
-    const host = (_a2 = findFirst2(node, PRICE_SELECTORS)) != null ? _a2 : node;
-    const badge = document.createElement("span");
-    badge.className = "fge fge-line-badge";
-    badge.textContent = text;
-    host.prepend(badge);
-  }
   function applyTwoGroupLayout(itemsEl, plan, opts) {
-    var _a2, _b2, _c2, _d, _e;
+    var _a2, _b2, _c2, _d, _e, _f;
     if (itemsEl === null) return false;
     const lineNodes = findLineNodes(itemsEl);
     const total = plan.gets.length + plan.lingering.length + plan.buys.reduce((n, b) => n + b.displayIndexes.length, 0);
     if (total === 0 || lineNodes.length !== total) return false;
     if (itemsEl.querySelector(".fge-group-head") !== null) return true;
-    const parent = (_b2 = (_a2 = lineNodes[0]) == null ? void 0 : _a2.parentElement) != null ? _b2 : null;
+    for (const row of plan.buys) {
+      if (!row.split) continue;
+      const keep = lineNodes[(_a2 = row.displayIndexes[0]) != null ? _a2 : -1];
+      if (keep == null || keep.querySelector(TOTALS_SELECTOR) === null) return false;
+    }
+    const parent = (_c2 = (_b2 = lineNodes[0]) == null ? void 0 : _b2.parentElement) != null ? _c2 : null;
     if (parent === null) return false;
     itemsEl.setAttribute(MARK, "");
     if (plan.buys.length > 0 && plan.hasGifts) {
@@ -408,8 +447,10 @@
       const [keepIdx, ...hideIdxs] = row.displayIndexes;
       const keep = keepIdx === void 0 ? null : lineNodes[keepIdx];
       if (keep == null) continue;
-      setMergedQtyAndPrice(keep, row.totalQuantity, row.totalFinalPrice, opts.currency);
-      if (row.split && opts.disableSplitBuyStepper) disableControls(keep);
+      if (row.split) {
+        setLineTotals(keep, row.totalFinalPrice, row.totalOriginalPrice);
+        if (opts.disableSplitBuyStepper) showMergedQtyReadOnly(keep, row.totalQuantity);
+      }
       parent.append(keep);
       for (const hideIdx of hideIdxs) {
         const sib = lineNodes[hideIdx];
@@ -422,20 +463,15 @@
     }
     if (plan.hasGifts) {
       const giftCount = plan.gets.length + plan.lingering.length;
-      const firstGiftIdx = (_e = (_c2 = plan.gets[0]) == null ? void 0 : _c2.index) != null ? _e : (_d = plan.lingering[0]) == null ? void 0 : _d.index;
+      const firstGiftIdx = (_f = (_d = plan.gets[0]) == null ? void 0 : _d.index) != null ? _f : (_e = plan.lingering[0]) == null ? void 0 : _e.index;
       const firstGift = firstGiftIdx === void 0 ? null : lineNodes[firstGiftIdx];
       if (firstGift != null) {
-        const header = makeHeader(
-          firstGift,
-          giftCount > 1 ? GETS_HEADER_MANY : GETS_HEADER_ONE,
-          GETS_SUBLABEL
-        );
-        parent.append(header);
+        parent.append(makeHeader(firstGift, giftCount > 1 ? GETS_HEADER_MANY : GETS_HEADER_ONE, GETS_SUBLABEL));
       }
       for (const ref of plan.gets) {
         const node = lineNodes[ref.index];
         if (node == null) continue;
-        disableControls(node);
+        hideControls(node);
         if (!relabelOurDiscount(node, opts.ourCode)) injectBadge(node, FREE_GIFT_LABEL);
         node.classList.add("fge-gift-line");
         parent.append(node);
@@ -443,7 +479,7 @@
       for (const ref of plan.lingering) {
         const node = lineNodes[ref.index];
         if (node == null) continue;
-        disableControls(node);
+        hideControls(node);
         node.classList.add("fge-gift-line", "fge-gift-line--pending");
         injectBadge(node, LINGERING_LABEL);
         parent.append(node);
@@ -1414,7 +1450,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
   var unavailableVariantIds = /* @__PURE__ */ new Set();
   var sections = [];
   var lastPlan = null;
-  var lastCurrency = "";
   function toGroupingLines(cart) {
     return cart.items.map((item, index) => {
       var _a2, _b2, _c2;
@@ -1436,7 +1471,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
   async function refreshGrouping() {
     try {
       const cart = await getCart();
-      lastCurrency = cart.currency;
       lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
     } catch {
       return;
@@ -1633,7 +1667,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
           return;
         }
         applyTwoGroupLayout(itemsEl, lastPlan, {
-          currency: lastCurrency,
           ourCode: lastDiscount,
           disableSplitBuyStepper: true
           // Stage 1: the merged-control write is Stage 2
