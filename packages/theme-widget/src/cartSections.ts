@@ -23,7 +23,12 @@ const DRAWER_SELECTORS = [
   'cart-notification',
 ];
 const PANEL_SELECTORS = ['.drawer__inner', '.cart-drawer__inner', '[role="dialog"]'];
-const HEADER_SELECTORS = ['.drawer__header', '.cart-drawer__header', '[class*="drawer__header" i]'];
+const HEADER_SELECTORS = [
+  '.drawer__header',
+  '.cart-drawer__header',
+  '.cart-drawer__head',
+  '[class*="drawer__header" i]',
+];
 const ITEMS_SELECTORS = [
   '#CartDrawer-CartItems',
   '.drawer__contents',
@@ -31,7 +36,12 @@ const ITEMS_SELECTORS = [
   '.cart-items',
   '[class*="cart-items" i]',
 ];
-const FOOTER_SELECTORS = ['.drawer__footer', '.cart-drawer__footer', '[class*="drawer__footer" i]'];
+const FOOTER_SELECTORS = [
+  '.drawer__footer',
+  '.cart-drawer__footer',
+  '.cart-drawer__bottom',
+  '[class*="drawer__footer" i]',
+];
 
 // Full /cart page (Dawn): the cart-items section re-renders on qty change; h1.title--primary is the
 // heading, #main-cart-items the list, #main-cart-footer a separate section below.

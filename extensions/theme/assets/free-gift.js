@@ -56,7 +56,7 @@
     "cart-notification"
   ];
   var PANEL_SELECTORS = [".drawer__inner", ".cart-drawer__inner", '[role="dialog"]'];
-  var HEADER_SELECTORS = [".drawer__header", ".cart-drawer__header", '[class*="drawer__header" i]'];
+  var HEADER_SELECTORS = [".drawer__header", ".cart-drawer__header", ".cart-drawer__head", '[class*="drawer__header" i]'];
   var ITEMS_SELECTORS = [
     "#CartDrawer-CartItems",
     ".drawer__contents",
@@ -64,7 +64,7 @@
     ".cart-items",
     '[class*="cart-items" i]'
   ];
-  var FOOTER_SELECTORS = [".drawer__footer", ".cart-drawer__footer", '[class*="drawer__footer" i]'];
+  var FOOTER_SELECTORS = [".drawer__footer", ".cart-drawer__footer", ".cart-drawer__bottom", '[class*="drawer__footer" i]'];
   var PAGE_HEADER_SELECTORS = ["h1.title--primary", ".title--primary"];
   var PAGE_ITEMS_SELECTORS = ["#main-cart-items", ".cart__items"];
   var PAGE_FOOTER_SELECTORS = ["#main-cart-footer"];
