@@ -4,12 +4,14 @@
 # Rules: add the rule, Activate, and set "Allow all customers to submit checkout" = ON for fail-open on
 # runtime exceptions).
 #
-# Uncertainty note: exact keys can vary by CLI version (~4.x). If `shopify app deploy` rejects a field,
-# defer to the CLI-generated config; this declares ONE validation function on the
-# cart.validations.generate.run target, JS entry `cartValidationsGenerateRun`, input from src/run.graphql.
+# This is a JavaScript/TypeScript function: Shopify CLI compiles src/run.ts to dist/index.wasm via Javy
+# (enabled by the @shopify/shopify_function dependency in package.json), so [build].command is OMITTED
+# on purpose — the CLI auto-builds JS functions. `pnpm install` MUST have run so the dependency is in
+# the workspace node_modules before `shopify app deploy`. Output path defaults to dist/index.wasm.
 api_version = "2026-04"
 
 [[extensions]]
+uid = "6d8f62f5-68de-fb89-8b03-169c05eaef7ca98ca7c8"
 type = "function"
 name = "FGE free-gift checkout gate"
 handle = "fge-checkout-gift-gate"
