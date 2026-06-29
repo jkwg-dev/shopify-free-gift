@@ -2078,22 +2078,99 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     });
   }
   var lastCartQuantities = [];
-  async function refreshGrouping() {
-    try {
-      const cart = await getCart();
-      lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
-      lastCartQuantities = cart.items.map((item) => item.quantity);
-    } catch {
-      return;
+  function domVariantIds(itemsEl) {
+    if (itemsEl === null) return [];
+    const ids = [];
+    const nodes = itemsEl.querySelectorAll(
+      '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row'
+    );
+    for (const node of nodes) {
+      const link = node.querySelector('a[href*="variant="]');
+      if (link !== null) {
+        const m = link.href.match(/variant=(\d+)/);
+        if (m !== null) ids.push(Number(m[1]));
+      }
     }
-    for (const section of sections) {
-      section.attach();
-    }
+    return ids.sort((a, b) => a - b);
   }
-  async function stampFromCart() {
+  function domMatchesCart(itemsEl, cart) {
+    const domIds = domVariantIds(itemsEl);
+    const cartIds = cart.items.map((item) => item.variant_id).sort((a, b) => a - b);
+    if (domIds.length !== cartIds.length) return false;
+    for (let i = 0; i < domIds.length; i++) {
+      if (domIds[i] !== cartIds[i]) return false;
+    }
+    return true;
+  }
+  async function refreshItemsBody(cart) {
+    const drawerSectionId = detectDrawerSectionId();
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        if (attempt > 1) await new Promise((r) => setTimeout(r, 300 * attempt));
+        const res = await fetch(`${root}?sections=${drawerSectionId}`, {
+          headers: { Accept: "application/json" }
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const html = data[drawerSectionId];
+        if (html === void 0) continue;
+        const parsed = new DOMParser().parseFromString(html, "text/html");
+        const ITEMS_SELECTORS2 = ["cart-drawer-items", "[data-cart-items]", ".cart-drawer__items"];
+        for (const sel of ITEMS_SELECTORS2) {
+          const newItems = parsed.querySelector(sel);
+          const liveItems = document.querySelector(sel);
+          if (newItems !== null && liveItems !== null) {
+            liveItems.innerHTML = newItems.innerHTML;
+            if (domMatchesCart(liveItems, cart)) {
+              return true;
+            }
+            break;
+          }
+        }
+      } catch {
+      }
+    }
+    const itemsEl = document.querySelector("cart-drawer-items, cart-items");
+    if (itemsEl !== null) {
+      const cartVariants = new Set(cart.items.map((item) => item.variant_id));
+      const nodes = Array.from(
+        itemsEl.querySelectorAll(
+          '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row'
+        )
+      );
+      for (const node of nodes) {
+        const link = node.querySelector('a[href*="variant="]');
+        if (link !== null) {
+          const m = link.href.match(/variant=(\d+)/);
+          if (m !== null && !cartVariants.has(Number(m[1]))) {
+            node.remove();
+          }
+        }
+      }
+      console.warn("[FGE-DRAWERFIX] body refetch could not converge", {
+        domKeys: domVariantIds(itemsEl),
+        cartKeys: cart.items.map((i) => i.variant_id)
+      });
+    }
+    return false;
+  }
+  async function verifiedDisplayReconcile() {
     var _a2;
     try {
       const cart = await getCart();
+      const itemsEl = document.querySelector("cart-drawer-items, cart-items");
+      if (!domMatchesCart(itemsEl, cart)) {
+        console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch", {
+          domVariants: domVariantIds(itemsEl),
+          cartVariants: cart.items.map((i) => i.variant_id)
+        });
+        await refreshItemsBody(cart);
+        for (const section of sections) section.attach();
+      }
+      lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+      lastCartQuantities = cart.items.map((item) => item.quantity);
+      for (const section of sections) section.attach();
       const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
       const buyOnlyCount = ((_a2 = cart.item_count) != null ? _a2 : 0) - giftQty;
       if (cart.total_price !== void 0 && cart.item_count !== void 0) {
@@ -2182,8 +2259,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       if (cartMutated) {
         await refreshDawnTotals();
       }
-      await refreshGrouping();
-      await stampFromCart();
+      await verifiedDisplayReconcile();
     } finally {
       markGiftWorkDone();
       selfMutating = false;
@@ -2298,7 +2374,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     new MutationObserver(() => {
       if (drawer.classList.contains("active")) {
         remaskUngrouped();
-        void refreshGrouping().then(stampFromCart);
+        void verifiedDisplayReconcile();
       }
     }).observe(drawer, { attributes: true, attributeFilter: ["class"] });
   }

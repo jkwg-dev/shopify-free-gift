@@ -155,29 +155,122 @@ function toGroupingLines(cart: AjaxCart): RawCartLine[] {
   }));
 }
 
-// Recompute the grouping plan from the live cart and re-apply it to every surface. Fail-open: on any
-// error we keep the previous plan / the theme's untouched list.
-// The most recent authoritative per-line quantities from cart.js, for syncing native theme steppers.
 let lastCartQuantities: readonly number[] = [];
 
-async function refreshGrouping(): Promise<void> {
-  try {
-    const cart = await getCart();
-    lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
-    lastCartQuantities = cart.items.map((item) => item.quantity);
-  } catch {
-    return;
+// Extract numeric variant IDs from DOM `.cart-item` nodes' product links (a[href*="variant="]).
+// Returns a sorted array so two multisets can be compared with JSON equality.
+function domVariantIds(itemsEl: HTMLElement | null): number[] {
+  if (itemsEl === null) return [];
+  const ids: number[] = [];
+  const nodes = itemsEl.querySelectorAll<HTMLElement>(
+    '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row',
+  );
+  for (const node of nodes) {
+    const link = node.querySelector<HTMLAnchorElement>('a[href*="variant="]');
+    if (link !== null) {
+      const m = link.href.match(/variant=(\d+)/);
+      if (m !== null) ids.push(Number(m[1]));
+    }
   }
-  for (const section of sections) {
-    section.attach(); // re-applies the transform via the cartSections onReattach hook
-  }
+  return ids.sort((a, b) => a - b);
 }
 
-// Stamp authoritative subtotal + badge from a fresh cart.js read. Safe to call on every reconcile and
-// on drawer open — no network section fetch, no race. Badge excludes gift lines.
-async function stampFromCart(): Promise<void> {
+// Compare DOM variant multiset to cart.js variant multiset. Returns true if they match exactly.
+function domMatchesCart(itemsEl: HTMLElement | null, cart: AjaxCart): boolean {
+  const domIds = domVariantIds(itemsEl);
+  const cartIds = cart.items.map((item) => item.variant_id).sort((a, b) => a - b);
+  if (domIds.length !== cartIds.length) return false;
+  for (let i = 0; i < domIds.length; i++) {
+    if (domIds[i] !== cartIds[i]) return false;
+  }
+  return true;
+}
+
+// Force a section-fetch replacement of the drawer items list. Called when the DOM variant set
+// diverges from cart.js (stale/duplicate nodes, missing buy nodes). Replaces only the items
+// container, then re-applies grouping. Retries up to `maxAttempts` with a short backoff to handle
+// the stale-section-render race.
+async function refreshItemsBody(cart: AjaxCart): Promise<boolean> {
+  const drawerSectionId = detectDrawerSectionId();
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, 300 * attempt));
+      const res = await fetch(`${root}?sections=${drawerSectionId}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as Record<string, string>;
+      const html = data[drawerSectionId];
+      if (html === undefined) continue;
+
+      const parsed = new DOMParser().parseFromString(html, 'text/html');
+      const ITEMS_SELECTORS = ['cart-drawer-items', '[data-cart-items]', '.cart-drawer__items'];
+      for (const sel of ITEMS_SELECTORS) {
+        const newItems = parsed.querySelector(sel);
+        const liveItems = document.querySelector(sel);
+        if (newItems !== null && liveItems !== null) {
+          liveItems.innerHTML = newItems.innerHTML;
+          // Verify the fetched section matches cart.js.
+          if (domMatchesCart(liveItems as HTMLElement, cart)) {
+            return true;
+          }
+          break; // replaced but still mismatched — retry
+        }
+      }
+    } catch {
+      // retry
+    }
+  }
+  // Fallback: could not converge. Remove DOM nodes whose variant is not in cart.js.
+  const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
+  if (itemsEl !== null) {
+    const cartVariants = new Set(cart.items.map((item) => item.variant_id));
+    const nodes = Array.from(
+      itemsEl.querySelectorAll<HTMLElement>(
+        '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row',
+      ),
+    );
+    for (const node of nodes) {
+      const link = node.querySelector<HTMLAnchorElement>('a[href*="variant="]');
+      if (link !== null) {
+        const m = link.href.match(/variant=(\d+)/);
+        if (m !== null && !cartVariants.has(Number(m[1]))) {
+          node.remove();
+        }
+      }
+    }
+    console.warn('[FGE-DRAWERFIX] body refetch could not converge', {
+      domKeys: domVariantIds(itemsEl),
+      cartKeys: cart.items.map((i) => i.variant_id),
+    });
+  }
+  return false;
+}
+
+// Verified display reconcile: compare DOM to cart.js, force a body re-fetch if divergent, then
+// apply grouping + stamp. Called on every reconcile (including no-ops) and on every drawer open.
+async function verifiedDisplayReconcile(): Promise<void> {
   try {
     const cart = await getCart();
+    const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
+
+    if (!domMatchesCart(itemsEl, cart)) {
+      console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch', {
+        domVariants: domVariantIds(itemsEl),
+        cartVariants: cart.items.map((i) => i.variant_id),
+      });
+      await refreshItemsBody(cart);
+      // Re-mount sections so the grouping transform sees the new nodes.
+      for (const section of sections) section.attach();
+    }
+
+    // Recompute grouping from fresh cart.
+    lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+    lastCartQuantities = cart.items.map((item) => item.quantity);
+    for (const section of sections) section.attach();
+
+    // Stamp authoritative subtotal + badge.
     const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
     const buyOnlyCount = (cart.item_count ?? 0) - giftQty;
     if (cart.total_price !== undefined && cart.item_count !== undefined) {
@@ -285,11 +378,10 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     if (cartMutated) {
       await refreshDawnTotals();
     }
-    // cart.js-driven display reconcile: grouping (hides gifts, removes stale nodes, injects steppers)
-    // + authoritative stamp (subtotal + badge). Runs on EVERY reconcile including no-ops, so a stale
-    // DOM from a prior broken render always converges to the current cart.js state.
-    await refreshGrouping();
-    await stampFromCart();
+    // Verified display reconcile: compare DOM to cart.js, force a body re-fetch if the node set
+    // diverges (stale duplicates, missing buy nodes), then apply grouping + stamp. Runs on EVERY
+    // reconcile including no-ops so a stale DOM always converges.
+    await verifiedDisplayReconcile();
   } finally {
     markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
     selfMutating = false;
@@ -436,9 +528,9 @@ function observeDrawerOpen(): void {
   new MutationObserver(() => {
     if (drawer.classList.contains('active')) {
       remaskUngrouped();
-      // On drawer open, run the cart.js-driven display reconcile so the drawer never shows a frozen
-      // prior render (stale duplicate nodes, wrong subtotal/badge). No section fetch — safe.
-      void refreshGrouping().then(stampFromCart);
+      // On drawer open, run the verified display reconcile: compare DOM to cart.js, force a body
+      // re-fetch if divergent, then apply grouping + stamp. Never shows a frozen prior render.
+      void verifiedDisplayReconcile();
     }
   }).observe(drawer, { attributes: true, attributeFilter: ['class'] });
 }
@@ -770,7 +862,7 @@ function init(): void {
     onReattach: (_context, itemsEl) => {
       remask(itemsEl);
       // Don't apply a stale plan while a reconcile is running, queued, or about to start (debounce
-      // timer pending). The reconcile's refreshGrouping will re-call attach() with a fresh plan
+      // timer pending). The reconcile's verifiedDisplayReconcile will re-call attach() with a fresh
       // that matches the new DOM. The mask covers the brief ungrouped window; the 2s timeout is
       // the backstop.
       const workPending = running || pending || timer !== undefined;
