@@ -248,6 +248,15 @@ body.fge-checkout-pending .cart__checkout-button::after{
   opacity:0; pointer-events:none; transition:opacity .2s ease;
 }
 .fge-notice.is-visible{ opacity:1; }
+
+/* --- FOUC mask: dims the line-items region until the first grouping pass completes, so the user
+   never sees native Dawn steppers, raw cVI_ codes, or duplicate split rows. Unconditional on load;
+   released when applyTwoGroupLayout sets data-fge-grouped, or by a 2s fail-safe timeout. The
+   header, footer, and checkout button stay fully usable (the mask is on the items host only). --- */
+cart-drawer-items[data-fge-pending]:not([data-fge-grouped]),
+cart-items[data-fge-pending]:not([data-fge-grouped]){
+  opacity:0.12; pointer-events:none; transition:opacity .15s ease-out;
+}
 `;
 
 export function injectStyles(): void {

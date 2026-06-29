@@ -250,6 +250,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
     await refreshGrouping(); // recompute + re-apply the two-group line transform from the final cart
+    liftMask(); // FOUC: the first reconcile is done — ungrouped lines are now grouped (or confirmed empty)
   } finally {
     markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
     selfMutating = false;
@@ -534,28 +535,36 @@ async function onMergedBuyQtyChange(
   };
 }
 
-// Inject the two perception sections into EVERY present cart surface (drawer + full /cart page): a
-// stepper under the heading, the chooser by the items, re-attached on every re-render. Fetch the
-// campaign structure and render. Best-effort: if config is unavailable/inactive, the engine still
-// reconciles (AND tiers need no choice). The free gift renders normally in the cart list at $0 — we no
-// longer hide it (role separation: the cart line confirms receipt, our chooser is progress + choice).
-async function initPerception(config: WidgetConfig): Promise<void> {
-  injectStyles(); // design tokens + component CSS (once)
-  // Blended, in-flow sections per context (drawer and/or /cart page); re-attached on every re-render.
-  // onReattach re-applies the two-group line transform on every theme re-render (Stage 1).
-  sections = mountCartContexts({
-    drawerSelector: config.drawerSelector,
-    onReattach: (_context, itemsEl) => {
-      if (lastPlan === null) {
-        return;
-      }
-      applyTwoGroupLayout(itemsEl, lastPlan, {
-        ourCode: lastDiscount,
-        onMergedQtyChange: onMergedBuyQtyChange, // Stage 2: live merged +/−/delete writes
-      });
-    },
-  });
+// FOUC mask (Part 2): unconditionally dims the line-items region until the first grouping pass
+// completes, so the user never sees native steppers / raw codes / duplicate split rows. Released by
+// liftMask (first successful grouping, confirmed no-gift, or the 2s fail-safe timeout).
+const MASK_ATTR = 'data-fge-pending';
+const MASK_TIMEOUT_MS = 2000;
+let maskTimer: ReturnType<typeof setTimeout> | undefined;
+let maskLifted = false;
 
+function applyInitialMask(): void {
+  document.querySelectorAll<HTMLElement>('cart-drawer-items, cart-items').forEach((el) => {
+    el.setAttribute(MASK_ATTR, '');
+  });
+  maskTimer = setTimeout(liftMask, MASK_TIMEOUT_MS);
+}
+
+function liftMask(): void {
+  if (maskLifted) return;
+  maskLifted = true;
+  if (maskTimer !== undefined) {
+    clearTimeout(maskTimer);
+    maskTimer = undefined;
+  }
+  document.querySelectorAll<HTMLElement>(`[${MASK_ATTR}]`).forEach((el) => {
+    el.removeAttribute(MASK_ATTR);
+  });
+}
+
+// Fetch /config in parallel (Part 1) — sets the chooser state and re-schedules so the next /validate
+// has the correct OR choices. Does NOT block the first reconcile.
+async function loadCampaignConfig(config: WidgetConfig): Promise<void> {
   const rate = presentmentRate();
   const result = await getConfig({
     presentmentCurrency: config.presentmentCurrency,
@@ -563,11 +572,13 @@ async function initPerception(config: WidgetConfig): Promise<void> {
     ...(rate !== undefined ? { presentmentRate: rate } : {}),
   });
   if (!result.ok || result.config.status !== 'active') {
+    liftMask(); // no active campaign → no gift possible → unmask immediately
     return;
   }
   campaignConfig = result.config;
   choiceState = defaultGiftChoices(campaignConfig.tiers);
   renderPerception(config);
+  schedule(config); // re-validate with the correct choices
 }
 
 function init(): void {
@@ -576,6 +587,25 @@ function init(): void {
     return;
   }
   perceptionConfig = config; // so the pending-timer callbacks can re-render without threading config
+
+  // Immediately: styles + cart sections (synchronous — no network wait).
+  injectStyles();
+  sections = mountCartContexts({
+    drawerSelector: config.drawerSelector,
+    onReattach: (_context, itemsEl) => {
+      if (lastPlan === null) {
+        return;
+      }
+      const grouped = applyTwoGroupLayout(itemsEl, lastPlan, {
+        ourCode: lastDiscount,
+        onMergedQtyChange: onMergedBuyQtyChange,
+      });
+      if (grouped) liftMask();
+    },
+  });
+
+  // FOUC mask: dim the line-items region until the first grouping pass or timeout.
+  applyInitialMask();
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const trigger = (data?: unknown): void => {
@@ -608,8 +638,11 @@ function init(): void {
     return result;
   };
 
-  // Mount overlay + load the chooser/graph (default selection enables the gift), then reconcile.
-  void initPerception(config).finally(() => schedule(config));
+  // Part 1: start the reconcile IMMEDIATELY (don't wait for /config). The first /validate may use
+  // empty choices (OR tiers → no-gift), but it reads the cart + sets lastPlan so the grouping is
+  // ready when the drawer opens. /config runs in parallel and re-schedules with correct choices.
+  schedule(config);
+  void loadCampaignConfig(config);
 }
 
 if (document.readyState === 'loading') {

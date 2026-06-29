@@ -374,7 +374,9 @@ export function applyTwoGroupLayout(
   const parent = lineNodes[0]?.parentElement ?? null;
   if (parent === null) return false;
 
-  itemsEl.setAttribute(MARK, '');
+  // Mark on the custom-element host (cart-drawer-items / cart-items) so the FOUC mask CSS can gate on
+  // it; falls back to itemsEl if no host is found (e.g. a non-Dawn theme).
+  (itemsEl.closest('cart-drawer-items, cart-items') ?? itemsEl).setAttribute(MARK, '');
 
   if (plan.buys.length > 0 && plan.hasGifts) {
     const firstRow = plan.buys[0]!;

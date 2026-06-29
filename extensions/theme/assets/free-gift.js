@@ -542,7 +542,7 @@
     return header;
   }
   function applyTwoGroupLayout(itemsEl, plan, opts) {
-    var _a2, _b2, _c2, _d, _e, _f, _g;
+    var _a2, _b2, _c2, _d, _e, _f, _g, _h;
     if (itemsEl === null) return false;
     const lineNodes = findLineNodes(itemsEl);
     if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) return false;
@@ -554,10 +554,10 @@
     }
     const parent = (_b2 = (_a2 = lineNodes[0]) == null ? void 0 : _a2.parentElement) != null ? _b2 : null;
     if (parent === null) return false;
-    itemsEl.setAttribute(MARK, "");
+    ((_c2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _c2 : itemsEl).setAttribute(MARK, "");
     if (plan.buys.length > 0 && plan.hasGifts) {
       const firstRow = plan.buys[0];
-      const firstIdx = (_d = (_c2 = firstRow.interactiveIndex) != null ? _c2 : firstRow.readOnlyIndexes[0]) != null ? _d : firstRow.hideIndexes[0];
+      const firstIdx = (_e = (_d = firstRow.interactiveIndex) != null ? _d : firstRow.readOnlyIndexes[0]) != null ? _e : firstRow.hideIndexes[0];
       const firstBuy = firstIdx === void 0 ? null : lineNodes[firstIdx];
       if (firstBuy != null) parent.insertBefore(makeHeader(firstBuy, BUYS_HEADER, null), firstBuy);
     }
@@ -600,7 +600,7 @@
     }
     if (plan.hasGifts) {
       const giftCount = plan.gets.length + plan.lingering.length;
-      const firstGiftIdx = (_g = (_e = plan.gets[0]) == null ? void 0 : _e.index) != null ? _g : (_f = plan.lingering[0]) == null ? void 0 : _f.index;
+      const firstGiftIdx = (_h = (_f = plan.gets[0]) == null ? void 0 : _f.index) != null ? _h : (_g = plan.lingering[0]) == null ? void 0 : _g.index;
       const firstGift = firstGiftIdx === void 0 ? null : lineNodes[firstGiftIdx];
       if (firstGift != null) {
         parent.append(
@@ -1590,6 +1590,15 @@ body.fge-checkout-pending .cart__checkout-button::after{
   opacity:0; pointer-events:none; transition:opacity .2s ease;
 }
 .fge-notice.is-visible{ opacity:1; }
+
+/* --- FOUC mask: dims the line-items region until the first grouping pass completes, so the user
+   never sees native Dawn steppers, raw cVI_ codes, or duplicate split rows. Unconditional on load;
+   released when applyTwoGroupLayout sets data-fge-grouped, or by a 2s fail-safe timeout. The
+   header, footer, and checkout button stay fully usable (the mask is on the items host only). --- */
+cart-drawer-items[data-fge-pending]:not([data-fge-grouped]),
+cart-items[data-fge-pending]:not([data-fge-grouped]){
+  opacity:0.12; pointer-events:none; transition:opacity .15s ease-out;
+}
 `;
   function injectStyles() {
     const doc = globalThis.document;
@@ -1766,6 +1775,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
       markGiftWorkDone();
       renderPerception(config);
       await refreshGrouping();
+      liftMask();
     } finally {
       markGiftWorkDone();
       selfMutating = false;
@@ -1987,21 +1997,28 @@ body.fge-checkout-pending .cart__checkout-button::after{
       originalPrice: (_c2 = row == null ? void 0 : row.controllableOriginalPrice) != null ? _c2 : 0
     };
   }
-  async function initPerception(config) {
-    injectStyles();
-    sections = mountCartContexts({
-      drawerSelector: config.drawerSelector,
-      onReattach: (_context, itemsEl) => {
-        if (lastPlan === null) {
-          return;
-        }
-        applyTwoGroupLayout(itemsEl, lastPlan, {
-          ourCode: lastDiscount,
-          onMergedQtyChange: onMergedBuyQtyChange
-          // Stage 2: live merged +/−/delete writes
-        });
-      }
+  var MASK_ATTR = "data-fge-pending";
+  var MASK_TIMEOUT_MS = 2e3;
+  var maskTimer;
+  var maskLifted = false;
+  function applyInitialMask() {
+    document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => {
+      el.setAttribute(MASK_ATTR, "");
     });
+    maskTimer = setTimeout(liftMask, MASK_TIMEOUT_MS);
+  }
+  function liftMask() {
+    if (maskLifted) return;
+    maskLifted = true;
+    if (maskTimer !== void 0) {
+      clearTimeout(maskTimer);
+      maskTimer = void 0;
+    }
+    document.querySelectorAll(`[${MASK_ATTR}]`).forEach((el) => {
+      el.removeAttribute(MASK_ATTR);
+    });
+  }
+  async function loadCampaignConfig(config) {
     const rate = presentmentRate();
     const result = await getConfig({
       presentmentCurrency: config.presentmentCurrency,
@@ -2009,11 +2026,13 @@ body.fge-checkout-pending .cart__checkout-button::after{
       ...rate !== void 0 ? { presentmentRate: rate } : {}
     });
     if (!result.ok || result.config.status !== "active") {
+      liftMask();
       return;
     }
     campaignConfig = result.config;
     choiceState = defaultGiftChoices(campaignConfig.tiers);
     renderPerception(config);
+    schedule(config);
   }
   function init() {
     var _a2;
@@ -2022,6 +2041,21 @@ body.fge-checkout-pending .cart__checkout-button::after{
       return;
     }
     perceptionConfig = config;
+    injectStyles();
+    sections = mountCartContexts({
+      drawerSelector: config.drawerSelector,
+      onReattach: (_context, itemsEl) => {
+        if (lastPlan === null) {
+          return;
+        }
+        const grouped = applyTwoGroupLayout(itemsEl, lastPlan, {
+          ourCode: lastDiscount,
+          onMergedQtyChange: onMergedBuyQtyChange
+        });
+        if (grouped) liftMask();
+      }
+    });
+    applyInitialMask();
     let timer;
     const trigger = (data) => {
       if (data !== null && typeof data === "object" && data.source === SOURCE) {
@@ -2042,7 +2076,8 @@ body.fge-checkout-pending .cart__checkout-button::after{
       }
       return result;
     };
-    void initPerception(config).finally(() => schedule(config));
+    schedule(config);
+    void loadCampaignConfig(config);
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
