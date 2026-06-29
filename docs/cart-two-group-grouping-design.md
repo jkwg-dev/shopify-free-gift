@@ -235,11 +235,27 @@ A raw `cart/update.js` fires **no** Dawn pubsub / Section Rendering, and a withi
 reconcile mutation (so reconcile's conditional `nudge` never fires) — Dawn's footer Subtotal + cart-count
 badge never refresh, contradicting the widget-owned line total.
 
-**Fix A:** after **any** successful merged write, explicitly publish `cart-update {source: SOURCE}`
-(`nudgeDawn`). Dawn's `CartItems.onCartUpdate` re-fetches sections → footer + badge refresh from the
-server cart. Safe: the section **GET** isn't matched by the storefront fetch-patch regex (no reconcile
-re-trigger), and our own subscriber ignores `source===SOURCE` (no echo loop). The optimistic
-widget-owned repaint stays for instant feedback before Dawn's async re-render lands.
+**Fix A (rev 2 — Section Rendering, not pubsub):** the original pubsub nudge (`cart-update {source:SOURCE}`)
+was wrong on two counts, confirmed on dev:
+
+1. Dawn's `CartDrawerItems.onCartUpdate` (inherited from `CartItems`) only fetches
+   `?section_id=main-cart-items` and replaces the **items list** innerHTML — it does **not** re-render the
+   footer (`.drawer__footer`) or badge (`#cart-icon-bubble`). Those are refreshed only by `updateQuantity`'s
+   `getSectionsToRender` (which requests the `cart-drawer` + `cart-icon-bubble` sections). So the nudge
+   never could have refreshed the footer/badge.
+2. The items innerHTML wipe **clobbered our stepper**: the MutationObserver re-applied the grouping from the
+   stale `lastPlan`, creating a new stepper with the old `current` → the optimistic repaint was lost and
+   the next click computed T from the wrong base (off-by-one).
+
+**Revised fix:** `refreshDawnTotals` — after any merged write, fetch `?sections=cart-drawer,cart-icon-bubble`
+(+ the page footer section if on `/cart`) via Section Rendering and surgically replace **only** the totals
+block (`.cart-drawer__footer` — subtotal + discounts + tax note) + badge content. The items list is
+**untouched**, so the stepper + grouping survive. No pubsub is published for the merged-write path (the
+reconcile's own `io.nudge` still publishes `cart-update` after gift mutations — unchanged).
+
+Additionally, `onMergedBuyQtyChange` now reads the authoritative post-write `cart.js`, updates `lastPlan`,
+and returns the real `{qty, finalPrice, originalPrice}` to the stepper. The stepper syncs `current` and
+per-unit prices from this ground truth after every write, killing any stale-base drift / off-by-one.
 
 ### Defect B — a merged delete/reduce below the gift's tier is VF-blocked
 
@@ -250,8 +266,9 @@ the goods). Two parts, both required:
 **B.1 — never leave the UI diverged (MUST).** On any final non-200 merged write: (1) the stepper does a
 **self-contained DOM rollback** to the pre-click state (restore qty + line total, un-hide a deleted row,
 re-enable) — it does NOT depend on a re-render, so a non-Dawn theme self-heals too; (2) the storefront
-`nudgeDawn`s (convergence on Dawn) and **surfaces the failure message** (a transient `fge-notice` toast +
-AT announce; message parsed from the response body, **display-only** — no logic branches on it).
+refreshes Dawn totals (Section Rendering, see Fix A rev 2) and **surfaces the failure message** (a
+transient `fge-notice` toast + AT announce; message parsed from the response body, **display-only** — no
+logic branches on it).
 
 **B.2 — let the shopper actually empty their cart (the real fix): 422-triggered, gift-FIRST atomic
 sequence.** `applyMergedBuyEdit` (pure, unit-tested):

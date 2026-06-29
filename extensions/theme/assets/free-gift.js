@@ -420,8 +420,8 @@
     hideNativeStepper(node);
     (_a2 = node.querySelector(".fge-merged-stepper")) == null ? void 0 : _a2.remove();
     const cell = (_b2 = findFirst2(node, QTY_CELL_SELECTORS)) != null ? _b2 : node;
-    const perUnitFinal = qty > 0 ? finalLinePrice / qty : 0;
-    const perUnitOriginal = qty > 0 ? originalLinePrice / qty : 0;
+    let perUnitFinal = qty > 0 ? finalLinePrice / qty : 0;
+    let perUnitOriginal = qty > 0 ? originalLinePrice / qty : 0;
     const wrap = document.createElement("div");
     wrap.className = "fge fge-merged-stepper";
     wrap.setAttribute("role", "group");
@@ -468,10 +468,17 @@
       const prev = current;
       current = Math.max(0, target);
       repaint(current);
-      Promise.resolve(onChange(writableKeys, current)).then((applied) => {
-        if (applied === false) {
+      Promise.resolve(onChange(writableKeys, current)).then((result) => {
+        if (!result.applied) {
           current = prev;
           repaint(prev);
+        } else {
+          current = result.qty;
+          if (current > 0) {
+            perUnitFinal = result.finalPrice / current;
+            perUnitOriginal = result.originalPrice / current;
+          }
+          repaint(current);
         }
       }).finally(() => {
         inFlight = false;
@@ -1898,9 +1905,53 @@ body.fge-checkout-pending .cart__checkout-button::after{
       await new Promise((resolve) => idleResolvers.push(resolve));
     }
   }
-  function nudgeDawn() {
+  async function refreshDawnTotals() {
     var _a2;
-    (_a2 = w.publish) == null ? void 0 : _a2.call(w, CART_UPDATE_EVENT, { source: SOURCE });
+    try {
+      const sectionIds = ["cart-drawer", "cart-icon-bubble"];
+      const pageFooterEl = document.getElementById("main-cart-footer");
+      const pageFooterSection = pageFooterEl == null ? void 0 : pageFooterEl.dataset["id"];
+      if (pageFooterSection !== void 0 && pageFooterSection !== "") {
+        sectionIds.push(pageFooterSection);
+      }
+      const res = await fetch(`${root}?sections=${sectionIds.join(",")}`, {
+        headers: { Accept: "application/json" }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const drawerHtml = data["cart-drawer"];
+      if (drawerHtml !== void 0) {
+        const parsed = new DOMParser().parseFromString(drawerHtml, "text/html");
+        const newTotals = parsed.querySelector(".cart-drawer__footer");
+        const liveTotals = document.querySelector("cart-drawer .cart-drawer__footer");
+        if (newTotals !== null && liveTotals !== null) {
+          liveTotals.innerHTML = newTotals.innerHTML;
+        }
+      }
+      const badgeHtml = data["cart-icon-bubble"];
+      if (badgeHtml !== void 0) {
+        const liveBadge = document.getElementById("cart-icon-bubble");
+        if (liveBadge !== null) {
+          const parsed = new DOMParser().parseFromString(badgeHtml, "text/html");
+          const newBadge = parsed.querySelector(".shopify-section");
+          if (newBadge !== null) {
+            ((_a2 = liveBadge.querySelector(".shopify-section")) != null ? _a2 : liveBadge).innerHTML = newBadge.innerHTML;
+          }
+        }
+      }
+      if (pageFooterSection !== void 0 && pageFooterEl !== null) {
+        const footerHtml = data[pageFooterSection];
+        if (footerHtml !== void 0) {
+          const parsed = new DOMParser().parseFromString(footerHtml, "text/html");
+          const newContent = parsed.querySelector(".js-contents");
+          const liveContent = pageFooterEl.querySelector(".js-contents");
+          if (newContent !== null && liveContent !== null) {
+            liveContent.innerHTML = newContent.innerHTML;
+          }
+        }
+      }
+    } catch {
+    }
   }
   async function currentGiftLineKeys() {
     try {
@@ -1928,7 +1979,12 @@ body.fge-checkout-pending .cart__checkout-button::after{
     announcePending(message);
   }
   async function onMergedBuyQtyChange(writableKeys, targetQty) {
-    if (perceptionConfig === null) return false;
+    var _a2, _b2, _c2;
+    const fail = { applied: false, qty: 0, finalPrice: 0, originalPrice: 0 };
+    if (perceptionConfig === null) return fail;
+    const preRow = lastPlan == null ? void 0 : lastPlan.buys.find(
+      (r) => r.writableKeys.length > 0 && writableKeys.includes(r.writableKeys[0])
+    );
     await whenReconcileIdle();
     selfMutating = true;
     let result;
@@ -1940,9 +1996,18 @@ body.fge-checkout-pending .cart__checkout-button::after{
     if (!result.applied) {
       surfaceMergedWriteFailure(result.failureBody);
     }
-    nudgeDawn();
+    const cart = await getCart();
+    lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+    const row = preRow !== void 0 ? lastPlan.buys.find((r) => r.variantId === preRow.variantId) : void 0;
+    await refreshDawnTotals();
     schedule(perceptionConfig);
-    return result.applied;
+    if (!result.applied) return fail;
+    return {
+      applied: true,
+      qty: (_a2 = row == null ? void 0 : row.controllableQuantity) != null ? _a2 : 0,
+      finalPrice: (_b2 = row == null ? void 0 : row.controllableFinalPrice) != null ? _b2 : 0,
+      originalPrice: (_c2 = row == null ? void 0 : row.controllableOriginalPrice) != null ? _c2 : 0
+    };
   }
   async function initPerception(config) {
     injectStyles();

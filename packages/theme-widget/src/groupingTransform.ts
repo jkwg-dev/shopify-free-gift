@@ -168,12 +168,17 @@ function hideNativeStepper(node: HTMLElement): void {
   if (input instanceof HTMLInputElement) input.readOnly = true; // belt-and-suspenders if the widget shows
 }
 
-// Resolves true if the absolute-target write was applied to the cart, false if it failed — on false the
-// stepper rolls its optimistic repaint back to the pre-click state (self-contained, no re-render needed).
+export type MergedQtyChangeResult = {
+  readonly applied: boolean;
+  readonly qty: number;
+  readonly finalPrice: number;
+  readonly originalPrice: number;
+};
+
 export type MergedQtyChange = (
   writableKeys: readonly string[],
   targetQty: number,
-) => Promise<boolean> | boolean;
+) => Promise<MergedQtyChangeResult>;
 
 // Inject the interactive merged +/−/delete stepper into a SPLIT buy row's qty cell, wired to the
 // absolute-target write callback (§4). The widget OWNS the displayed qty + price (ⓥ1): a click
@@ -193,9 +198,8 @@ function injectMergedStepper(
   node.querySelector('.fge-merged-stepper')?.remove(); // defensive: never duplicate
   const cell = findFirst(node, QTY_CELL_SELECTORS) ?? node;
 
-  // Per-unit prices for the optimistic repaint (linear; reconcile/Dawn re-render reconfirm the exact sum).
-  const perUnitFinal = qty > 0 ? finalLinePrice / qty : 0;
-  const perUnitOriginal = qty > 0 ? originalLinePrice / qty : 0;
+  let perUnitFinal = qty > 0 ? finalLinePrice / qty : 0;
+  let perUnitOriginal = qty > 0 ? originalLinePrice / qty : 0;
 
   const wrap = document.createElement('div');
   wrap.className = 'fge fge-merged-stepper';
@@ -249,12 +253,18 @@ function injectMergedStepper(
     // hidden when the row was grouped. A delete (T==0) hides the whole interactive row.
     repaint(current);
     Promise.resolve(onChange(writableKeys, current))
-      .then((applied) => {
-        if (applied === false) {
-          // B.1 self-contained rollback — restore the pre-click row WITHOUT depending on a re-render
-          // (a non-Dawn theme may not repaint). The storefront also surfaces the failure message + nudges.
+      .then((result) => {
+        if (!result.applied) {
           current = prev;
           repaint(prev);
+        } else {
+          // Authoritative: sync from the post-write cart (kills stale-base drift / off-by-one).
+          current = result.qty;
+          if (current > 0) {
+            perUnitFinal = result.finalPrice / current;
+            perUnitOriginal = result.originalPrice / current;
+          }
+          repaint(current);
         }
       })
       .finally(() => {

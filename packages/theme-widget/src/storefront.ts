@@ -21,7 +21,7 @@ import {
   type GroupingPlan,
   type RawCartLine,
 } from './cartGrouping.js';
-import { applyTwoGroupLayout } from './groupingTransform.js';
+import { applyTwoGroupLayout, type MergedQtyChangeResult } from './groupingTransform.js';
 import { applyMergedBuyEdit, failedAddVariantIds } from './cartMutations.js';
 import { showNotice } from './notice.js';
 import { defaultGiftChoices } from './choices.js';
@@ -398,12 +398,64 @@ async function whenReconcileIdle(): Promise<void> {
   }
 }
 
-// Nudge Dawn to re-render its line list + footer subtotal + cart-count badge from the server cart
-// (defect A). A raw cart/update.js fires no pubsub, so within-tier edits would otherwise leave Dawn's
-// totals stale. Tagged with our SOURCE so our own subscriber ignores the echo; Dawn's CartItems re-fetch
-// is a section GET that the fetch-patch regex doesn't match, so it never re-triggers a reconcile.
-function nudgeDawn(): void {
-  w.publish?.(CART_UPDATE_EVENT, { source: SOURCE });
+// Refresh Dawn's footer subtotal + cart-count badge via Section Rendering (defect A revision). The
+// pubsub nudge was wrong: Dawn's CartDrawerItems.onCartUpdate only re-renders ITEMS (not footer/badge),
+// AND its innerHTML wipe clobbers our stepper. Instead we fetch the sections ourselves and surgically
+// replace only the totals + badge — the items list is untouched, so the stepper and grouping survive.
+async function refreshDawnTotals(): Promise<void> {
+  try {
+    const sectionIds = ['cart-drawer', 'cart-icon-bubble'];
+    const pageFooterEl = document.getElementById('main-cart-footer');
+    const pageFooterSection = pageFooterEl?.dataset['id'];
+    if (pageFooterSection !== undefined && pageFooterSection !== '') {
+      sectionIds.push(pageFooterSection);
+    }
+    const res = await fetch(`${root}?sections=${sectionIds.join(',')}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as Record<string, string>;
+
+    // Drawer: replace the subtotal block (.cart-drawer__footer) — NOT the whole .drawer__footer, so the
+    // cart note and checkout CTA are preserved.
+    const drawerHtml = data['cart-drawer'];
+    if (drawerHtml !== undefined) {
+      const parsed = new DOMParser().parseFromString(drawerHtml, 'text/html');
+      const newTotals = parsed.querySelector('.cart-drawer__footer');
+      const liveTotals = document.querySelector('cart-drawer .cart-drawer__footer');
+      if (newTotals !== null && liveTotals !== null) {
+        liveTotals.innerHTML = newTotals.innerHTML;
+      }
+    }
+
+    // Badge: replace the cart-icon-bubble content (same pattern as Dawn's getSectionInnerHTML).
+    const badgeHtml = data['cart-icon-bubble'];
+    if (badgeHtml !== undefined) {
+      const liveBadge = document.getElementById('cart-icon-bubble');
+      if (liveBadge !== null) {
+        const parsed = new DOMParser().parseFromString(badgeHtml, 'text/html');
+        const newBadge = parsed.querySelector('.shopify-section');
+        if (newBadge !== null) {
+          (liveBadge.querySelector('.shopify-section') ?? liveBadge).innerHTML = newBadge.innerHTML;
+        }
+      }
+    }
+
+    // Full /cart page footer (if present): replace the .js-contents block.
+    if (pageFooterSection !== undefined && pageFooterEl !== null) {
+      const footerHtml = data[pageFooterSection];
+      if (footerHtml !== undefined) {
+        const parsed = new DOMParser().parseFromString(footerHtml, 'text/html');
+        const newContent = parsed.querySelector('.js-contents');
+        const liveContent = pageFooterEl.querySelector('.js-contents');
+        if (newContent !== null && liveContent !== null) {
+          liveContent.innerHTML = newContent.innerHTML;
+        }
+      }
+    }
+  } catch {
+    // Best-effort: a failed refresh leaves stale totals (no worse than before).
+  }
 }
 
 // The reconcile-owned gift line keys currently in the cart (realized $0 gets + lingering), for the
@@ -448,8 +500,13 @@ function surfaceMergedWriteFailure(failureBody: string | null): void {
 async function onMergedBuyQtyChange(
   writableKeys: readonly string[],
   targetQty: number,
-): Promise<boolean> {
-  if (perceptionConfig === null) return false;
+): Promise<MergedQtyChangeResult> {
+  const fail: MergedQtyChangeResult = { applied: false, qty: 0, finalPrice: 0, originalPrice: 0 };
+  if (perceptionConfig === null) return fail;
+  // Resolve the variant from the pre-write plan (cart keys may change after write).
+  const preRow = lastPlan?.buys.find(
+    (r) => r.writableKeys.length > 0 && writableKeys.includes(r.writableKeys[0]!),
+  );
   await whenReconcileIdle();
   selfMutating = true;
   let result: { applied: boolean; failureBody: string | null };
@@ -461,9 +518,20 @@ async function onMergedBuyQtyChange(
   if (!result.applied) {
     surfaceMergedWriteFailure(result.failureBody);
   }
-  nudgeDawn(); // defect A: refresh footer + badge (success) / converge from the real cart (failure)
-  schedule(perceptionConfig); // re-validate tier: re-add a lower-tier gift / clear a stale code as needed
-  return result.applied;
+  // Read the authoritative post-write cart so the stepper syncs from ground truth, not a stale base.
+  const cart = await getCart();
+  lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+  const row =
+    preRow !== undefined ? lastPlan.buys.find((r) => r.variantId === preRow.variantId) : undefined;
+  await refreshDawnTotals();
+  schedule(perceptionConfig);
+  if (!result.applied) return fail;
+  return {
+    applied: true,
+    qty: row?.controllableQuantity ?? 0,
+    finalPrice: row?.controllableFinalPrice ?? 0,
+    originalPrice: row?.controllableOriginalPrice ?? 0,
+  };
 }
 
 // Inject the two perception sections into EVERY present cart surface (drawer + full /cart page): a
