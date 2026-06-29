@@ -639,17 +639,18 @@
     const added = [];
     const adjusted = [];
     const failures = [];
-    for (const r of plan.remove) {
-      const res = await post("cart/change.js", { id: r.id, quantity: 0 });
+    if (plan.remove.length > 0) {
+      const updates = {};
+      for (const r of plan.remove) updates[r.id] = 0;
+      const res = await post("cart/update.js", { updates });
       if (res.ok) {
-        removed.push(r.id);
+        removed.push(...plan.remove.map((r) => r.id));
       } else {
-        failures.push({
-          kind: "remove",
-          variantId: r.variantId,
-          status: res.status,
-          body: await res.text()
-        });
+        const body = await res.text();
+        logFailure(`cart/update.js atomic gift removal failed (${res.status})`, body);
+        for (const r of plan.remove) {
+          failures.push({ kind: "remove", variantId: r.variantId, status: res.status, body });
+        }
       }
     }
     for (const a of plan.adjust) {

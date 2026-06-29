@@ -52,19 +52,22 @@ export async function applyCartPlan(
   const adjusted: string[] = [];
   const failures: CartMutationFailure[] = [];
 
-  // Remove ALL undesired app-added gift lines (e.g. an AND tier dropping below threshold removes both
-  // its variants, or duplicate split lines — plan.remove already lists every one). Per-line by key; fail-soft.
-  for (const r of plan.remove) {
-    const res = await post('cart/change.js', { id: r.id, quantity: 0 });
+  // Remove ALL undesired app-added gift lines ATOMICALLY in ONE cart/update.js. An AND tier has two
+  // gifts; sequential per-line cart/change.js would orphan one while the other is still present → the
+  // BXGY allocation breaks → the remaining _fge_gift line reverts to full price → the VF blocks → 422
+  // deadlock. The atomic write zeros all keys at once, so no intermediate cart has an orphaned gift.
+  if (plan.remove.length > 0) {
+    const updates: Record<string, number> = {};
+    for (const r of plan.remove) updates[r.id] = 0;
+    const res = await post('cart/update.js', { updates });
     if (res.ok) {
-      removed.push(r.id);
+      removed.push(...plan.remove.map((r) => r.id));
     } else {
-      failures.push({
-        kind: 'remove',
-        variantId: r.variantId,
-        status: res.status,
-        body: await res.text(),
-      });
+      const body = await res.text();
+      logFailure(`cart/update.js atomic gift removal failed (${res.status})`, body);
+      for (const r of plan.remove) {
+        failures.push({ kind: 'remove', variantId: r.variantId, status: res.status, body });
+      }
     }
   }
 

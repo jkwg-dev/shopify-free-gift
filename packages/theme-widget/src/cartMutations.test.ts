@@ -108,8 +108,8 @@ describe('applyCartPlan — adjust path (collapse a bumped gift qty to 1)', () =
   });
 });
 
-describe('applyCartPlan — remove path', () => {
-  it('removes ALL undesired gift lines (e.g. AND drop-below removes both) and is fail-soft', async () => {
+describe('applyCartPlan — remove path (atomic cart/update.js)', () => {
+  it('removes ALL gift lines in ONE atomic cart/update.js (AND tier: both zeroed together)', async () => {
     const plan: GiftReconciliation = {
       add: [],
       remove: [
@@ -121,18 +121,56 @@ describe('applyCartPlan — remove path', () => {
       status: 'no-gift',
       reason: 'below-threshold',
     };
-    // First removal fails (stale key), second succeeds — failure recorded, other still attempted.
-    const { post, calls } = recordingPost((_path, body) =>
-      (body as { id: string }).id === 'lineHidden' ? res(false, 404, 'gone') : res(true),
-    );
+    const { post, calls } = recordingPost(() => res(true));
 
     const result = await applyCartPlan(plan, post);
 
-    expect(calls.filter((c) => c.path === 'cart/change.js')).toHaveLength(2);
-    expect(result.removed).toEqual(['lineMulti']);
-    expect(result.failures).toEqual([
-      { kind: 'remove', variantId: HIDDEN, status: 404, body: 'gone' },
-    ]);
+    const updates = calls.filter((c) => c.path === 'cart/update.js');
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.body).toEqual({ updates: { lineHidden: 0, lineMulti: 0 } });
+    expect(result.removed).toEqual(['lineHidden', 'lineMulti']);
+    expect(result.failures).toEqual([]);
+  });
+
+  it('on atomic failure, records ALL removals as failed (all-or-nothing)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const plan: GiftReconciliation = {
+      add: [],
+      remove: [
+        { id: 'lineHidden', variantId: HIDDEN },
+        { id: 'lineMulti', variantId: MULTI },
+      ],
+      adjust: [],
+      applyCode: null,
+      status: 'no-gift',
+      reason: 'below-threshold',
+    };
+    const { post, calls } = recordingPost(() => res(false, 422, 'blocked'));
+
+    const result = await applyCartPlan(plan, post);
+
+    expect(calls).toHaveLength(1);
+    expect(result.removed).toEqual([]);
+    expect(result.failures).toHaveLength(2);
+    expect(result.failures.map((f) => f.variantId)).toEqual([HIDDEN, MULTI]);
+    expect(result.failures.every((f) => f.status === 422)).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('skips removal when plan.remove is empty (no cart/update.js posted)', async () => {
+    const plan: GiftReconciliation = {
+      add: [],
+      remove: [],
+      adjust: [],
+      applyCode: null,
+      status: 'no-gift',
+      reason: 'below-threshold',
+    };
+    const { post, calls } = recordingPost(() => res(true));
+
+    await applyCartPlan(plan, post);
+
+    expect(calls).toHaveLength(0);
   });
 });
 

@@ -91,7 +91,15 @@ function makeIo(
       return Promise.resolve(res(cart.change(b.id, b.quantity)));
     }
     if (path === 'cart/update.js') {
-      opts.discounts?.push((body as { discount: string }).discount);
+      const b = body as { discount?: string; updates?: Record<string, number> };
+      if (b.discount !== undefined) {
+        opts.discounts?.push(b.discount);
+      }
+      if (b.updates !== undefined) {
+        for (const [key, qty] of Object.entries(b.updates)) {
+          cart.change(key, qty);
+        }
+      }
       return Promise.resolve(res(true));
     }
     return Promise.resolve(res(true));
@@ -251,12 +259,16 @@ describe('reconcileGiftCart — no full-price beat (apply order)', () => {
 
     // The new gift must be added only AFTER its code is on the cart, so BXGY zeroes it on arrival
     // (no full-price render). The old gift is removed BEFORE the code swaps (it can't lose its $0).
+    // Removal is now an atomic cart/update.js (not sequential cart/change.js).
     const seq = io.posts
-      .filter((p) => ['cart/change.js', 'cart/add.js', 'discount'].includes(p.path))
-      .map((p) =>
-        p.path === 'discount' ? `code:${(p.body as { discount: string }).discount}` : p.path,
-      );
-    expect(seq).toEqual(['cart/change.js', 'code:CODE-VIDEO', 'cart/add.js']);
+      .filter((p) => ['cart/update.js', 'cart/add.js', 'discount'].includes(p.path))
+      .map((p) => {
+        if (p.path === 'discount') return `code:${(p.body as { discount: string }).discount}`;
+        if (p.path === 'cart/update.js' && (p.body as { updates?: unknown }).updates !== undefined)
+          return 'cart/update.js:remove';
+        return p.path;
+      });
+    expect(seq).toEqual(['cart/update.js:remove', 'code:CODE-VIDEO', 'cart/add.js']);
     expect(countGift(cart, ICE)).toEqual({ lines: 0, qty: 0 });
     expect(countGift(cart, VIDEO)).toEqual({ lines: 1, qty: 1 });
   });
