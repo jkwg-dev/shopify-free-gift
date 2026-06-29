@@ -43,13 +43,22 @@ export type ProgressModel = {
 type ActiveConfig = Extract<CampaignConfigResponse, { status: 'active' }>;
 type ActiveTier = ActiveConfig['tiers'][number];
 
-// Concise gift label for the ladder. AND → all variants joined; OR → the labels (few) or "Choose 1 of N".
+// Product name for a gift item. Prefers `productLabel` (the owning product's title) over
+// `variantLabel` (the variant option value like "Ice"/"Dawn"/"S"/"M"/"L").
+function productName(g: { readonly productLabel?: string; readonly variantLabel: string }): string {
+  return g.productLabel !== undefined && g.productLabel !== '' ? g.productLabel : g.variantLabel;
+}
+
+// Concise gift label for the ladder using PRODUCT names (not variant/color names). AND → distinct
+// product titles joined; OR → product titles (few) or "Choose 1 of N".
 export function giftLabelFor(gift: ActiveTier['gift']): string {
   if (gift.kind === 'AND') {
-    return gift.gifts.map((g) => g.variantLabel).join(' + ');
+    const names = [...new Set(gift.gifts.map(productName))];
+    return names.join(' + ');
   }
   if (gift.options.length <= 3) {
-    return gift.options.map((o) => o.variantLabel).join(' / ');
+    const names = [...new Set(gift.options.map(productName))];
+    return names.join(' / ');
   }
   return `Choose 1 of ${gift.options.length}`;
 }

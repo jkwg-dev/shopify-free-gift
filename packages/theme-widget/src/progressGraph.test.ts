@@ -19,11 +19,19 @@ const config: CampaignConfigResponse = {
       gift: {
         kind: 'OR',
         options: [
-          { optionId: 'a', variantId: ICE, productId: 'p/c', variantLabel: 'Ice', available: true },
+          {
+            optionId: 'a',
+            variantId: ICE,
+            productId: 'p/c',
+            productLabel: 'GFJ Snowboard',
+            variantLabel: 'Ice',
+            available: true,
+          },
           {
             optionId: 'b',
             variantId: DAWN,
             productId: 'p/c',
+            productLabel: 'GFJ Snowboard',
             variantLabel: 'Dawn',
             available: true,
           },
@@ -40,13 +48,15 @@ const config: CampaignConfigResponse = {
           {
             variantId: HIDDEN,
             productId: 'p/h',
-            variantLabel: 'The Hidden Snowboard',
+            productLabel: 'The Hidden Snowboard',
+            variantLabel: 'Default Title',
             available: true,
           },
           {
             variantId: MULTI,
             productId: 'p/m',
-            variantLabel: 'The Multi-location Snowboard',
+            productLabel: 'The Multi-location Snowboard',
+            variantLabel: 'Default Title',
             available: true,
           },
         ],
@@ -83,16 +93,30 @@ function gift(tierId: string, subtotalMinor: number): ValidateResult {
 }
 
 describe('giftLabelFor', () => {
-  it('joins AND variants, lists few OR options, and summarizes many', () => {
+  it('uses product names (not variant/color names), deduplicates same-product options', () => {
+    // OR with 2 options from the SAME product → deduplicated to one product name.
     expect(giftLabelFor(config.status === 'active' ? config.tiers[0]!.gift : ({} as never))).toBe(
-      'Ice / Dawn',
+      'GFJ Snowboard',
     );
+    // AND with 2 distinct products → joined with +.
     expect(giftLabelFor(config.status === 'active' ? config.tiers[1]!.gift : ({} as never))).toBe(
       'The Hidden Snowboard + The Multi-location Snowboard',
     );
+    // OR with 8+ options → summary.
     expect(giftLabelFor(config.status === 'active' ? config.tiers[2]!.gift : ({} as never))).toBe(
       'Choose 1 of 8',
     );
+  });
+
+  it('falls back to variantLabel when productLabel is absent', () => {
+    const gift = {
+      kind: 'AND' as const,
+      gifts: [
+        { variantId: 'v1', productId: 'p1', variantLabel: 'Ice', available: true },
+        { variantId: 'v2', productId: 'p2', variantLabel: 'Dawn', available: true },
+      ],
+    };
+    expect(giftLabelFor(gift)).toBe('Ice + Dawn');
   });
 });
 

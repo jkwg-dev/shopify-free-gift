@@ -1354,12 +1354,17 @@
   }
 
   // src/progressGraph.ts
+  function productName(g) {
+    return g.productLabel !== void 0 && g.productLabel !== "" ? g.productLabel : g.variantLabel;
+  }
   function giftLabelFor(gift) {
     if (gift.kind === "AND") {
-      return gift.gifts.map((g) => g.variantLabel).join(" + ");
+      const names = [...new Set(gift.gifts.map(productName))];
+      return names.join(" + ");
     }
     if (gift.options.length <= 3) {
-      return gift.options.map((o) => o.variantLabel).join(" / ");
+      const names = [...new Set(gift.options.map(productName))];
+      return names.join(" / ");
     }
     return `Choose 1 of ${gift.options.length}`;
   }
@@ -1695,6 +1700,16 @@
 [data-fge-merged-hidden] .cart-item__totals,
 [data-fge-merged-hidden] .cart-item__actions--price{ display:none !important; }
 [data-fge-grouped] .cart-item__discounts{ display:none !important; }
+
+/* THEME-MATCH: the compare-at (was) price in the merged line total must use the theme's native
+   color, not red. The theme renders <del> in rgb(var(--color-foreground)), but some theme structures
+   inherit red from a discounted-price parent. Force the native style on grouped rows. */
+[data-fge-grouped] .cart-item__discounted-prices del,
+[data-fge-grouped] .cart-item__old-price,
+[data-fge-grouped] .cart-item__actions--price del{
+  color:rgb(var(--color-foreground,17,17,17)) !important;
+  text-decoration:line-through;
+}
 
 /* THEME-OVERRIDE: Dawn renders TWO "Your cart" titles inside the drawer \u2014 the H2.drawer__heading
    (header) and the H1.title--primary (cart section title, normally suppressed). Our injected layout
@@ -2416,9 +2431,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         if (section !== null) return section.id.replace("shopify-section-", "");
       }
     }
-    const drawer = document.querySelector(
-      DRAWER_PANEL_SELECTOR
-    );
+    const drawer = document.querySelector(DRAWER_PANEL_SELECTOR);
     if (drawer !== null) {
       const section = (_a2 = drawer.closest('[id^="shopify-section-"]')) != null ? _a2 : drawer.querySelector('[id^="shopify-section-"]');
       if (section !== null) {

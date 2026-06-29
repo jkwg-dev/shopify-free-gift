@@ -80,6 +80,16 @@ export const FGE_CSS = `
 [data-fge-merged-hidden] .cart-item__actions--price{ display:none !important; }
 [data-fge-grouped] .cart-item__discounts{ display:none !important; }
 
+/* THEME-MATCH: the compare-at (was) price in the merged line total must use the theme's native
+   color, not red. The theme renders <del> in rgb(var(--color-foreground)), but some theme structures
+   inherit red from a discounted-price parent. Force the native style on grouped rows. */
+[data-fge-grouped] .cart-item__discounted-prices del,
+[data-fge-grouped] .cart-item__old-price,
+[data-fge-grouped] .cart-item__actions--price del{
+  color:rgb(var(--color-foreground,17,17,17)) !important;
+  text-decoration:line-through;
+}
+
 /* THEME-OVERRIDE: Dawn renders TWO "Your cart" titles inside the drawer — the H2.drawer__heading
    (header) and the H1.title--primary (cart section title, normally suppressed). Our injected layout
    surfaces both, so we hide the section-title duplicate — SCOPED to drawer containers only, so the
