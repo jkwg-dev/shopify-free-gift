@@ -1,7 +1,20 @@
 # Design — Cart & Checkout Validation Function: hard-block a non-qualifying free-gift line
 
-**Status:** VF-0 APPROVED (constraint amended) · **VF-1 BUILT** (`extensions/checkout-validation`, pure +
-tested, input query schema-validated) · VF-2 (deploy/activate) + VF-3 (dev verify) PENDING.
+**Status:** ⛔ **SHELVED at VF-2 (build/deploy) — the function logic + design are sound; the BUILD
+toolchain is the blocker.** Shopify CLI 3.91.0 will not build a JS/TS function in this pnpm + Turborepo
+monorepo: it demands an explicit `[build].command` that emits `dist/index.wasm` (the documented JS
+auto-build never engaged even with `@shopify/shopify_function` v2 installed + resolvable), it shells out
+to `npm` (conflicting with the pnpm workspace — the CLI scaffold itself failed: "Cannot convert undefined
+or null to object"), and a self-written Javy build can't inject the Shopify `ShopifyFunction` host glue
+(so it would build a Wasm that fails at runtime). Decision: **do not ship a Function.** The
+`extensions/checkout-validation` package was **removed** (a non-building Function extension breaks
+`shopify app deploy` for ALL extensions). The drop-below-threshold race remains mitigated by the **native
+BXGY discount minimum** (Shopify reverts a lingering gift to full price below the tier minimum — no
+revenue leak, empirically confirmed) **+ the storefront widget's reconciliation**; the **accepted
+residual** is that an express-checkout (Shop Pay / Apple Pay) lingering gift line is **charged, not
+hard-blocked**. To revisit: a **Rust** function (deterministic `cargo`→wasm, Shopify-recommended, no
+Javy/npm/pnpm friction) is the clean path — the rule below ports directly. Everything below is retained
+as the spec for that future revisit.
 **Goal:** an authoritative, server-side, can't-be-bypassed gate that blocks checkout when an FGE
 `_fge_gift` line is present but the cart no longer qualifies for that gift — covering the race where the
 client-side auto-remove lags, AND **express checkouts (Shop Pay / Apple Pay / Google Pay / PayPal) that
