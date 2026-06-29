@@ -1789,7 +1789,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       markGiftWorkDone();
       renderPerception(config);
       await refreshGrouping();
-      ensureUnmasked();
     } finally {
       markGiftWorkDone();
       selfMutating = false;
@@ -1884,11 +1883,21 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
   }
   var idleResolvers = [];
+  function remaskUngrouped() {
+    document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => {
+      if (!el.hasAttribute(GROUPED_ATTR)) {
+        el.setAttribute(MASK_ATTR, "");
+        if (maskTimer !== void 0) clearTimeout(maskTimer);
+        maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+      }
+    });
+  }
   function schedule(config) {
     if (running) {
       pending = true;
       return;
     }
+    remaskUngrouped();
     running = true;
     void reconcileOnce(config).catch(() => void 0).finally(() => {
       running = false;
@@ -2045,7 +2054,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       ...rate !== void 0 ? { presentmentRate: rate } : {}
     });
     if (!result.ok || result.config.status !== "active") {
-      ensureUnmasked();
       return;
     }
     campaignConfig = result.config;

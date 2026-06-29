@@ -250,7 +250,6 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
     await refreshGrouping(); // recompute + re-apply the two-group line transform from the final cart
-    ensureUnmasked(); // reconcile done — grouped lines are in place (or confirmed no-gift/empty)
   } finally {
     markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
     selfMutating = false;
@@ -371,11 +370,25 @@ function renderPerception(config: WidgetConfig): void {
 // merged-buy write awaits this so its cart mutation never interleaves with a reconcile's mutations.
 let idleResolvers: (() => void)[] = [];
 
+// Re-mask elements that are NOT currently grouped (timeout-lifted or never grouped). A new reconcile
+// will either group them (mask lifts via data-fge-grouped) or the timeout fires again. Elements that
+// ARE grouped (data-fge-grouped present) are NOT re-masked — no flicker on a within-tier edit.
+function remaskUngrouped(): void {
+  document.querySelectorAll<HTMLElement>('cart-drawer-items, cart-items').forEach((el) => {
+    if (!el.hasAttribute(GROUPED_ATTR)) {
+      el.setAttribute(MASK_ATTR, '');
+      if (maskTimer !== undefined) clearTimeout(maskTimer);
+      maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+    }
+  });
+}
+
 function schedule(config: WidgetConfig): void {
   if (running) {
     pending = true;
     return;
   }
+  remaskUngrouped();
   running = true;
   void reconcileOnce(config)
     .catch(() => undefined)
@@ -535,11 +548,11 @@ async function onMergedBuyQtyChange(
   };
 }
 
-// FOUC mask: data-fge-pending is set ONCE on init and stays PERMANENTLY — it signals "FGE controls
-// this region". data-fge-grouped is TOGGLED: set by applyTwoGroupLayout on success, REMOVED on each
-// Dawn re-render (onReattach). The mask CSS gates on [data-fge-pending]:not([data-fge-grouped]), so
-// the spinner shows whenever grouped content is not yet applied (initial load AND every re-render).
-// ensureUnmasked sets data-fge-grouped for cases where no grouping applies (no-gift, timeout, no campaign).
+// FOUC mask: data-fge-pending signals "FGE controls this region" (set on init + re-set by
+// remaskUngrouped on new reconcile cycles for ungrouped elements). data-fge-grouped is set by
+// applyTwoGroupLayout on success and REMOVED by onReattach when Dawn replaces content. The mask CSS
+// gates on [data-fge-pending]:not([data-fge-grouped]). Mask lifts ONLY via data-fge-grouped (grouping
+// success) or the 2s timeout (ensureUnmasked). No-gift carts stay masked until timeout — accepted.
 const MASK_ATTR = 'data-fge-pending';
 const GROUPED_ATTR = 'data-fge-grouped';
 const MASK_TIMEOUT_MS = 2000;
@@ -579,7 +592,6 @@ async function loadCampaignConfig(config: WidgetConfig): Promise<void> {
     ...(rate !== undefined ? { presentmentRate: rate } : {}),
   });
   if (!result.ok || result.config.status !== 'active') {
-    ensureUnmasked(); // no active campaign → no gift possible → unmask immediately
     return;
   }
   campaignConfig = result.config;
