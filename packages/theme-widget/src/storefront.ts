@@ -651,10 +651,25 @@ function ensureUnmasked(): void {
     clearTimeout(maskTimer);
     maskTimer = undefined;
   }
+  // If a reconcile is still in progress, defer the unmask — lifting now would show ungrouped
+  // content (including gift lines). Retry after another MASK_TIMEOUT_MS.
+  if (running || pending) {
+    maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+    return;
+  }
   document.querySelectorAll<HTMLElement>(`[${MASK_ATTR}]`).forEach((el) => {
     el.setAttribute(GROUPED_ATTR, '');
     el.removeAttribute(MASK_ATTR);
   });
+  // Also lift the body.fge-active mask on any cart-drawer-items without data-fge-grouped (the
+  // reconcile finished but grouping didn't run — e.g. empty cart or no campaign).
+  document
+    .querySelectorAll<HTMLElement>(
+      'cart-drawer-items:not([data-fge-grouped]), cart-items:not([data-fge-grouped])',
+    )
+    .forEach((el) => {
+      el.setAttribute(GROUPED_ATTR, '');
+    });
 }
 
 function remask(itemsEl: HTMLElement | null): void {

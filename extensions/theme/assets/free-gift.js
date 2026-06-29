@@ -2292,9 +2292,16 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       clearTimeout(maskTimer);
       maskTimer = void 0;
     }
+    if (running || pending) {
+      maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+      return;
+    }
     document.querySelectorAll(`[${MASK_ATTR}]`).forEach((el) => {
       el.setAttribute(GROUPED_ATTR, "");
       el.removeAttribute(MASK_ATTR);
+    });
+    document.querySelectorAll("cart-drawer-items:not([data-fge-grouped]), cart-items:not([data-fge-grouped])").forEach((el) => {
+      el.setAttribute(GROUPED_ATTR, "");
     });
   }
   function remask(itemsEl) {
