@@ -1789,7 +1789,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       markGiftWorkDone();
       renderPerception(config);
       await refreshGrouping();
-      liftMask();
+      ensureUnmasked();
     } finally {
       markGiftWorkDone();
       selfMutating = false;
@@ -2012,25 +2012,30 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     };
   }
   var MASK_ATTR = "data-fge-pending";
+  var GROUPED_ATTR = "data-fge-grouped";
   var MASK_TIMEOUT_MS = 2e3;
   var maskTimer;
-  var maskLifted = false;
   function applyInitialMask() {
     document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => {
       el.setAttribute(MASK_ATTR, "");
     });
-    maskTimer = setTimeout(liftMask, MASK_TIMEOUT_MS);
+    maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
   }
-  function liftMask() {
-    if (maskLifted) return;
-    maskLifted = true;
+  function ensureUnmasked() {
     if (maskTimer !== void 0) {
       clearTimeout(maskTimer);
       maskTimer = void 0;
     }
     document.querySelectorAll(`[${MASK_ATTR}]`).forEach((el) => {
-      el.removeAttribute(MASK_ATTR);
+      el.setAttribute(GROUPED_ATTR, "");
     });
+  }
+  function remask(itemsEl) {
+    var _a2;
+    const host = (_a2 = itemsEl == null ? void 0 : itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl;
+    if (host !== null && host.hasAttribute(MASK_ATTR)) {
+      host.removeAttribute(GROUPED_ATTR);
+    }
   }
   async function loadCampaignConfig(config) {
     const rate = presentmentRate();
@@ -2040,7 +2045,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       ...rate !== void 0 ? { presentmentRate: rate } : {}
     });
     if (!result.ok || result.config.status !== "active") {
-      liftMask();
+      ensureUnmasked();
       return;
     }
     campaignConfig = result.config;
@@ -2059,14 +2064,14 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     sections = mountCartContexts({
       drawerSelector: config.drawerSelector,
       onReattach: (_context, itemsEl) => {
+        remask(itemsEl);
         if (lastPlan === null) {
           return;
         }
-        const grouped = applyTwoGroupLayout(itemsEl, lastPlan, {
+        applyTwoGroupLayout(itemsEl, lastPlan, {
           ourCode: lastDiscount,
           onMergedQtyChange: onMergedBuyQtyChange
         });
-        if (grouped) liftMask();
       }
     });
     applyInitialMask();

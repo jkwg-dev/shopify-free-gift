@@ -250,7 +250,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
     await refreshGrouping(); // recompute + re-apply the two-group line transform from the final cart
-    liftMask(); // FOUC: the first reconcile is done — ungrouped lines are now grouped (or confirmed empty)
+    ensureUnmasked(); // reconcile done — grouped lines are in place (or confirmed no-gift/empty)
   } finally {
     markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
     selfMutating = false;
@@ -535,31 +535,38 @@ async function onMergedBuyQtyChange(
   };
 }
 
-// FOUC mask (Part 2): unconditionally dims the line-items region until the first grouping pass
-// completes, so the user never sees native steppers / raw codes / duplicate split rows. Released by
-// liftMask (first successful grouping, confirmed no-gift, or the 2s fail-safe timeout).
+// FOUC mask: data-fge-pending is set ONCE on init and stays PERMANENTLY — it signals "FGE controls
+// this region". data-fge-grouped is TOGGLED: set by applyTwoGroupLayout on success, REMOVED on each
+// Dawn re-render (onReattach). The mask CSS gates on [data-fge-pending]:not([data-fge-grouped]), so
+// the spinner shows whenever grouped content is not yet applied (initial load AND every re-render).
+// ensureUnmasked sets data-fge-grouped for cases where no grouping applies (no-gift, timeout, no campaign).
 const MASK_ATTR = 'data-fge-pending';
+const GROUPED_ATTR = 'data-fge-grouped';
 const MASK_TIMEOUT_MS = 2000;
 let maskTimer: ReturnType<typeof setTimeout> | undefined;
-let maskLifted = false;
 
 function applyInitialMask(): void {
   document.querySelectorAll<HTMLElement>('cart-drawer-items, cart-items').forEach((el) => {
     el.setAttribute(MASK_ATTR, '');
   });
-  maskTimer = setTimeout(liftMask, MASK_TIMEOUT_MS);
+  maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
 }
 
-function liftMask(): void {
-  if (maskLifted) return;
-  maskLifted = true;
+function ensureUnmasked(): void {
   if (maskTimer !== undefined) {
     clearTimeout(maskTimer);
     maskTimer = undefined;
   }
   document.querySelectorAll<HTMLElement>(`[${MASK_ATTR}]`).forEach((el) => {
-    el.removeAttribute(MASK_ATTR);
+    el.setAttribute(GROUPED_ATTR, '');
   });
+}
+
+function remask(itemsEl: HTMLElement | null): void {
+  const host = itemsEl?.closest<HTMLElement>('cart-drawer-items, cart-items') ?? itemsEl;
+  if (host !== null && host.hasAttribute(MASK_ATTR)) {
+    host.removeAttribute(GROUPED_ATTR);
+  }
 }
 
 // Fetch /config in parallel (Part 1) — sets the chooser state and re-schedules so the next /validate
@@ -572,7 +579,7 @@ async function loadCampaignConfig(config: WidgetConfig): Promise<void> {
     ...(rate !== undefined ? { presentmentRate: rate } : {}),
   });
   if (!result.ok || result.config.status !== 'active') {
-    liftMask(); // no active campaign → no gift possible → unmask immediately
+    ensureUnmasked(); // no active campaign → no gift possible → unmask immediately
     return;
   }
   campaignConfig = result.config;
@@ -593,14 +600,15 @@ function init(): void {
   sections = mountCartContexts({
     drawerSelector: config.drawerSelector,
     onReattach: (_context, itemsEl) => {
+      remask(itemsEl); // re-activate spinner until grouping applies (Dawn just replaced content)
       if (lastPlan === null) {
         return;
       }
-      const grouped = applyTwoGroupLayout(itemsEl, lastPlan, {
+      applyTwoGroupLayout(itemsEl, lastPlan, {
         ourCode: lastDiscount,
         onMergedQtyChange: onMergedBuyQtyChange,
       });
-      if (grouped) liftMask();
+      // applyTwoGroupLayout sets data-fge-grouped on success → mask lifts in the same microtask
     },
   });
 
