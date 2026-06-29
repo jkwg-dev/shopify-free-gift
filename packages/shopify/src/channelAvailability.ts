@@ -5,6 +5,13 @@ import type { AdminGraphqlClient } from './client.js';
 // product.publishedOnPublication(publicationId:), which needs only `read_products` (NOT
 // publishedOnCurrentPublication, which requires read_product_listings). Market-agnostic: publish +
 // stock are not per-market. A pure read wrapper; the offerable decision lives in core.giftOfferability.
+//
+// PARTIAL-TOLERANT (see docs/phase-3b-stage-e-channel-availability-design.md §5b): a field-level
+// GraphQL error on ONE node of the `nodes(ids:)` batch nulls only that node (the error propagates to
+// the nullable list element), but a strict client that throws on any errors[] would discard the WHOLE
+// batch and grey every gift. We use client.requestPartial so a single bad node OMITS ONLY ITSELF
+// (isVariantNode skips it -> the caller greys exactly that gift via the missing-entry default); the
+// surviving gifts keep their real publish/stock booleans. Errors are LOGGED, never swallowed.
 
 export type GiftChannelAvailability = {
   // ProductVariant.availableForSale — sellability/stock, respecting the variant's inventory policy.
@@ -65,11 +72,22 @@ export async function fetchGiftChannelAvailability(
   }
   for (let i = 0; i < variantIds.length; i += NODE_BATCH_SIZE) {
     const batch = variantIds.slice(i, i + NODE_BATCH_SIZE);
-    const data = await client.request<ChannelResponse>(CHANNEL_AVAILABILITY_QUERY, {
-      ids: batch,
-      publicationId,
-    });
-    for (const node of data.nodes) {
+    const { data, errors } = await client.requestPartial<ChannelResponse>(
+      CHANNEL_AVAILABILITY_QUERY,
+      { ids: batch, publicationId },
+    );
+    const nodes = data?.nodes ?? [];
+    if (errors.length > 0) {
+      // Never silent. Log WHICH nodes failed (errors carry the response path). error-level on purpose:
+      // a properly-scoped read_products token returns a clean boolean for every gift, so any error here
+      // is worth investigating (and captures the exact payload for triage). The failing node is
+      // null/product-null in `data`, so isVariantNode below omits ONLY it; the caller greys that gift.
+      console.error(
+        '[channelAvailability] partial GraphQL errors reading gift publish status; affected gifts greyed',
+        errors,
+      );
+    }
+    for (const node of nodes) {
       if (isVariantNode(node)) {
         out.set(node.id, {
           availableForSale: node.availableForSale,

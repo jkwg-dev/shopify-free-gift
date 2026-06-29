@@ -3,6 +3,9 @@
 export type GraphqlErrorDetail = {
   readonly message: string;
   readonly code?: string;
+  // Field-level errors carry the response path of the failing node (e.g. ['nodes', 2, 'product',
+  // 'publishedOnPublication']). Kept so a partial-tolerant caller can log WHICH node failed.
+  readonly path?: readonly (string | number)[];
 };
 
 export type UserErrorDetail = {

@@ -48,6 +48,55 @@ it up in prod (`publications(first:10){ nodes { id name } }` → pick "Online St
 `SHOPIFY_ONLINE_STORE_PUBLICATION_ID` separately in **production Vercel env**. E1's boot validation makes a
 missing/malformed value fail loudly rather than silently skip the publication check.
 
+## 5b. E1 post-deploy bug — availability lookup must DEGRADE, never 500 (FIXED, commit 739b916)
+
+Dev repro: with an unpublished-but-in-stock gift in a winning AND tier, `/validate` returned **500** (the
+widget then rendered nothing). Root: `fetchGiftChannelAvailability` was the one **unprotected `await`** on
+the path (the mint below it was already try/caught), and the Admin client rethrows **any** GraphQL
+`errors[]` as `ShopifyGraphqlError`. The exact wrapper query returns clean
+`{ availableForSale, publishedOnPublication:false }` under a **broad** token, so the throw is
+**runtime/token-specific** to the `read_products` app token on an **unpublished** product (it returns
+`true` fine for a published one — published tier = 200, unpublished tier = 500). The earlier "read_products
+works" check was via the broad MCP token, which masked it.
+
+Fix (fail-CLOSED, mirrors the C2 mint-degrade): `/validate` wraps the channel fetch → log + degrade to
+`gift-unavailable`; `/config` `.catch` → empty-map → gifts greyed but structure still renders. The wrapper
+node guard now requires a non-null `product`. `console.error` in both catch sites captures the exact
+Shopify error for triage. **Known tradeoff:** because the batch query throws whole, one unpublished gift
+greys the **entire** `/config` batch until republished — the robustness follow-up (below) addresses it.
+
+**Robustness follow-up (DONE — per-variant resilient):** a dedicated investigation+design workflow
+(4 parallel research agents over the live Admin schema/docs/store + synthesis + adversarial verify,
+`holdsUp:true` high confidence) settled this:
+
+- **No `read_products`-safe field returns `false`-not-error for the Online-Store publication.**
+  `publishedOnPublication(publicationId:)` is the correct field and **stays** (docs + live across
+  DRAFT/ARCHIVED under a token proven to lack `read_product_listings` show it returns a clean boolean).
+  `resourcePublications`/`resourcePublicationsV2.isPublished` need **`read_publications`** (the app lacks
+  it); `publishedOnCurrentPublication`/`Channel` are **deprecated + need `read_product_listings`** (and
+  are exactly the field whose denial reproduces the partial-error shape); `publishedInContext` can't
+  target a publication; `onlineStoreUrl` diverges from publication state (observed null while published)
+  so it's only a fail-closed hint.
+- **The real root cause is the client, not the query.** `AdminGraphqlClient.request` throws on **any**
+  `errors[]` even when partial `data` is present. A field error on ONE node of a `nodes(ids:)` batch
+  nulls only that node (the error propagates to the nullable list element), but the strict client
+  discarded the whole batch → every gift greyed.
+- **Fix (per-variant resilience):** a `requestPartial` sibling on the client returns `{ data, errors }`
+  (never silent — the caller must inspect `errors`) and is used **only** by `fetchGiftChannelAvailability`;
+  `request()` stays byte-identical for every other caller (minting/model-C untouched). One bad node now
+  **omits only itself** (the existing `isVariantNode` skip) → exactly that gift greys, siblings keep
+  their real booleans. The committed degrade (§5b) stays as the backstop for HTTP / exhausted-throttle /
+  total-null responses. `read_products`-only, no reinstall.
+- **One honest gap (instrumented, not closed):** the app-token error _shape_ is unconfirmed — the broad
+  MCP token can't reproduce it, and `publishedOnPublication` returns a clean `false` under every token we
+  could test, so the prod 500's exact payload is unknown. The fix helps the **per-node** shape and is
+  no-regression for a **total-null** shape. `channelAvailability` now `console.error`s the exact `errors[]`
+  (with `path`) so the **next dev test captures the real shape** against a genuinely unpublished gift —
+  use **The Draft Snowboard** (`gid://shopify/Product/7993112887405`, variant `…/44289298006125`) or
+  **The Archived Snowboard** (`…/7993112821869`, variant `…/44289297973357`), both verified
+  `publishedOnPublication:false` yet `availableForSale:true`. Do not mark Stage E fully done until that
+  payload is observed.
+
 Verified on dev (the crux):
 
 - Online Store publication id = `gid://shopify/Publication/157545496685`.

@@ -117,6 +117,38 @@ describe('fetchGiftChannelAvailability', () => {
     expect([...map.keys()]).toEqual(['gid://shopify/ProductVariant/1']);
   });
 
+  it('tolerates a partial GraphQL error: one errored node omitted, the rest resolve (no throw)', async () => {
+    // The real repro shape: a field error on one node nulls THAT node and adds an errors[] entry with
+    // its path; the batch must NOT throw (which would grey every gift) — only the bad gift is omitted.
+    const { fetch } = mockFetch([
+      {
+        body: {
+          data: { nodes: [node('gid://shopify/ProductVariant/1', true, true), null] },
+          errors: [
+            {
+              message: 'Access denied for publishedOnPublication',
+              path: ['nodes', 1, 'product', 'publishedOnPublication'],
+            },
+          ],
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    const map = await fetchGiftChannelAvailability(
+      client,
+      ['gid://shopify/ProductVariant/1', 'gid://shopify/ProductVariant/2'],
+      PUB,
+    );
+
+    // Only the surviving variant is present; the errored one is omitted (caller greys exactly it).
+    expect([...map.keys()]).toEqual(['gid://shopify/ProductVariant/1']);
+    expect(map.get('gid://shopify/ProductVariant/1')).toEqual({
+      availableForSale: true,
+      publishedToOnlineStore: true,
+    });
+  });
+
   it('batches ids in chunks of 250', async () => {
     const ids = Array.from({ length: 251 }, (_, i) => `gid://shopify/ProductVariant/${i}`);
     const { fetch, calls } = mockFetch([

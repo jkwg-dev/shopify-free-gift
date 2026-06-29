@@ -71,3 +71,78 @@ describe('AdminGraphqlClient.request', () => {
     await expect(client.request('query { x }', {})).rejects.toBeInstanceOf(ShopifyGraphqlError);
   });
 });
+
+describe('AdminGraphqlClient.requestPartial', () => {
+  it('returns { data, errors } WITHOUT throwing when partial data accompanies a field error', async () => {
+    const { fetch } = mockFetch([
+      {
+        body: {
+          data: { nodes: [{ id: 'gid://v/1' }, null] },
+          errors: [
+            {
+              message: 'Access denied',
+              path: ['nodes', 1, 'product', 'publishedOnPublication'],
+              extensions: { code: 'ACCESS_DENIED' },
+            },
+          ],
+        },
+      },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+
+    const { data, errors } = await client.requestPartial<{ nodes: unknown[] }>(
+      'query { nodes }',
+      {},
+    );
+    expect(data).toEqual({ nodes: [{ id: 'gid://v/1' }, null] });
+    expect(errors).toEqual([
+      {
+        message: 'Access denied',
+        code: 'ACCESS_DENIED',
+        path: ['nodes', 1, 'product', 'publishedOnPublication'],
+      },
+    ]);
+  });
+
+  it('returns errors with empty data (no throw) so a fully-nulled batch is still inspectable', async () => {
+    const { fetch } = mockFetch([
+      { body: { data: null, errors: [{ message: 'boom', path: ['nodes', 0] }] } },
+    ]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    const { data, errors } = await client.requestPartial('query { nodes }', {});
+    expect(data).toBeNull();
+    expect(errors).toHaveLength(1);
+  });
+
+  it('still retries THROTTLED then succeeds (shares the transport with request)', async () => {
+    const { fetch, calls } = mockFetch([THROTTLED, { body: { data: { ok: true } } }]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    await expect(client.requestPartial('query { ok }', {})).resolves.toEqual({
+      data: { ok: true },
+      errors: [],
+    });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('still throws ShopifyHttpError on a non-2xx response', async () => {
+    const { fetch } = mockFetch([{ ok: false, status: 500, text: 'boom' }]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    await expect(client.requestPartial('query { x }', {})).rejects.toBeInstanceOf(ShopifyHttpError);
+  });
+
+  it('still throws ShopifyThrottledError after exhausting retries', async () => {
+    const { fetch } = mockFetch([THROTTLED, THROTTLED, THROTTLED, THROTTLED]);
+    const client = new AdminGraphqlClient(testConfig(fetch, { maxRetries: 3 }));
+    await expect(client.requestPartial('query { x }', {})).rejects.toBeInstanceOf(
+      ShopifyThrottledError,
+    );
+  });
+
+  it('throws ShopifyGraphqlError only when there is NEITHER data nor errors', async () => {
+    const { fetch } = mockFetch([{ body: {} }]);
+    const client = new AdminGraphqlClient(testConfig(fetch));
+    await expect(client.requestPartial('query { x }', {})).rejects.toBeInstanceOf(
+      ShopifyGraphqlError,
+    );
+  });
+});
