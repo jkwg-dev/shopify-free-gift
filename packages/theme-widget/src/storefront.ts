@@ -472,6 +472,7 @@ function detectBadgeSectionId(): string {
 // Selectors to try for the subtotal/footer area, in order of specificity.
 const DRAWER_FOOTER_SELECTORS = [
   '.cart-drawer__footer',
+  '.cart-drawer__bottom',
   '.drawer__footer',
   '[class*="drawer__footer" i]',
   '[class*="cart-footer" i]',
@@ -712,6 +713,7 @@ function init(): void {
 
   // Immediately: styles + cart sections (synchronous — no network wait).
   injectStyles();
+  document.body.classList.add('fge-active');
 
   // Declared before mountCartContexts so the onReattach closure can read it: when a debounced
   // trigger is pending (timer !== undefined), don't lift the mask — the upcoming reconcile will
