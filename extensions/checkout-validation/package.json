@@ -1,0 +1,15 @@
+{
+  "name": "@free-gift-engine/checkout-validation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@free-gift-engine/core": "workspace:*"
+  },
+  "scripts": {
+    "build": "echo 'checkout-validation: Wasm is built by `shopify app deploy` (VF-2), not turbo'",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run --passWithNoTests"
+  }
+}

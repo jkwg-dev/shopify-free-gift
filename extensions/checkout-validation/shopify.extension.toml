@@ -1,0 +1,23 @@
+# Cart & Checkout Validation Function (Shopify CLI). Blocks checkout when an FGE `_fge_gift` line is no
+# longer free (Approach A — see docs/checkout-validation-function-design.md). VF-1 declares intent; the
+# Wasm build + activation happen at VF-2 (`shopify app deploy`, then Settings -> Checkout -> Checkout
+# Rules: add the rule, Activate, and set "Allow all customers to submit checkout" = ON for fail-open on
+# runtime exceptions).
+#
+# Uncertainty note: exact keys can vary by CLI version (~4.x). If `shopify app deploy` rejects a field,
+# defer to the CLI-generated config; this declares ONE validation function on the
+# cart.validations.generate.run target, JS entry `cartValidationsGenerateRun`, input from src/run.graphql.
+api_version = "2026-04"
+
+[[extensions]]
+type = "function"
+name = "FGE free-gift checkout gate"
+handle = "fge-checkout-gift-gate"
+
+  [extensions.build]
+  watch = ["src/**/*.ts"]
+
+  [[extensions.targeting]]
+  target = "cart.validations.generate.run"
+  input_query = "src/run.graphql"
+  export = "cartValidationsGenerateRun"
