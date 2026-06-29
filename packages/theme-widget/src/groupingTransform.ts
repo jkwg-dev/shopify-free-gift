@@ -29,9 +29,6 @@ const TOTALS_SELECTORS = [
   '[class*="line-item__price"]',
   '[class*="cart-item__total"]',
 ];
-const FINAL_PRICE_SELECTORS = ['.price--end', '.cart-item__final-price'];
-const OLD_PRICE_SELECTORS = ['.cart-item__old-price'];
-const PRICE_WRAPPER = '.cart-item__price-wrapper';
 const QTY_CELL_SELECTORS = [
   '.cart-item__quantity',
   '[class*="cart-item__quantity"]',
@@ -103,14 +100,20 @@ function findQtyContainer(node: HTMLElement): HTMLElement {
   return node;
 }
 
-// Replace ONLY the numeric value inside a node's existing price text with `sumMinorUnits`, preserving
-// the node's currency prefix/suffix (CA$, $, €) and its grouping/decimal style. Returns null if the
-// node has no number (caller leaves it untouched). This avoids a "CA$" vs "$" mismatch across Dawn's
-// two responsive totals cells, which format differently.
-function reformatPriceText(currentText: string, sumMinorUnits: number): string | null {
-  const m = currentText.match(/\d[\d.,\u00A0\u202F' ]*\d|\d/);
+// Extract the money format (currency prefix/suffix) from a price string so we can format new amounts
+// in the same style. Returns e.g. { prefix: '$', suffix: ' CAD', decimals: 2, decimalSep: '.', groupSep: ',' }.
+function extractMoneyFormat(text: string): {
+  prefix: string;
+  suffix: string;
+  decimals: number;
+  decimalSep: string;
+  groupSep: string;
+} | null {
+  const m = text.match(/^(.*?)(\d[\d.,\u00A0\u202F' ]*\d|\d)(.*)$/s);
   if (m === null) return null;
-  const token = m[0];
+  const prefix = m[1]!;
+  const token = m[2]!;
+  const suffix = m[3]!;
   const lastDot = token.lastIndexOf('.');
   const lastComma = token.lastIndexOf(',');
   const decPos = Math.max(lastDot, lastComma);
@@ -120,47 +123,110 @@ function reformatPriceText(currentText: string, sumMinorUnits: number): string |
     decimals = token.length - decPos - 1;
     decimalSep = token.charAt(decPos);
   }
-  // Grouping separator = the first separator char actually used in the integer part (space/nbsp/.,').
   const intText = decimals > 0 ? token.slice(0, decPos) : token;
   const gMatch = intText.match(/[.,\u00A0\u202F' ]/);
   const groupSep = gMatch !== null ? gMatch[0] : decimalSep === '.' ? ',' : '.';
+  return { prefix, suffix, decimals, decimalSep, groupSep };
+}
 
-  const fixed = (sumMinorUnits / Math.pow(10, decimals)).toFixed(decimals);
+function formatMoney(
+  minorUnits: number,
+  fmt: { prefix: string; suffix: string; decimals: number; decimalSep: string; groupSep: string },
+): string {
+  const fixed = (minorUnits / Math.pow(10, fmt.decimals)).toFixed(fmt.decimals);
   const dot = fixed.indexOf('.');
   const intPart = dot === -1 ? fixed : fixed.slice(0, dot);
   const fracPart = dot === -1 ? '' : fixed.slice(dot + 1);
-  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, groupSep);
-  const num = decimals > 0 ? `${grouped}${decimalSep}${fracPart}` : grouped;
-  return currentText.replace(token, num);
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, fmt.groupSep);
+  const num = fmt.decimals > 0 ? `${grouped}${fmt.decimalSep}${fracPart}` : grouped;
+  return `${fmt.prefix}${num}${fmt.suffix}`;
 }
 
-function reformatInPlace(el: HTMLElement | null, sumMinorUnits: number): void {
-  if (el === null) return;
-  const next = reformatPriceText(el.textContent ?? '', sumMinorUnits);
-  if (next !== null) el.textContent = next;
+// Build native-theme-identical price HTML: <ins class="color-red"> for sale, <del> for compare,
+// with visually-hidden a11y labels. When final === original, render a single plain price (no ins/del).
+function buildPriceHtml(
+  finalMinor: number,
+  originalMinor: number,
+  moneyFmt: {
+    prefix: string;
+    suffix: string;
+    decimals: number;
+    decimalSep: string;
+    groupSep: string;
+  },
+): string {
+  const finalStr = formatMoney(finalMinor, moneyFmt);
+  if (finalMinor === originalMinor) {
+    return finalStr;
+  }
+  const originalStr = formatMoney(originalMinor, moneyFmt);
+  return (
+    '<div class="cart-item__discounted-prices">' +
+    '<span class="visually-hidden">Sale price</span>' +
+    `<ins class="color-red">${finalStr}</ins>` +
+    '<span class="visually-hidden">Regular price</span>' +
+    `<del>${originalStr}</del>` +
+    '</div>'
+  );
 }
 
-// Overwrite the line total in EVERY responsive totals cell (and the strikethrough, if any)
-// with the merged sums. Leaves the per-UNIT price alone (it lives in .cart-item__details, not totals).
+// Overwrite the line total in the price cells with theme-native markup: <ins class="color-red"> for
+// sale price, <del> for compare, visually-hidden labels. Detects the money format from existing price
+// text so the currency symbol/style is preserved. Targets both the right-column line total
+// (.cart-item__actions--price) and the under-title unit price (.cart-item__price inside .cart-item__details).
 function setLineTotals(node: HTMLElement, sumFinal: number, sumOriginal: number): void {
-  let found = false;
-  for (const sel of TOTALS_SELECTORS) {
-    const cells = node.querySelectorAll<HTMLElement>(sel);
-    if (cells.length > 0) {
-      cells.forEach((cell) => {
-        const wrapper = cell.querySelector<HTMLElement>(PRICE_WRAPPER) ?? cell;
-        const finalEl =
-          findFirst(wrapper, FINAL_PRICE_SELECTORS) ??
-          wrapper.querySelector<HTMLElement>('.price:not(.cart-item__old-price)') ??
-          wrapper;
-        reformatInPlace(finalEl, sumFinal);
-        reformatInPlace(findFirst(wrapper, OLD_PRICE_SELECTORS), sumOriginal);
-      });
-      found = true;
-      break;
+  // Find an existing price element to extract the money format from.
+  const priceEl =
+    node.querySelector<HTMLElement>('.cart-item__actions--price') ??
+    node.querySelector<HTMLElement>('.cart-item__price') ??
+    findFirst(node, TOTALS_SELECTORS);
+  if (priceEl === null) {
+    diag('setLineTotals: no price element found in', node.tagName, node.id);
+    return;
+  }
+  // Extract format from any existing price text in the node.
+  const existingText = priceEl.textContent?.trim() ?? '';
+  const fmt = extractMoneyFormat(existingText);
+  if (fmt === null) {
+    diag('setLineTotals: no number found in price text', existingText);
+    return;
+  }
+
+  // Build the new price HTML.
+  const html = buildPriceHtml(sumFinal, sumOriginal, fmt);
+
+  // Update the right-column line total (.cart-item__actions--price).
+  const lineTotal = node.querySelector<HTMLElement>('.cart-item__actions--price');
+  if (lineTotal !== null) {
+    const inner =
+      lineTotal.querySelector<HTMLElement>('.cart-item__discounted-prices') ??
+      lineTotal.querySelector<HTMLElement>('.cart-item__price');
+    if (inner !== null) {
+      inner.innerHTML = buildPriceHtml(sumFinal, sumOriginal, fmt)
+        .replace('<div class="cart-item__discounted-prices">', '')
+        .replace('</div>', '');
+      if (sumFinal !== sumOriginal && !inner.classList.contains('cart-item__discounted-prices')) {
+        inner.className = 'cart-item__discounted-prices cart-item__price';
+      } else if (sumFinal === sumOriginal) {
+        inner.className = 'cart-item__price';
+      }
+    } else {
+      lineTotal.innerHTML = `<div class="cart-item__price">${html}</div>`;
     }
   }
-  if (!found) diag('setLineTotals: no totals cell found in', node.tagName, node.id);
+
+  // Fallback: update any totals cells that match the stock-Dawn selectors.
+  if (lineTotal === null) {
+    for (const sel of TOTALS_SELECTORS) {
+      const cells = node.querySelectorAll<HTMLElement>(sel);
+      if (cells.length > 0) {
+        cells.forEach((cell) => {
+          cell.innerHTML = `<div class="cart-item__price">${html}</div>`;
+        });
+        break;
+      }
+    }
+  }
 }
 
 // Show the merged quantity as READ-ONLY text (the number stays visible), disabling the +/- and remove

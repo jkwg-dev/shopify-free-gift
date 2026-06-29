@@ -327,9 +327,6 @@
     '[class*="line-item__price"]',
     '[class*="cart-item__total"]'
   ];
-  var FINAL_PRICE_SELECTORS = [".price--end", ".cart-item__final-price"];
-  var OLD_PRICE_SELECTORS = [".cart-item__old-price"];
-  var PRICE_WRAPPER = ".cart-item__price-wrapper";
   var QTY_CELL_SELECTORS = [
     ".cart-item__quantity",
     '[class*="cart-item__quantity"]',
@@ -394,10 +391,12 @@
     diag("findQtyContainer: no qty cell found, falling back to node", node.tagName, node.id);
     return node;
   }
-  function reformatPriceText(currentText, sumMinorUnits) {
-    const m = currentText.match(/\d[\d.,\u00A0\u202F' ]*\d|\d/);
+  function extractMoneyFormat(text) {
+    const m = text.match(/^(.*?)(\d[\d.,\u00A0\u202F' ]*\d|\d)(.*)$/s);
     if (m === null) return null;
-    const token = m[0];
+    const prefix = m[1];
+    const token = m[2];
+    const suffix = m[3];
     const lastDot = token.lastIndexOf(".");
     const lastComma = token.lastIndexOf(",");
     const decPos = Math.max(lastDot, lastComma);
@@ -410,37 +409,67 @@
     const intText = decimals > 0 ? token.slice(0, decPos) : token;
     const gMatch = intText.match(/[.,\u00A0\u202F' ]/);
     const groupSep = gMatch !== null ? gMatch[0] : decimalSep === "." ? "," : ".";
-    const fixed = (sumMinorUnits / Math.pow(10, decimals)).toFixed(decimals);
+    return { prefix, suffix, decimals, decimalSep, groupSep };
+  }
+  function formatMoney(minorUnits, fmt2) {
+    const fixed = (minorUnits / Math.pow(10, fmt2.decimals)).toFixed(fmt2.decimals);
     const dot = fixed.indexOf(".");
     const intPart = dot === -1 ? fixed : fixed.slice(0, dot);
     const fracPart = dot === -1 ? "" : fixed.slice(dot + 1);
-    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, groupSep);
-    const num = decimals > 0 ? `${grouped}${decimalSep}${fracPart}` : grouped;
-    return currentText.replace(token, num);
+    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, fmt2.groupSep);
+    const num = fmt2.decimals > 0 ? `${grouped}${fmt2.decimalSep}${fracPart}` : grouped;
+    return `${fmt2.prefix}${num}${fmt2.suffix}`;
   }
-  function reformatInPlace(el, sumMinorUnits) {
-    var _a2;
-    if (el === null) return;
-    const next = reformatPriceText((_a2 = el.textContent) != null ? _a2 : "", sumMinorUnits);
-    if (next !== null) el.textContent = next;
+  function buildPriceHtml(finalMinor, originalMinor, moneyFmt) {
+    const finalStr = formatMoney(finalMinor, moneyFmt);
+    if (finalMinor === originalMinor) {
+      return finalStr;
+    }
+    const originalStr = formatMoney(originalMinor, moneyFmt);
+    return `<div class="cart-item__discounted-prices"><span class="visually-hidden">Sale price</span><ins class="color-red">${finalStr}</ins><span class="visually-hidden">Regular price</span><del>${originalStr}</del></div>`;
   }
   function setLineTotals(node, sumFinal, sumOriginal) {
-    let found = false;
-    for (const sel of TOTALS_SELECTORS) {
-      const cells = node.querySelectorAll(sel);
-      if (cells.length > 0) {
-        cells.forEach((cell) => {
-          var _a2, _b2, _c2;
-          const wrapper = (_a2 = cell.querySelector(PRICE_WRAPPER)) != null ? _a2 : cell;
-          const finalEl = (_c2 = (_b2 = findFirst2(wrapper, FINAL_PRICE_SELECTORS)) != null ? _b2 : wrapper.querySelector(".price:not(.cart-item__old-price)")) != null ? _c2 : wrapper;
-          reformatInPlace(finalEl, sumFinal);
-          reformatInPlace(findFirst2(wrapper, OLD_PRICE_SELECTORS), sumOriginal);
-        });
-        found = true;
-        break;
+    var _a2, _b2, _c2, _d, _e;
+    const priceEl = (_b2 = (_a2 = node.querySelector(".cart-item__actions--price")) != null ? _a2 : node.querySelector(".cart-item__price")) != null ? _b2 : findFirst2(node, TOTALS_SELECTORS);
+    if (priceEl === null) {
+      diag("setLineTotals: no price element found in", node.tagName, node.id);
+      return;
+    }
+    const existingText = (_d = (_c2 = priceEl.textContent) == null ? void 0 : _c2.trim()) != null ? _d : "";
+    const fmt2 = extractMoneyFormat(existingText);
+    if (fmt2 === null) {
+      diag("setLineTotals: no number found in price text", existingText);
+      return;
+    }
+    const html = buildPriceHtml(sumFinal, sumOriginal, fmt2);
+    const lineTotal = node.querySelector(".cart-item__actions--price");
+    if (lineTotal !== null) {
+      const inner = (_e = lineTotal.querySelector(".cart-item__discounted-prices")) != null ? _e : lineTotal.querySelector(".cart-item__price");
+      if (inner !== null) {
+        inner.innerHTML = buildPriceHtml(sumFinal, sumOriginal, fmt2).replace(
+          '<div class="cart-item__discounted-prices">',
+          ""
+        ).replace("</div>", "");
+        if (sumFinal !== sumOriginal && !inner.classList.contains("cart-item__discounted-prices")) {
+          inner.className = "cart-item__discounted-prices cart-item__price";
+        } else if (sumFinal === sumOriginal) {
+          inner.className = "cart-item__price";
+        }
+      } else {
+        lineTotal.innerHTML = `<div class="cart-item__price">${html}</div>`;
       }
     }
-    if (!found) diag("setLineTotals: no totals cell found in", node.tagName, node.id);
+    if (lineTotal === null) {
+      for (const sel of TOTALS_SELECTORS) {
+        const cells = node.querySelectorAll(sel);
+        if (cells.length > 0) {
+          cells.forEach((cell) => {
+            cell.innerHTML = `<div class="cart-item__price">${html}</div>`;
+          });
+          break;
+        }
+      }
+    }
   }
   function showMergedQtyReadOnly(node, qty) {
     const input = findFirst2(node, QTY_INPUT_SELECTORS);
@@ -1699,17 +1728,6 @@
    tags that Dawn renders inside the price cell are hidden on grouped rows to avoid stale labels. */
 [data-fge-merged-hidden] .cart-item__totals,
 [data-fge-merged-hidden] .cart-item__actions--price{ display:none !important; }
-[data-fge-grouped] .cart-item__discounts{ display:none !important; }
-
-/* THEME-MATCH: the compare-at (was) price in the merged line total must use the theme's native
-   color, not red. The theme renders <del> in rgb(var(--color-foreground)), but some theme structures
-   inherit red from a discounted-price parent. Force the native style on grouped rows. */
-[data-fge-grouped] .cart-item__discounted-prices del,
-[data-fge-grouped] .cart-item__old-price,
-[data-fge-grouped] .cart-item__actions--price del{
-  color:rgb(var(--color-foreground,17,17,17)) !important;
-  text-decoration:line-through;
-}
 
 /* THEME-OVERRIDE: Dawn renders TWO "Your cart" titles inside the drawer \u2014 the H2.drawer__heading
    (header) and the H1.title--primary (cart section title, normally suppressed). Our injected layout
