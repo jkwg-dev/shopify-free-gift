@@ -15,6 +15,8 @@ import {
   type ValidateResult,
 } from '@free-gift-engine/core';
 import { mountCartContexts, type CartSection } from './cartSections.js';
+import { classifyAndGroup, type GroupingPlan, type RawCartLine } from './cartGrouping.js';
+import { applyTwoGroupLayout } from './groupingTransform.js';
 import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
@@ -51,6 +53,11 @@ type AjaxCartItem = {
   readonly variant_id: number;
   readonly quantity: number;
   readonly properties: Readonly<Record<string, unknown>> | null;
+  // Extra /cart.js fields the two-group transform needs (minor-unit integers + per-line discount
+  // titles). Optional so the reconcile path is unaffected if a theme/cart omits them.
+  readonly final_line_price?: number;
+  readonly original_line_price?: number;
+  readonly discounts?: readonly { readonly title?: string }[];
 };
 type AjaxCart = { readonly items: readonly AjaxCartItem[]; readonly currency: string };
 
@@ -113,6 +120,41 @@ const unavailableVariantIds = new Set<string>();
 // One entry per present cart surface (drawer and/or full /cart page); we render the same perception UI
 // into each so the widget works wherever the shopper is.
 let sections: CartSection[] = [];
+
+// Two-group line transform (Stage 1): the latest classification/merge plan + cart currency, recomputed
+// after each reconcile from a fresh /cart.js read. The cartSections re-attach hook applies it to each
+// surface's line list. Presentation-only — no cart write.
+let lastPlan: GroupingPlan | null = null;
+let lastCurrency = '';
+
+function toGroupingLines(cart: AjaxCart): RawCartLine[] {
+  return cart.items.map((item, index) => ({
+    index,
+    key: item.key,
+    variantId: item.variant_id,
+    quantity: item.quantity,
+    finalLinePrice: item.final_line_price ?? 0,
+    originalLinePrice: item.original_line_price ?? 0,
+    marked: isGiftLine(item),
+    allocationTitles: (item.discounts ?? []).map((d) => d.title ?? '').filter((t) => t !== ''),
+  }));
+}
+
+// Recompute the grouping plan from the live cart and re-apply it to every surface. Fail-open: on any
+// error we keep the previous plan / the theme's untouched list. ourCode = the applied discount (the
+// per-line allocation title for our BXGY code), so gets are scoped to OUR discount.
+async function refreshGrouping(): Promise<void> {
+  try {
+    const cart = await getCart();
+    lastCurrency = cart.currency;
+    lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+  } catch {
+    return;
+  }
+  for (const section of sections) {
+    section.attach(); // re-applies the transform via the cartSections onReattach hook
+  }
+}
 
 // Pending-indicator state (5b-2b): masks the residual gift-reconcile latency. Engaged IMMEDIATELY and
 // held for at least PENDING_MIN_MS (anti-flicker), and ALWAYS cleared on a terminal outcome or the
@@ -203,6 +245,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     }
     markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
+    await refreshGrouping(); // recompute + re-apply the two-group line transform from the final cart
   } finally {
     markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
     selfMutating = false;
@@ -344,7 +387,20 @@ function schedule(config: WidgetConfig): void {
 async function initPerception(config: WidgetConfig): Promise<void> {
   injectStyles(); // design tokens + component CSS (once)
   // Blended, in-flow sections per context (drawer and/or /cart page); re-attached on every re-render.
-  sections = mountCartContexts({ drawerSelector: config.drawerSelector });
+  // onReattach re-applies the two-group line transform on every theme re-render (Stage 1).
+  sections = mountCartContexts({
+    drawerSelector: config.drawerSelector,
+    onReattach: (_context, itemsEl) => {
+      if (lastPlan === null) {
+        return;
+      }
+      applyTwoGroupLayout(itemsEl, lastPlan, {
+        currency: lastCurrency,
+        ourCode: lastDiscount,
+        disableSplitBuyStepper: true, // Stage 1: the merged-control write is Stage 2
+      });
+    },
+  });
 
   const rate = presentmentRate();
   const result = await getConfig({

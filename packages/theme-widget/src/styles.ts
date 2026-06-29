@@ -189,6 +189,24 @@ body.fge-checkout-pending .cart__checkout-button::after{
   body.fge-checkout-pending [name="checkout"]::before,
   body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
+
+/* --- Stage 1: two-group cart layout (buys / gets). Quiet, blended group headers + read-only gift
+   rows. These target the theme's own line nodes (which lack the .fge token scope), so colors are
+   explicit hex matching the tokens above. No card/divider — just labeled sections in the same list. */
+.fge-group-head{ background:transparent; }
+.fge-group-head__cell{ padding:14px 0 6px; border:0; }
+.fge-group-head__title{
+  display:block; font-size:11px; font-weight:700; letter-spacing:.04em;
+  text-transform:uppercase; color:#707070;
+}
+.fge-group-head__sub{ display:block; margin-top:1px; font-size:11px; font-weight:600; color:#111111; }
+/* The "Free gift" / "Free gift — pending" badge injected into a gift line when the theme shows no
+   discount label, and the relabeled discount node. */
+.fge-line-badge, .fge-free-badge{
+  display:inline-block; font-size:11px; font-weight:700; color:#111111; text-transform:none;
+  letter-spacing:normal;
+}
+.fge-gift-line--pending .fge-line-badge{ color:#8a6d00; } /* amber: not-yet-free, needs attention */
 `;
 
 export function injectStyles(): void {

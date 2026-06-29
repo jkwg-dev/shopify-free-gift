@@ -1,0 +1,152 @@
+import { describe, expect, it } from 'vitest';
+import { classifyAndGroup, mergeBuysByVariant, type RawCartLine } from './cartGrouping.js';
+
+const OUR = 'OURCODE';
+
+// Builder with sensible defaults; override per case.
+function line(over: Partial<RawCartLine> & Pick<RawCartLine, 'index' | 'variantId'>): RawCartLine {
+  return {
+    key: `k${over.index}`,
+    quantity: 1,
+    finalLinePrice: 1000,
+    originalLinePrice: 1000,
+    marked: false,
+    allocationTitles: [],
+    ...over,
+  };
+}
+
+// A realized gift: zeroed by OUR code (and normally also marked).
+const gift = (index: number, variantId: number): RawCartLine =>
+  line({ index, variantId, quantity: 1, finalLinePrice: 0, marked: true, allocationTitles: [OUR] });
+
+describe('classifyAndGroup', () => {
+  it('no gifts -> buys only, hasGifts false (drives the no-header state)', () => {
+    const plan = classifyAndGroup([line({ index: 0, variantId: 1 })], OUR);
+    expect(plan.hasGifts).toBe(false);
+    expect(plan.gets).toEqual([]);
+    expect(plan.lingering).toEqual([]);
+    expect(plan.buys).toHaveLength(1);
+    expect(plan.buys[0]).toMatchObject({ variantId: 1, totalQuantity: 1, split: false });
+  });
+
+  it('defect #1 — merges a Shopify-split buy variant into one row (combined qty + price)', () => {
+    // 7 Hydrogen split 5 + 2; neither zeroed, neither marked -> one merged buy row.
+    const plan = classifyAndGroup(
+      [
+        line({
+          index: 0,
+          variantId: 1,
+          quantity: 5,
+          finalLinePrice: 5000,
+          originalLinePrice: 5000,
+        }),
+        line({
+          index: 1,
+          variantId: 1,
+          quantity: 2,
+          finalLinePrice: 2000,
+          originalLinePrice: 2000,
+        }),
+      ],
+      OUR,
+    );
+    expect(plan.buys).toHaveLength(1);
+    expect(plan.buys[0]).toMatchObject({
+      variantId: 1,
+      totalQuantity: 7,
+      totalFinalPrice: 7000,
+      totalOriginalPrice: 7000,
+      displayIndexes: [0, 1],
+      writableKeys: ['k0', 'k1'],
+      split: true,
+    });
+  });
+
+  it('a single qualifying gift (highest-tier-only) -> one gets line, separate from buys', () => {
+    const plan = classifyAndGroup([line({ index: 0, variantId: 1, quantity: 2 }), gift(1, 9)], OUR);
+    expect(plan.gets).toEqual([{ index: 1, key: 'k1', variantId: 9 }]);
+    expect(plan.buys.map((b) => b.variantId)).toEqual([1]);
+    expect(plan.hasGifts).toBe(true);
+  });
+
+  it('AND tier — every zeroed gift variant is gets (one code grants them together)', () => {
+    const plan = classifyAndGroup([line({ index: 0, variantId: 1 }), gift(1, 8), gift(2, 9)], OUR);
+    expect(plan.gets.map((g) => g.variantId)).toEqual([8, 9]);
+    expect(plan.buys.map((b) => b.variantId)).toEqual([1]);
+  });
+
+  it('issue #6 — gift variant also bought full-price: $0 line is gets, paid line is a buy', () => {
+    // variant 9 bought 1 full-price + got 1 free; the $0 line carries our allocation (it is the gift),
+    // the marker MIGRATED to the full-price line. Allocation-primary classification must put the $0
+    // line in gets and the full-price marked line in BUYS — never backwards.
+    const zeroed = line({
+      index: 0,
+      variantId: 9,
+      finalLinePrice: 0,
+      marked: false,
+      allocationTitles: [OUR],
+    });
+    const paidMarked = line({ index: 1, variantId: 9, finalLinePrice: 1000, marked: true });
+    const plan = classifyAndGroup([zeroed, paidMarked], OUR);
+    expect(plan.gets).toEqual([{ index: 0, key: 'k0', variantId: 9 }]);
+    expect(plan.lingering).toEqual([]); // NOT lingering — it has a zeroed sibling
+    expect(plan.buys).toHaveLength(1);
+    expect(plan.buys[0]).toMatchObject({ variantId: 9, totalQuantity: 1, totalFinalPrice: 1000 });
+    // write-safety: the marked paid line's key is EXCLUDED from writableKeys (reconcile owns it).
+    expect(plan.buys[0]!.writableKeys).toEqual([]);
+  });
+
+  it('lingering — marked, not zeroed, no zeroed sibling -> "pending" gets, never a buy', () => {
+    const plan = classifyAndGroup(
+      [
+        line({ index: 0, variantId: 1 }),
+        line({ index: 1, variantId: 9, finalLinePrice: 1000, marked: true }),
+      ],
+      OUR,
+    );
+    expect(plan.lingering).toEqual([{ index: 1, key: 'k1', variantId: 9 }]);
+    expect(plan.gets).toEqual([]);
+    expect(plan.buys.map((b) => b.variantId)).toEqual([1]); // the lingering gift is NOT merged into buys
+    expect(plan.hasGifts).toBe(true);
+  });
+
+  it('scoped to OUR code — a $0 line discounted by a DIFFERENT code (e.g. Kite) is a buy, not a gift', () => {
+    const otherZero = line({
+      index: 0,
+      variantId: 1,
+      finalLinePrice: 0,
+      allocationTitles: ['KITE_BOGO'],
+    });
+    const plan = classifyAndGroup([otherZero], OUR);
+    expect(plan.gets).toEqual([]);
+    expect(plan.buys.map((b) => b.variantId)).toEqual([1]);
+  });
+
+  it('no applied code (ourCode null) — nothing is gets; a marked-but-unzeroed line is lingering', () => {
+    const plan = classifyAndGroup(
+      [line({ index: 0, variantId: 9, finalLinePrice: 1000, marked: true, allocationTitles: [] })],
+      null,
+    );
+    expect(plan.gets).toEqual([]);
+    expect(plan.lingering.map((l) => l.variantId)).toEqual([9]);
+  });
+});
+
+describe('mergeBuysByVariant', () => {
+  it('preserves first-occurrence order and sums per variant', () => {
+    const rows = mergeBuysByVariant([
+      line({ index: 0, variantId: 2, quantity: 1, finalLinePrice: 500 }),
+      line({ index: 1, variantId: 1, quantity: 3, finalLinePrice: 3000 }),
+      line({ index: 2, variantId: 2, quantity: 4, finalLinePrice: 2000 }),
+    ]);
+    expect(rows.map((r) => r.variantId)).toEqual([2, 1]); // first-occurrence order
+    expect(rows[0]).toMatchObject({
+      variantId: 2,
+      totalQuantity: 5,
+      totalFinalPrice: 2500,
+      split: true,
+    });
+    expect(rows[1]).toMatchObject({ variantId: 1, totalQuantity: 3, split: false });
+  });
+});

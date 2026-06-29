@@ -41,6 +41,12 @@ const PAGE_FOOTER_SELECTORS = ['#main-cart-footer'];
 
 export type CartMountOptions = {
   readonly drawerSelector?: string | undefined;
+  // Stage 1 two-group transform hook: called after each re-attach (inside the observer-disconnect
+  // window, so the transform's DOM writes never loop the observer) with the resolved theme line-items
+  // container. The widget applies the grouping plan here. Optional — absence is the pre-grouping behavior.
+  readonly onReattach?:
+    | ((context: 'drawer' | 'page', itemsEl: HTMLElement | null) => void)
+    | undefined;
 };
 
 export type CartSection = {
@@ -120,6 +126,9 @@ type CartMountSpec = {
   readonly footerSelectors: readonly string[];
   readonly chooserInsideItems: boolean;
   readonly strict: boolean;
+  readonly onReattach?:
+    | ((context: 'drawer' | 'page', itemsEl: HTMLElement | null) => void)
+    | undefined;
 };
 
 function findFirst(root: ParentNode, selectors: readonly string[]): HTMLElement | null {
@@ -212,6 +221,15 @@ function mountOne(spec: CartMountSpec): CartSection {
     observer?.disconnect();
     try {
       doAttach(spec, stepperEl, chooserEl);
+      // Re-apply the two-group line transform on the same disconnected pass (so its DOM writes don't
+      // re-trigger the observer). Resolve the theme line-items container the same way doAttach does.
+      if (spec.onReattach !== undefined) {
+        const panel =
+          spec.panelSelectors.length > 0
+            ? (findFirst(spec.observeRoot, spec.panelSelectors) ?? spec.observeRoot)
+            : spec.observeRoot;
+        spec.onReattach(spec.context, findFirst(panel, spec.itemsSelectors));
+      }
     } finally {
       if (observer !== null) {
         observer.takeRecords();
@@ -244,6 +262,7 @@ export function mountCartContexts(opts: CartMountOptions = {}): CartSection[] {
       footerSelectors: FOOTER_SELECTORS,
       chooserInsideItems: true, // scroll past the items to reach the chooser
       strict: false, // keep the drawer's lenient fallbacks (unchanged behavior)
+      onReattach: opts.onReattach,
     });
   }
 
@@ -261,6 +280,7 @@ export function mountCartContexts(opts: CartMountOptions = {}): CartSection[] {
       footerSelectors: PAGE_FOOTER_SELECTORS,
       chooserInsideItems: false, // a normal page: chooser AFTER the items, before the footer section
       strict: true, // never inject in the wrong place on an unknown theme
+      onReattach: opts.onReattach,
     });
   }
 
