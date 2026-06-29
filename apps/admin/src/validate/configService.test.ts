@@ -1,5 +1,9 @@
 import { money } from '@free-gift-engine/core';
-import type { VariantMeta, VariantPricing } from '@free-gift-engine/shopify';
+import type {
+  GiftChannelAvailability,
+  VariantMeta,
+  VariantPricing,
+} from '@free-gift-engine/shopify';
 import { describe, expect, it } from 'vitest';
 import type { Campaign } from '../domain.js';
 import { type ActiveCampaignContext } from './service.js';
@@ -94,12 +98,20 @@ const meta: readonly VariantMeta[] = [
   },
 ];
 
-// Dawn is out of stock.
 const pricing: readonly VariantPricing[] = [
   { id: ICE, availableForSale: true, price: { amount: '699.95', currencyCode: 'USD' } },
-  { id: DAWN, availableForSale: false, price: { amount: '699.95', currencyCode: 'USD' } },
+  { id: DAWN, availableForSale: true, price: { amount: '699.95', currencyCode: 'USD' } },
   { id: HIDDEN, availableForSale: true, price: { amount: '749.95', currencyCode: 'USD' } },
 ];
+
+// Channel availability (Stage E): the SINGLE source of stock + Online-Store publish on the gift path.
+// Dawn is out of stock; everything is published. The predicate combines this with pricing presence +
+// meta resolution, so it is what now drives each option's `available` flag.
+const channel: ReadonlyMap<string, GiftChannelAvailability> = new Map([
+  [ICE, { availableForSale: true, publishedToOnlineStore: true }],
+  [DAWN, { availableForSale: false, publishedToOnlineStore: true }], // OOS
+  [HIDDEN, { availableForSale: true, publishedToOnlineStore: true }],
+]);
 
 function deps(
   context: ActiveCampaignContext | null,
@@ -109,6 +121,7 @@ function deps(
     resolveActiveCampaign: () => Promise.resolve(context),
     priceVariants: () => Promise.resolve(pricing),
     fetchVariantMeta: () => Promise.resolve(meta),
+    fetchChannelAvailability: () => Promise.resolve(channel),
     ...over,
   };
 }
@@ -224,5 +237,26 @@ describe('resolveCampaignConfig', () => {
     const ice = res.tiers[0]!.gift.options.find((o) => o.variantId === ICE)!;
     expect(ice.available).toBe(false);
     expect(ice.variantLabel).toBe(ICE); // fallback label when meta is missing
+  });
+
+  it('marks an in-stock gift unavailable when it is NOT published to the Online Store (the 422 leak)', async () => {
+    // Ice is priced + in stock + resolved but its product is not on the Online Store. Pre-Stage-E it
+    // would have been offered (available:true) and 422'd at /cart/add; now it is proactively disabled.
+    const unpublished: ReadonlyMap<string, GiftChannelAvailability> = new Map([
+      [ICE, { availableForSale: true, publishedToOnlineStore: false }],
+      [DAWN, { availableForSale: true, publishedToOnlineStore: true }],
+      [HIDDEN, { availableForSale: true, publishedToOnlineStore: true }],
+    ]);
+    const res = await resolveCampaignConfig(
+      's.myshopify.com',
+      { presentmentCurrency: 'USD', countryCode: 'US' },
+      deps(ctx, { fetchChannelAvailability: () => Promise.resolve(unpublished) }),
+    );
+    if (res.status !== 'active' || res.tiers[0]!.gift.kind !== 'OR')
+      throw new Error('expected active OR');
+    const ice = res.tiers[0]!.gift.options.find((o) => o.variantId === ICE)!;
+    expect(ice.available).toBe(false);
+    const dawn = res.tiers[0]!.gift.options.find((o) => o.variantId === DAWN)!;
+    expect(dawn.available).toBe(true); // published + in stock here
   });
 });

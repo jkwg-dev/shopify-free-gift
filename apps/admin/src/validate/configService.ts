@@ -4,15 +4,20 @@
 // result: /validate stays the per-cart authority and the only minting path. Reuses presentmentThreshold
 // (the invariant: the figure shown == the figure /validate enforces) so display and enforcement never
 // diverge.
-import type {
-  CampaignConfigRequest,
-  CampaignConfigResponse,
-  GiftItemView,
-  GiftOptionView,
-  Money,
-  TierConfig,
+import {
+  giftOfferability,
+  type CampaignConfigRequest,
+  type CampaignConfigResponse,
+  type GiftItemView,
+  type GiftOptionView,
+  type Money,
+  type TierConfig,
 } from '@free-gift-engine/core';
-import type { VariantMeta, VariantPricing } from '@free-gift-engine/shopify';
+import type {
+  GiftChannelAvailability,
+  VariantMeta,
+  VariantPricing,
+} from '@free-gift-engine/shopify';
 import type { Tier } from '../domain.js';
 import {
   type ActiveCampaignContext,
@@ -28,6 +33,11 @@ export type ConfigServiceDeps = {
   ) => Promise<readonly VariantPricing[]>;
   // Product id + titles per gift variant (the stored config holds only id + variantId).
   readonly fetchVariantMeta: (variantIds: readonly string[]) => Promise<readonly VariantMeta[]>;
+  // Online-Store publish status + stock per gift variant (the signals contextualPricing lacks). Wired
+  // at the composition root with the required publication id (fails fast if it is missing/malformed).
+  readonly fetchChannelAvailability: (
+    variantIds: readonly string[],
+  ) => Promise<ReadonlyMap<string, GiftChannelAvailability>>;
 };
 
 const DEFAULT_VARIANT_TITLE = 'Default Title'; // Shopify's sentinel for a single-variant product.
@@ -79,23 +89,31 @@ export async function resolveCampaignConfig(
   }
 
   const giftVariantIds = allGiftVariantIds(campaign.tiers);
-  const [pricing, meta] = await Promise.all([
+  const [pricing, meta, channel] = await Promise.all([
     deps.priceVariants(giftVariantIds, { country: request.countryCode }),
     deps.fetchVariantMeta(giftVariantIds),
+    deps.fetchChannelAvailability(giftVariantIds),
   ]);
-  const availableById = new Map(pricing.map((p) => [p.id, p.availableForSale] as const));
+  const pricedIds = new Set(pricing.map((p) => p.id));
   const metaById = new Map(meta.map((m) => [m.id, m] as const));
 
-  // A variant is offerable only if it both prices in this market AND resolves to a product. A missing
-  // entry (deleted / unpriceable) renders disabled — /validate's gift-unavailable is the backstop.
+  // Offerable via the SHARED predicate (same one the admin greying uses): resolves to a product AND
+  // prices in this market AND is published to the Online Store AND is in stock. A missing channel/meta
+  // entry (deleted / unpublished / OOS) renders disabled — /validate's gift-unavailable is the backstop.
   const viewFor = (variantId: string): GiftItemView => {
     const m = metaById.get(variantId);
+    const ch = channel.get(variantId);
     return {
       variantId,
       productId: m?.productId ?? '',
       productLabel: m === undefined ? variantId : m.productTitle,
       variantLabel: m === undefined ? variantId : labelFor(m),
-      available: (availableById.get(variantId) ?? false) && m !== undefined,
+      available: giftOfferability({
+        resolved: m !== undefined,
+        priced: pricedIds.has(variantId),
+        publishedToOnlineStore: ch?.publishedToOnlineStore ?? false,
+        inStock: ch?.availableForSale ?? false,
+      }).offerable,
       imageUrl: m?.imageUrl ?? null,
     };
   };

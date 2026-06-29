@@ -1,5 +1,5 @@
 import { InvalidGiftChoiceError, money, type SuppressionMode } from '@free-gift-engine/core';
-import type { VariantPricing } from '@free-gift-engine/shopify';
+import type { GiftChannelAvailability, VariantPricing } from '@free-gift-engine/shopify';
 import { describe, expect, it } from 'vitest';
 import type { Campaign } from '../domain.js';
 import { GiftCodeMappingStore } from '../store/giftCodeMapping.js';
@@ -108,10 +108,32 @@ function campaignWith(
 
 const DEFAULT_CAMPAIGN = campaignWith('highest-only', { kind: 'AND', gifts: [{ variantId: G1 }] });
 
+// Per-variant channel availability override; any variant not listed defaults to published + in stock.
+type ChannelOverride = Record<
+  string,
+  { availableForSale?: boolean; publishedToOnlineStore?: boolean }
+>;
+
+function makeChannel(over: ChannelOverride) {
+  return (ids: readonly string[]): Promise<ReadonlyMap<string, GiftChannelAvailability>> =>
+    Promise.resolve(
+      new Map(
+        ids.map((id) => [
+          id,
+          {
+            availableForSale: over[id]?.availableForSale ?? true,
+            publishedToOnlineStore: over[id]?.publishedToOnlineStore ?? true,
+          },
+        ]),
+      ),
+    );
+}
+
 function makeDeps(
   options: {
     campaign?: Campaign | null;
     prices?: PriceTable;
+    channel?: ChannelOverride;
     now?: () => Date;
     failMint?: boolean;
   } = {},
@@ -129,6 +151,7 @@ function makeDeps(
         campaign === null ? null : { shopId: 'shop1', baseCurrency: 'USD', campaign },
       ),
     priceVariants: makePricer(options.prices ?? DEFAULT_PRICES),
+    fetchChannelAvailability: makeChannel(options.channel ?? {}),
     mappingStore: store,
     qualifyingCollectionId: 'gid://shopify/Collection/test',
     now: options.now ?? (() => NOW),
@@ -489,14 +512,7 @@ describe('resolveValidate — markets (FX-derived thresholds)', () => {
 
 describe('resolveValidate — no-gift paths', () => {
   it('does not promise an out-of-stock gift', async () => {
-    const prices: PriceTable = {
-      US: {
-        [P1]: { amount: '60.00', currencyCode: 'USD' },
-        [G1]: { amount: '20.00', currencyCode: 'USD' },
-        [G2]: { amount: '30.00', currencyCode: 'USD', availableForSale: false },
-      },
-    };
-    const { deps } = makeDeps({ prices });
+    const { deps } = makeDeps({ channel: { [G2]: { availableForSale: false } } });
     const result = await resolveValidate(
       'shop.myshopify.com',
       req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }), // $120 -> t2 (G2)
@@ -508,6 +524,48 @@ describe('resolveValidate — no-gift paths', () => {
       reason: 'gift-unavailable',
       subtotal: money(12000, 'USD'),
     });
+  });
+
+  it('does not promise an in-stock gift that is NOT published to the Online Store (the 422 leak)', async () => {
+    // G2 prices + is in stock but its product is unpublished. availableForSale alone would have offered
+    // it; the publication signal in the backstop now returns gift-unavailable.
+    const { deps } = makeDeps({ channel: { [G2]: { publishedToOnlineStore: false } } });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }), // $120 -> t2 (G2)
+      deps,
+    );
+
+    expect(result).toEqual({
+      status: 'no-gift',
+      reason: 'gift-unavailable',
+      subtotal: money(12000, 'USD'),
+    });
+  });
+
+  it('treats an AND tier as all-or-nothing: one unavailable required gift -> no gift', async () => {
+    // tier1 AND = [G1, G2]; G2 unpublished. One BXGY code grants the AND set together, so the whole tier
+    // yields no gift rather than partially granting G1.
+    const andCampaign = campaignWith('highest-only', {
+      kind: 'AND',
+      gifts: [{ variantId: G1 }, { variantId: G2 }],
+    });
+    const { deps, gateway } = makeDeps({
+      campaign: andCampaign,
+      channel: { [G2]: { publishedToOnlineStore: false } },
+    });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({ cart: [{ variantId: P1, quantity: 1, appAdded: false }] }), // $60 -> qualifies t1
+      deps,
+    );
+
+    expect(result).toEqual({
+      status: 'no-gift',
+      reason: 'gift-unavailable',
+      subtotal: money(6000, 'USD'),
+    });
+    expect(gateway.createCount).toBe(0); // never mint a code for an unfulfillable AND set
   });
 
   it('degrades to no-gift (never throws -> never 500s the storefront) when minting fails', async () => {

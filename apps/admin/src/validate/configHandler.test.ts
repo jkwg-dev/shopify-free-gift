@@ -40,6 +40,7 @@ function makeDeps(
       }),
     priceVariants: () => Promise.resolve([]),
     fetchVariantMeta: () => Promise.resolve([]),
+    fetchChannelAvailability: () => Promise.resolve(new Map()),
     ...(useRealSignature ? {} : { verifySignature: () => true }),
     ...overrides,
   };

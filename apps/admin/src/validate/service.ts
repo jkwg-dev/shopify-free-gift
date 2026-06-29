@@ -9,6 +9,7 @@
 // gift for the real cart and to avoid handing out misleading codes. Suppression is protected the
 // same way: a higher-tier code carries a higher minimum.
 import {
+  giftOfferability,
   money,
   resolveActiveGifts,
   resolvedGiftSetHash,
@@ -22,6 +23,7 @@ import {
   convertBaseToPresentmentCeil,
   decimalToMinorUnits,
   type DiscountCombinesWith,
+  type GiftChannelAvailability,
   type VariantPricing,
 } from '@free-gift-engine/shopify';
 import type { Campaign, Tier } from '../domain.js';
@@ -44,6 +46,11 @@ export type ValidateServiceDeps = {
     variantIds: readonly string[],
     context: { readonly country: string },
   ) => Promise<readonly VariantPricing[]>;
+  // Online-Store publish status + stock for the winning gift variants — the gift-unavailable backstop
+  // gates on publication (not just stock), so an unpublished-but-in-stock gift is never promised.
+  readonly fetchChannelAvailability: (
+    variantIds: readonly string[],
+  ) => Promise<ReadonlyMap<string, GiftChannelAvailability>>;
   // Concurrency-safe get-or-create for the reusable scoped gift code.
   readonly mappingStore: GiftCodeMappingStore;
   // GID of the shared qualifying smart collection (BXGY customerBuys scope). Provisioned at campaign
@@ -227,11 +234,22 @@ export async function resolveValidate(
     return { status: 'no-gift', reason: 'below-threshold', subtotal: resolved.subtotal };
   }
 
-  // Never promise an out-of-stock (or unresolved) gift variant.
+  // Never promise an unavailable gift. The SAME predicate the storefront chooser uses (published to the
+  // Online Store AND priced AND in stock). For an AND tier this loops EVERY required gift, so the tier
+  // is all-or-nothing: any one unavailable required gift -> the whole tier yields no gift (one BXGY code
+  // grants the AND set together; it cannot partially grant). Channel reads only the winning gifts.
   const giftVariantIds = winning.gifts.map((g: Gift) => g.variantId);
+  const channel = await deps.fetchChannelAvailability(giftVariantIds);
   for (const variantId of giftVariantIds) {
-    const priced = pricingById.get(variantId);
-    if (priced === undefined || !priced.availableForSale) {
+    const priced = pricingById.has(variantId);
+    const ch = channel.get(variantId);
+    const offerable = giftOfferability({
+      resolved: priced, // a gift not in the authoritative pricing is treated as unresolved/unpriced
+      priced,
+      publishedToOnlineStore: ch?.publishedToOnlineStore ?? false,
+      inStock: ch?.availableForSale ?? false,
+    }).offerable;
+    if (!offerable) {
       return { status: 'no-gift', reason: 'gift-unavailable', subtotal: resolved.subtotal };
     }
   }

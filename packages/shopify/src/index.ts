@@ -44,6 +44,10 @@ export { fetchGiftVariants, type GiftVariant } from './products.js';
 
 export { fetchVariantPricing, type VariantPricing } from './pricing.js';
 export { fetchVariantMeta, type VariantMeta } from './variantMeta.js';
+export {
+  fetchGiftChannelAvailability,
+  type GiftChannelAvailability,
+} from './channelAvailability.js';
 
 export {
   exchangeAccessToken,

@@ -30,6 +30,15 @@ export {
 
 export { isCampaignActive, type Schedule } from './schedule.js';
 
+// Shared gift-availability predicate (Stage E): one source of truth for "is this gift offerable",
+// used by both the storefront /config builder and the admin greying endpoint.
+export {
+  giftOfferability,
+  type GiftAvailability,
+  type GiftAvailabilitySignals,
+  type GiftUnavailableReason,
+} from './giftAvailability.js';
+
 export {
   validateCampaignConfig,
   type TierConfigForValidation,

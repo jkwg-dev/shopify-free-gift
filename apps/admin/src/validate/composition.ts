@@ -16,6 +16,7 @@ import {
   ensureQualifyingCollection,
   EXCLUDE_GIFTS_RULE,
   exchangeAccessToken,
+  fetchGiftChannelAvailability,
   fetchGiftVariants,
   fetchVariantMeta,
   fetchVariantPricing,
@@ -61,6 +62,7 @@ import type { WebhookDeps } from '../webhooks/handlers.js';
 import type { ConfigHandlerDeps } from './configHandler.js';
 import type { ValidateHandlerDeps } from './handler.js';
 import { PostgresRateLimiter, type WindowCounter } from './rateLimitPostgres.js';
+import { requireOnlineStorePublicationId } from './publicationConfig.js';
 import type { ActiveCampaignContext } from './service.js';
 
 // Minimal access scopes the engine actually uses (audited against packages/shopify):
@@ -222,6 +224,10 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
   const shopDomain = requireEnv('SHOPIFY_SHOP_DOMAIN');
   const baseCurrency = requireEnv('SHOPIFY_BASE_CURRENCY');
 
+  // Fail-fast (named) if the Online Store publication id is missing/malformed — the availability path
+  // must never silently fall back to a stock-only check (Stage E §5a). Read eagerly here so a misconfig
+  // surfaces on the first /validate construction, not buried mid-request.
+  const onlineStorePublicationId = requireOnlineStorePublicationId();
   const mappingTable = new PrismaGiftCodeMappingTable(prismaLike());
   const client = await adminClientForShop(shopDomain);
   const mappingStore = new GiftCodeMappingStore(
@@ -238,6 +244,8 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
     rateLimiter: makeRateLimiter(prisma),
     resolveActiveCampaign: makeResolveActiveCampaign(baseCurrency),
     priceVariants: (ids, ctx) => fetchVariantPricing(client, ids, ctx),
+    fetchChannelAvailability: (ids) =>
+      fetchGiftChannelAvailability(client, ids, onlineStorePublicationId),
     mappingStore,
     qualifyingCollectionId: qualifyingCollection.id,
     now: () => new Date(),
@@ -445,6 +453,9 @@ export async function getConfigDeps(): Promise<ConfigHandlerDeps> {
   const prisma = getPrisma();
   const shopDomain = requireEnv('SHOPIFY_SHOP_DOMAIN');
   const baseCurrency = requireEnv('SHOPIFY_BASE_CURRENCY');
+  // Fail-fast (named) if the publication id is missing/malformed — never serve config with a stock-only
+  // availability check (Stage E §5a).
+  const onlineStorePublicationId = requireOnlineStorePublicationId();
   const client = await adminClientForShop(shopDomain);
 
   configDeps = {
@@ -453,6 +464,8 @@ export async function getConfigDeps(): Promise<ConfigHandlerDeps> {
     resolveActiveCampaign: makeResolveActiveCampaign(baseCurrency),
     priceVariants: (ids, ctx) => fetchVariantPricing(client, ids, ctx),
     fetchVariantMeta: (ids) => fetchVariantMeta(client, ids),
+    fetchChannelAvailability: (ids) =>
+      fetchGiftChannelAvailability(client, ids, onlineStorePublicationId),
   };
   return configDeps;
 }

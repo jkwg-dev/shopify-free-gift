@@ -79,6 +79,10 @@ function makeDeps(
     resolveActiveCampaign: () =>
       Promise.resolve({ shopId: 'shop1', baseCurrency: 'USD', campaign: andCampaign() }),
     priceVariants,
+    fetchChannelAvailability: (ids) =>
+      Promise.resolve(
+        new Map(ids.map((id) => [id, { availableForSale: true, publishedToOnlineStore: true }])),
+      ),
     mappingStore: new GiftCodeMappingStore(new FakeMappingTable(), gateway),
     qualifyingCollectionId: 'gid://shopify/Collection/test',
     now: () => NOW,
