@@ -565,11 +565,9 @@ async function onMergedBuyQtyChange(
   };
 }
 
-// FOUC mask: data-fge-pending signals "FGE controls this region" (set on init + re-set by
-// remaskUngrouped on new reconcile cycles for ungrouped elements). data-fge-grouped is set by
-// applyTwoGroupLayout on success and REMOVED by onReattach when Dawn replaces content. The mask CSS
-// gates on [data-fge-pending]:not([data-fge-grouped]). Mask lifts ONLY via data-fge-grouped (grouping
-// success) or the 2s timeout (ensureUnmasked). No-gift carts stay masked until timeout — accepted.
+// FOUC mask: data-fge-pending signals "FGE controls this region". data-fge-grouped lifts it.
+// onReattach always lifts (grouped or ungrouped) so the mask is never permanent. remask() starts a
+// safety timer as a backstop; remaskUngrouped() only starts a timer when none is running.
 const MASK_ATTR = 'data-fge-pending';
 const GROUPED_ATTR = 'data-fge-grouped';
 const MASK_TIMEOUT_MS = 2000;
@@ -596,6 +594,16 @@ function remask(itemsEl: HTMLElement | null): void {
   const host = itemsEl?.closest<HTMLElement>('cart-drawer-items, cart-items') ?? itemsEl;
   if (host !== null && host.hasAttribute(MASK_ATTR)) {
     host.removeAttribute(GROUPED_ATTR);
+    if (maskTimer === undefined) {
+      maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+    }
+  }
+}
+
+function liftMask(itemsEl: HTMLElement | null): void {
+  const host = itemsEl?.closest<HTMLElement>('cart-drawer-items, cart-items') ?? itemsEl;
+  if (host !== null && host.hasAttribute(MASK_ATTR)) {
+    host.setAttribute(GROUPED_ATTR, '');
   }
 }
 
@@ -629,15 +637,19 @@ function init(): void {
   sections = mountCartContexts({
     drawerSelector: config.drawerSelector,
     onReattach: (_context, itemsEl) => {
-      remask(itemsEl); // re-activate spinner until grouping applies (Dawn just replaced content)
+      remask(itemsEl);
       if (lastPlan === null) {
+        liftMask(itemsEl);
         return;
       }
-      applyTwoGroupLayout(itemsEl, lastPlan, {
-        ourCode: lastDiscount,
-        onMergedQtyChange: onMergedBuyQtyChange,
-      });
-      // applyTwoGroupLayout sets data-fge-grouped on success → mask lifts in the same microtask
+      if (
+        !applyTwoGroupLayout(itemsEl, lastPlan, {
+          ourCode: lastDiscount,
+          onMergedQtyChange: onMergedBuyQtyChange,
+        })
+      ) {
+        liftMask(itemsEl);
+      }
     },
   });
 

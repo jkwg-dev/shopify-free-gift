@@ -2061,6 +2061,16 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     const host = (_a2 = itemsEl == null ? void 0 : itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl;
     if (host !== null && host.hasAttribute(MASK_ATTR)) {
       host.removeAttribute(GROUPED_ATTR);
+      if (maskTimer === void 0) {
+        maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+      }
+    }
+  }
+  function liftMask(itemsEl) {
+    var _a2;
+    const host = (_a2 = itemsEl == null ? void 0 : itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl;
+    if (host !== null && host.hasAttribute(MASK_ATTR)) {
+      host.setAttribute(GROUPED_ATTR, "");
     }
   }
   async function loadCampaignConfig(config) {
@@ -2091,12 +2101,15 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       onReattach: (_context, itemsEl) => {
         remask(itemsEl);
         if (lastPlan === null) {
+          liftMask(itemsEl);
           return;
         }
-        applyTwoGroupLayout(itemsEl, lastPlan, {
+        if (!applyTwoGroupLayout(itemsEl, lastPlan, {
           ourCode: lastDiscount,
           onMergedQtyChange: onMergedBuyQtyChange
-        });
+        })) {
+          liftMask(itemsEl);
+        }
       }
     });
     applyInitialMask();
