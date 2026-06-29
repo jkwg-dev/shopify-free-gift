@@ -542,22 +542,25 @@
     return header;
   }
   function applyTwoGroupLayout(itemsEl, plan, opts) {
-    var _a2, _b2, _c2, _d, _e, _f, _g, _h;
+    var _a2, _b2, _c2, _d, _e, _f, _g, _h, _i;
     if (itemsEl === null) return false;
     const lineNodes = findLineNodes(itemsEl);
     if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) return false;
-    if (itemsEl.querySelector(".fge-group-head") !== null) return true;
+    if (itemsEl.querySelector(".fge-group-head") !== null) {
+      ((_a2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl).setAttribute(MARK, "");
+      return true;
+    }
     for (const row of plan.buys) {
       if (!row.split) continue;
       const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
       if (keep == null || keep.querySelector(TOTALS_SELECTOR) === null) return false;
     }
-    const parent = (_b2 = (_a2 = lineNodes[0]) == null ? void 0 : _a2.parentElement) != null ? _b2 : null;
+    const parent = (_c2 = (_b2 = lineNodes[0]) == null ? void 0 : _b2.parentElement) != null ? _c2 : null;
     if (parent === null) return false;
-    ((_c2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _c2 : itemsEl).setAttribute(MARK, "");
+    ((_d = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _d : itemsEl).setAttribute(MARK, "");
     if (plan.buys.length > 0 && plan.hasGifts) {
       const firstRow = plan.buys[0];
-      const firstIdx = (_e = (_d = firstRow.interactiveIndex) != null ? _d : firstRow.readOnlyIndexes[0]) != null ? _e : firstRow.hideIndexes[0];
+      const firstIdx = (_f = (_e = firstRow.interactiveIndex) != null ? _e : firstRow.readOnlyIndexes[0]) != null ? _f : firstRow.hideIndexes[0];
       const firstBuy = firstIdx === void 0 ? null : lineNodes[firstIdx];
       if (firstBuy != null) parent.insertBefore(makeHeader(firstBuy, BUYS_HEADER, null), firstBuy);
     }
@@ -600,7 +603,7 @@
     }
     if (plan.hasGifts) {
       const giftCount = plan.gets.length + plan.lingering.length;
-      const firstGiftIdx = (_h = (_f = plan.gets[0]) == null ? void 0 : _f.index) != null ? _h : (_g = plan.lingering[0]) == null ? void 0 : _g.index;
+      const firstGiftIdx = (_i = (_g = plan.gets[0]) == null ? void 0 : _g.index) != null ? _i : (_h = plan.lingering[0]) == null ? void 0 : _h.index;
       const firstGift = firstGiftIdx === void 0 ? null : lineNodes[firstGiftIdx];
       if (firstGift != null) {
         parent.append(
@@ -1546,8 +1549,8 @@ body.fge-checkout-pending .cart__checkout-button::after{
 /* The "Free gift" / "Free gift \u2014 pending" badge injected into a gift line when the theme shows no
    discount label, and the relabeled discount node. */
 .fge-line-badge, .fge-free-badge{
-  display:inline-block; font-size:11px; font-weight:700; color:#111111; text-transform:none;
-  letter-spacing:normal;
+  display:block; font-size:11px; font-weight:700; color:#111111; text-transform:none;
+  letter-spacing:normal; margin-bottom:2px;
 }
 .fge-gift-line--pending .fge-line-badge{ color:#8a6d00; } /* amber: not-yet-free, needs attention */
 
@@ -1891,8 +1894,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         any = true;
       }
     });
-    if (any) {
-      if (maskTimer !== void 0) clearTimeout(maskTimer);
+    if (any && maskTimer === void 0) {
       maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
     }
   }

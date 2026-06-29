@@ -361,7 +361,12 @@ export function applyTwoGroupLayout(
   if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) return false;
 
   // Idempotency: already grouped THIS render (our header present) -> no-op.
-  if (itemsEl.querySelector('.fge-group-head') !== null) return true;
+  // Still (re-)set the mask-lift marker — onReattach's remask() strips it on every re-render, and
+  // without this the FOUC mask stays permanently (the full path below only runs on the FIRST group).
+  if (itemsEl.querySelector('.fge-group-head') !== null) {
+    (itemsEl.closest('cart-drawer-items, cart-items') ?? itemsEl).setAttribute(MARK, '');
+    return true;
+  }
 
   // FAIL OPEN (before mutating): a split buy row whose canonical node has NO line-total cell would
   // leave a stale total contradicting the subtotal — bail to the untouched theme list instead.

@@ -380,8 +380,7 @@ function remaskUngrouped(): void {
       any = true;
     }
   });
-  if (any) {
-    if (maskTimer !== undefined) clearTimeout(maskTimer);
+  if (any && maskTimer === undefined) {
     maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
   }
 }
