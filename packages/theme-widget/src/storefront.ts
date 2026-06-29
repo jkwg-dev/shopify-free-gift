@@ -42,6 +42,7 @@ import { buildProgressModel, renderProgress } from './progressGraph.js';
 import { reconcileGiftCart } from './reconcileLoop.js';
 import { injectStyles } from './styles.js';
 import { postValidate } from './validateClient.js';
+import { replaceDrawerFooter, stampAuthoritativeCart } from './drawerRefresh.js';
 
 const SOURCE = 'free-gift-engine';
 const CART_UPDATE_EVENT = 'cart-update'; // Dawn PUB_SUB_EVENTS.cartUpdate
@@ -69,7 +70,12 @@ type AjaxCartItem = {
   readonly original_line_price?: number;
   readonly discounts?: readonly { readonly title?: string }[];
 };
-type AjaxCart = { readonly items: readonly AjaxCartItem[]; readonly currency: string };
+type AjaxCart = {
+  readonly items: readonly AjaxCartItem[];
+  readonly currency: string;
+  readonly total_price?: number;
+  readonly item_count?: number;
+};
 
 type WidgetConfig = {
   readonly proxyPath: string;
@@ -478,9 +484,10 @@ function detectBadgeSectionId(): string {
   return 'cart-icon-bubble';
 }
 
-// Refresh the cart drawer's body + cart-count badge via Section Rendering. Resilient to
-// different theme structures: detects the section ID from the DOM, tries multiple footer selectors,
-// and falls back to a full-section innerHTML swap if the surgical replace can't find the target.
+// Refresh the cart drawer's FOOTER + cart-count badge via Section Rendering. The items container is
+// left untouched — it is owned by Dawn's own cart-update repaint + the FGE grouping transform.
+// After applying the section HTML, authoritative cart.js values are stamped into the subtotal and
+// badge so a stale section response (fetched before the discount settles) never shows wrong numbers.
 async function refreshDawnTotals(): Promise<void> {
   try {
     const drawerSectionId = detectDrawerSectionId();
@@ -491,44 +498,19 @@ async function refreshDawnTotals(): Promise<void> {
     if (pageFooterSection !== undefined && pageFooterSection !== '') {
       sectionIds.push(pageFooterSection);
     }
-    const res = await fetch(`${root}?sections=${sectionIds.join(',')}`, {
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) return;
-    const data = (await res.json()) as Record<string, string>;
+    const [sectionsRes, cart] = await Promise.all([
+      fetch(`${root}?sections=${sectionIds.join(',')}`, {
+        headers: { Accept: 'application/json' },
+      }),
+      getCart(),
+    ]);
+    if (!sectionsRes.ok) return;
+    const data = (await sectionsRes.json()) as Record<string, string>;
 
-    // Drawer: replace the cart body (#CartDrawer-Body) so line items, stepper quantities, and
-    // the footer subtotal all reflect the post-reconcile cart. The CSS-first mask (body.fge-active)
-    // hides the content until grouping re-applies, preventing gift line flash. Falls back to
-    // full-section swap if the body element isn't found.
+    // Drawer: replace ONLY the footer block via the extracted helper.
     const drawerHtml = data[drawerSectionId];
     if (drawerHtml !== undefined) {
-      const parsed = new DOMParser().parseFromString(drawerHtml, 'text/html');
-      const BODY_SELECTORS = ['#CartDrawer-Body', '[data-cart-body]'];
-      let replaced = false;
-      for (const sel of BODY_SELECTORS) {
-        const newBody = parsed.querySelector(sel);
-        const liveBody = document.querySelector(sel);
-        if (newBody !== null && liveBody !== null) {
-          liveBody.innerHTML = newBody.innerHTML;
-          replaced = true;
-          break;
-        }
-      }
-      if (!replaced) {
-        const drawer = document.querySelector(
-          'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart',
-        );
-        if (drawer !== null) {
-          const sectionWrapper =
-            drawer.closest<HTMLElement>('.shopify-section') ??
-            drawer.querySelector<HTMLElement>('.shopify-section');
-          const newSection = parsed.querySelector('.shopify-section');
-          if (sectionWrapper !== null && newSection !== null) {
-            sectionWrapper.innerHTML = newSection.innerHTML;
-          }
-        }
-      }
+      replaceDrawerFooter(drawerHtml);
     }
 
     // Badge: replace the cart-icon-bubble content.
@@ -556,6 +538,26 @@ async function refreshDawnTotals(): Promise<void> {
         }
       }
     }
+
+    // Defense in depth: stamp authoritative cart.js values into the subtotal and badge so the
+    // displayed numbers are never wrong, even if the section HTML is momentarily stale.
+    if (cart.total_price !== undefined && cart.item_count !== undefined) {
+      stampAuthoritativeCart({ total_price: cart.total_price, item_count: cart.item_count });
+    }
+
+    // Diagnostic: log the count-match invariant for dev verification.
+    const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
+    const renderedLineNodes = itemsEl
+      ? itemsEl.querySelectorAll(
+          '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row',
+        ).length
+      : 0;
+    console.warn('[FGE-DRAWERFIX]', {
+      renderedLineNodes,
+      cartItemsLen: cart.items.length,
+      displayedSubtotal: cart.total_price,
+      displayedBadge: cart.item_count,
+    });
   } catch {
     // Best-effort: a failed refresh leaves stale totals (no worse than before).
   }

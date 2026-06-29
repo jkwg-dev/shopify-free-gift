@@ -626,6 +626,7 @@
       }
     }
     ((_b2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _b2 : itemsEl).setAttribute(MARK, "");
+    const needsMergedOnAll = plan.hasGifts && opts.onMergedQtyChange !== void 0;
     let steppersInjected = 0;
     for (const row of plan.buys) {
       const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
@@ -633,7 +634,7 @@
         if (row.split) {
           setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
         }
-        if (row.split && opts.onMergedQtyChange !== void 0) {
+        if ((row.split || needsMergedOnAll) && opts.onMergedQtyChange !== void 0) {
           injectMergedStepper(
             keep,
             row.controllableQuantity,
@@ -1845,6 +1846,92 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     return { ok: true, result: body };
   }
 
+  // src/drawerRefresh.ts
+  var DRAWER_FOOTER_SELECTORS = [
+    ".cart-drawer__footer",
+    "[data-cart-footer]",
+    ".cart__footer",
+    ".drawer__footer"
+  ];
+  function overwritePriceFromMinorUnits(el, minorUnits) {
+    var _a2;
+    const text = (_a2 = el.textContent) != null ? _a2 : "";
+    const m = text.match(/\d[\d.,\u00A0\u202F' ]*\d|\d/);
+    if (m === null) return;
+    const token = m[0];
+    const lastDot = token.lastIndexOf(".");
+    const lastComma = token.lastIndexOf(",");
+    const decPos = Math.max(lastDot, lastComma);
+    let decimals = 0;
+    let decimalSep = ".";
+    if (decPos !== -1 && /^\d{1,3}$/.test(token.slice(decPos + 1))) {
+      decimals = token.length - decPos - 1;
+      decimalSep = token.charAt(decPos);
+    }
+    const intText = decimals > 0 ? token.slice(0, decPos) : token;
+    const gMatch = intText.match(/[.,\u00A0\u202F' ]/);
+    const groupSep = gMatch !== null ? gMatch[0] : decimalSep === "." ? "," : ".";
+    const fixed = (minorUnits / Math.pow(10, decimals)).toFixed(decimals);
+    const dot = fixed.indexOf(".");
+    const intPart = dot === -1 ? fixed : fixed.slice(0, dot);
+    const fracPart = dot === -1 ? "" : fixed.slice(dot + 1);
+    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, groupSep);
+    const num = decimals > 0 ? `${grouped}${decimalSep}${fracPart}` : grouped;
+    el.textContent = text.replace(token, num);
+  }
+  function stampAuthoritativeCart(cart) {
+    const subtotalSelectors = [
+      ".totals__subtotal-value",
+      ".cart-drawer__subtotal .price",
+      ".totals__total-value",
+      "[data-cart-subtotal]"
+    ];
+    for (const sel of subtotalSelectors) {
+      document.querySelectorAll(sel).forEach((el) => {
+        overwritePriceFromMinorUnits(el, cart.total_price);
+      });
+    }
+    const badgeDots = document.querySelectorAll(
+      '.cart-count-bubble span[aria-hidden="true"], [data-cart-count]'
+    );
+    badgeDots.forEach((el) => {
+      el.textContent = String(cart.item_count);
+    });
+  }
+  function replaceDrawerFooter(drawerHtml) {
+    const parsed = new DOMParser().parseFromString(drawerHtml, "text/html");
+    let replaced = false;
+    for (const sel of DRAWER_FOOTER_SELECTORS) {
+      const newFooter = parsed.querySelector(sel);
+      const liveFooter = document.querySelector(sel);
+      if (newFooter !== null && liveFooter !== null) {
+        liveFooter.innerHTML = newFooter.innerHTML;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      const bodySelectors = ["#CartDrawer-Body", "[data-cart-body]"];
+      for (const bodySel of bodySelectors) {
+        const newBody = parsed.querySelector(bodySel);
+        const liveBody = document.querySelector(bodySel);
+        if (newBody !== null && liveBody !== null) {
+          for (const fSel of DRAWER_FOOTER_SELECTORS) {
+            const innerFooter = newBody.querySelector(fSel);
+            const liveInner = liveBody.querySelector(fSel);
+            if (innerFooter !== null && liveInner !== null) {
+              liveInner.innerHTML = innerFooter.innerHTML;
+              replaced = true;
+              break;
+            }
+          }
+          if (replaced) break;
+        }
+      }
+    }
+    return replaced;
+  }
+
   // src/storefront.ts
   var SOURCE = "free-gift-engine";
   var CART_UPDATE_EVENT = "cart-update";
@@ -2158,7 +2245,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     return "cart-icon-bubble";
   }
   async function refreshDawnTotals() {
-    var _a2, _b2;
+    var _a2;
     try {
       const drawerSectionId = detectDrawerSectionId();
       const badgeSectionId = detectBadgeSectionId();
@@ -2168,37 +2255,17 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       if (pageFooterSection !== void 0 && pageFooterSection !== "") {
         sectionIds.push(pageFooterSection);
       }
-      const res = await fetch(`${root}?sections=${sectionIds.join(",")}`, {
-        headers: { Accept: "application/json" }
-      });
-      if (!res.ok) return;
-      const data = await res.json();
+      const [sectionsRes, cart] = await Promise.all([
+        fetch(`${root}?sections=${sectionIds.join(",")}`, {
+          headers: { Accept: "application/json" }
+        }),
+        getCart()
+      ]);
+      if (!sectionsRes.ok) return;
+      const data = await sectionsRes.json();
       const drawerHtml = data[drawerSectionId];
       if (drawerHtml !== void 0) {
-        const parsed = new DOMParser().parseFromString(drawerHtml, "text/html");
-        const BODY_SELECTORS = ["#CartDrawer-Body", "[data-cart-body]"];
-        let replaced = false;
-        for (const sel of BODY_SELECTORS) {
-          const newBody = parsed.querySelector(sel);
-          const liveBody = document.querySelector(sel);
-          if (newBody !== null && liveBody !== null) {
-            liveBody.innerHTML = newBody.innerHTML;
-            replaced = true;
-            break;
-          }
-        }
-        if (!replaced) {
-          const drawer = document.querySelector(
-            'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart'
-          );
-          if (drawer !== null) {
-            const sectionWrapper = (_a2 = drawer.closest(".shopify-section")) != null ? _a2 : drawer.querySelector(".shopify-section");
-            const newSection = parsed.querySelector(".shopify-section");
-            if (sectionWrapper !== null && newSection !== null) {
-              sectionWrapper.innerHTML = newSection.innerHTML;
-            }
-          }
-        }
+        replaceDrawerFooter(drawerHtml);
       }
       const badgeHtml = data[badgeSectionId];
       if (badgeHtml !== void 0) {
@@ -2207,7 +2274,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           const parsed = new DOMParser().parseFromString(badgeHtml, "text/html");
           const newBadge = parsed.querySelector(".shopify-section");
           if (newBadge !== null) {
-            ((_b2 = liveBadge.querySelector(".shopify-section")) != null ? _b2 : liveBadge).innerHTML = newBadge.innerHTML;
+            ((_a2 = liveBadge.querySelector(".shopify-section")) != null ? _a2 : liveBadge).innerHTML = newBadge.innerHTML;
           }
         }
       }
@@ -2222,6 +2289,19 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           }
         }
       }
+      if (cart.total_price !== void 0 && cart.item_count !== void 0) {
+        stampAuthoritativeCart({ total_price: cart.total_price, item_count: cart.item_count });
+      }
+      const itemsEl = document.querySelector("cart-drawer-items, cart-items");
+      const renderedLineNodes = itemsEl ? itemsEl.querySelectorAll(
+        '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row'
+      ).length : 0;
+      console.warn("[FGE-DRAWERFIX]", {
+        renderedLineNodes,
+        cartItemsLen: cart.items.length,
+        displayedSubtotal: cart.total_price,
+        displayedBadge: cart.item_count
+      });
     } catch {
     }
   }

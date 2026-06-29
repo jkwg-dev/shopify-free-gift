@@ -428,6 +428,11 @@ export function applyTwoGroupLayout(
   (itemsEl.closest('cart-drawer-items, cart-items') ?? itemsEl).setAttribute(MARK, '');
 
   // --- buy rows: merge splits + inject stepper ---
+  // Section O: when gifts exist, inject the FGE merged stepper on ALL buy rows (including unsplit
+  // n=1 rows) so the native stepper + per-line remove are never exposed. An unsplit row has a
+  // single writableKey; the atomic cart/update.js with one key is trivially correct. When there are
+  // no gifts, leave unsplit rows on Dawn's native stepper (no deadlock risk without a gift).
+  const needsMergedOnAll = plan.hasGifts && opts.onMergedQtyChange !== undefined;
   let steppersInjected = 0;
   for (const row of plan.buys) {
     const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
@@ -435,7 +440,7 @@ export function applyTwoGroupLayout(
       if (row.split) {
         setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
       }
-      if (row.split && opts.onMergedQtyChange !== undefined) {
+      if ((row.split || needsMergedOnAll) && opts.onMergedQtyChange !== undefined) {
         injectMergedStepper(
           keep,
           row.controllableQuantity,
