@@ -299,12 +299,6 @@
   }
 
   // packages/theme-widget/src/groupingTransform.ts
-  var BUYS_HEADER = "Your purchase";
-  var GETS_HEADER_ONE = "Your free gift";
-  var GETS_HEADER_MANY = "Your free gifts";
-  var GETS_SUBLABEL = "Added free";
-  var LINGERING_LABEL = "Free gift \u2014 pending";
-  var FREE_GIFT_LABEL = "Free gift";
   var LINE_SELECTORS = [
     ".cart-item",
     '[id^="CartDrawer-Item-"]',
@@ -344,13 +338,6 @@
     ".button--tertiary",
     '[id^="Remove-"]',
     'a[href*="/cart/change"]'
-  ];
-  var DISCOUNT_SELECTORS = ["ul.discounts", ".cart-item__discounts", ".discounts"];
-  var BADGE_HOST_SELECTORS = [
-    ".cart-item__totals",
-    PRICE_WRAPPER,
-    ".cart-item__price",
-    '[class*="cart-item__price"]'
   ];
   var MARK = "data-fge-grouped";
   var HIDDEN_MARK = "data-fge-merged-hidden";
@@ -455,18 +442,6 @@
       });
     }
   }
-  function hideControls(node) {
-    for (const sel of [...QTY_CELL_SELECTORS, ...REMOVE_SELECTORS]) {
-      node.querySelectorAll(sel).forEach((el) => {
-        el.style.display = "none";
-        el.setAttribute("aria-hidden", "true");
-      });
-    }
-  }
-  function renderReadOnlyBuyLine(node) {
-    node.classList.add("fge-buy-line--locked");
-    hideNativeStepper(node);
-  }
   function hideNativeStepper(node) {
     let hiddenCount = 0;
     for (const sel of [...QTY_WIDGET_SELECTORS, ...REMOVE_SELECTORS]) {
@@ -502,7 +477,13 @@
             });
             input.style.display = "none";
           }
-          diag("hideNativeStepper: fallback hid", hiddenCount, "children in", container.tagName, container.className);
+          diag(
+            "hideNativeStepper: fallback hid",
+            hiddenCount,
+            "children in",
+            container.tagName,
+            container.className
+          );
         }
       }
     }
@@ -583,63 +564,8 @@
     inc.addEventListener("click", () => onAct(current + 1));
     del.addEventListener("click", () => onAct(0));
   }
-  function hideOurDiscount(node, ourCode) {
-    var _a2;
-    if (ourCode === null) return;
-    const discountEl = findFirst2(node, DISCOUNT_SELECTORS);
-    if (discountEl !== null && ((_a2 = discountEl.textContent) == null ? void 0 : _a2.includes(ourCode)) === true) {
-      discountEl.style.display = "none";
-    }
-  }
-  function relabelOurDiscount(node, ourCode) {
-    var _a2;
-    const discountEl = findFirst2(node, DISCOUNT_SELECTORS);
-    if (discountEl === null) return false;
-    if (ourCode === null || ((_a2 = discountEl.textContent) == null ? void 0 : _a2.includes(ourCode)) === true) {
-      discountEl.textContent = FREE_GIFT_LABEL;
-      discountEl.classList.add("fge-free-badge");
-      return true;
-    }
-    return false;
-  }
-  function injectBadge(node, text) {
-    var _a2, _b2, _c2;
-    if (node.querySelector(".fge-line-badge") !== null) return;
-    const host = (_a2 = findFirst2(node, BADGE_HOST_SELECTORS)) != null ? _a2 : node;
-    const badge = document.createElement("span");
-    badge.className = "fge fge-line-badge";
-    badge.textContent = text;
-    const hostStyle = (_b2 = globalThis.getComputedStyle) == null ? void 0 : _b2.call(globalThis, host);
-    if ((_c2 = hostStyle == null ? void 0 : hostStyle.display) == null ? void 0 : _c2.includes("flex")) {
-      host.style.flexWrap = "wrap";
-    }
-    host.prepend(badge);
-  }
-  function makeHeader(line, text, sub) {
-    const isRow = line.tagName === "TR";
-    const header = document.createElement(isRow ? "tr" : "div");
-    header.className = "fge fge-group-head";
-    header.setAttribute("role", "presentation");
-    const inner = isRow ? document.createElement("td") : header;
-    if (isRow) {
-      inner.setAttribute("colspan", "100");
-      inner.className = "fge-group-head__cell";
-      header.append(inner);
-    }
-    const title = document.createElement("span");
-    title.className = "fge-group-head__title";
-    title.textContent = text;
-    inner.append(title);
-    if (sub !== null) {
-      const subEl = document.createElement("span");
-      subEl.className = "fge-group-head__sub";
-      subEl.textContent = sub;
-      inner.append(subEl);
-    }
-    return header;
-  }
   function applyTwoGroupLayout(itemsEl, plan, opts) {
-    var _a2, _b2, _c2, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a2, _b2;
     if (itemsEl === null) return false;
     const lineNodes = findLineNodes(itemsEl);
     diag("applyTwoGroupLayout entry:", {
@@ -655,10 +581,15 @@
       lineNodeInfo: lineNodes.slice(0, 3).map((n) => `${n.tagName}#${n.id}.${n.className.slice(0, 50)}`)
     });
     if (plan.lineCount === 0 || lineNodes.length !== plan.lineCount) {
-      diag("applyTwoGroupLayout: FAIL OPEN \u2014 lineCount mismatch", lineNodes.length, "\u2260", plan.lineCount);
+      diag(
+        "applyTwoGroupLayout: FAIL OPEN \u2014 lineCount mismatch",
+        lineNodes.length,
+        "\u2260",
+        plan.lineCount
+      );
       return false;
     }
-    if (itemsEl.querySelector(".fge-group-head") !== null || itemsEl.querySelector(".fge-merged-stepper") !== null) {
+    if (itemsEl.querySelector(".fge-merged-stepper") !== null || itemsEl.querySelector(`[${HIDDEN_MARK}]`) !== null) {
       ((_a2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl).setAttribute(MARK, "");
       return true;
     }
@@ -666,19 +597,15 @@
       if (!row.split) continue;
       const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
       if (keep == null || findTotalsCell(keep) === null) {
-        diag("applyTwoGroupLayout: FAIL OPEN \u2014 split row has no totals cell", keep == null ? void 0 : keep.tagName, keep == null ? void 0 : keep.id);
+        diag(
+          "applyTwoGroupLayout: FAIL OPEN \u2014 split row has no totals cell",
+          keep == null ? void 0 : keep.tagName,
+          keep == null ? void 0 : keep.id
+        );
         return false;
       }
     }
-    const parent = (_c2 = (_b2 = lineNodes[0]) == null ? void 0 : _b2.parentElement) != null ? _c2 : null;
-    if (parent === null) return false;
-    ((_d = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _d : itemsEl).setAttribute(MARK, "");
-    if (plan.buys.length > 0 && plan.hasGifts) {
-      const firstRow = plan.buys[0];
-      const firstIdx = (_f = (_e = firstRow.interactiveIndex) != null ? _e : firstRow.readOnlyIndexes[0]) != null ? _f : firstRow.hideIndexes[0];
-      const firstBuy = firstIdx === void 0 ? null : lineNodes[firstIdx];
-      if (firstBuy != null) parent.insertBefore(makeHeader(firstBuy, BUYS_HEADER, null), firstBuy);
-    }
+    ((_b2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _b2 : itemsEl).setAttribute(MARK, "");
     let steppersInjected = 0;
     for (const row of plan.buys) {
       const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
@@ -687,13 +614,6 @@
           setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
         }
         if (opts.onMergedQtyChange !== void 0) {
-          diag("injectMergedStepper: injecting on", keep.tagName, keep.id, {
-            qty: row.controllableQuantity,
-            split: row.split,
-            writableKeys: row.writableKeys,
-            qtyCell: (_h = (_g = findFirst2(keep, QTY_CELL_SELECTORS)) == null ? void 0 : _g.className) != null ? _h : "(none)",
-            qtyInput: (_j = (_i = findFirst2(keep, QTY_INPUT_SELECTORS)) == null ? void 0 : _i.tagName) != null ? _j : "(none)"
-          });
           injectMergedStepper(
             keep,
             row.controllableQuantity,
@@ -706,58 +626,32 @@
         } else if (row.split) {
           showMergedQtyReadOnly(keep, row.controllableQuantity);
         }
-        if (plan.hasGifts) {
-          hideOurDiscount(keep, opts.ourCode);
-          parent.append(keep);
-        }
       }
       for (const hideIdx of row.hideIndexes) {
         const sib = lineNodes[hideIdx];
         if (sib != null) {
           sib.style.display = "none";
           sib.setAttribute(HIDDEN_MARK, "");
-          if (plan.hasGifts) parent.append(sib);
-        }
-      }
-      if (plan.hasGifts) {
-        for (const roIdx of row.readOnlyIndexes) {
-          const ro = lineNodes[roIdx];
-          if (ro != null) {
-            renderReadOnlyBuyLine(ro);
-            parent.append(ro);
-          }
         }
       }
     }
-    if (plan.hasGifts) {
-      const giftCount = plan.gets.length + plan.lingering.length;
-      const firstGiftIdx = (_m = (_k = plan.gets[0]) == null ? void 0 : _k.index) != null ? _m : (_l = plan.lingering[0]) == null ? void 0 : _l.index;
-      const firstGift = firstGiftIdx === void 0 ? null : lineNodes[firstGiftIdx];
-      if (firstGift != null) {
-        parent.append(
-          makeHeader(firstGift, giftCount > 1 ? GETS_HEADER_MANY : GETS_HEADER_ONE, GETS_SUBLABEL)
-        );
+    for (const ref of plan.gets) {
+      const node = lineNodes[ref.index];
+      if (node != null) {
+        node.style.display = "none";
+        node.setAttribute(HIDDEN_MARK, "");
       }
-      for (const ref of plan.gets) {
-        const node = lineNodes[ref.index];
-        if (node == null) continue;
-        hideControls(node);
-        if (!relabelOurDiscount(node, opts.ourCode)) injectBadge(node, FREE_GIFT_LABEL);
-        node.classList.add("fge-gift-line");
-        parent.append(node);
-      }
-      for (const ref of plan.lingering) {
-        const node = lineNodes[ref.index];
-        if (node == null) continue;
-        hideControls(node);
-        node.classList.add("fge-gift-line", "fge-gift-line--pending");
-        injectBadge(node, LINGERING_LABEL);
-        parent.append(node);
+    }
+    for (const ref of plan.lingering) {
+      const node = lineNodes[ref.index];
+      if (node != null) {
+        node.style.display = "none";
+        node.setAttribute(HIDDEN_MARK, "");
       }
     }
     diag("applyTwoGroupLayout done:", {
       steppersInjected,
-      headersInjected: itemsEl.querySelectorAll(".fge-group-head").length,
+      giftsHidden: plan.gets.length + plan.lingering.length,
       mergedSteppersInDOM: itemsEl.querySelectorAll(".fge-merged-stepper").length
     });
     return true;
@@ -1804,24 +1698,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
   body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
 
-/* --- Stage 1: two-group cart layout (buys / gets). Quiet, blended group headers + read-only gift
-   rows. These target the theme's own line nodes (which lack the .fge token scope), so colors are
-   explicit hex matching the tokens above. No card/divider \u2014 just labeled sections in the same list. */
-.fge-group-head{ background:transparent; }
-.fge-group-head__cell{ padding:14px 0 6px; border:0; }
-.fge-group-head__title{
-  display:block; font-size:11px; font-weight:700; letter-spacing:.04em;
-  text-transform:uppercase; color:#707070;
-}
-.fge-group-head__sub{ display:block; margin-top:1px; font-size:11px; font-weight:600; color:#111111; }
-/* The "Free gift" / "Free gift \u2014 pending" badge injected into a gift line when the theme shows no
-   discount label, and the relabeled discount node. */
-.fge-line-badge, .fge-free-badge{
-  display:block; width:100%; font-size:11px; font-weight:700; color:#111111; text-transform:none;
-  letter-spacing:normal; margin-bottom:2px;
-}
-.fge-gift-line--pending .fge-line-badge{ color:#8a6d00; } /* amber: not-yet-free, needs attention */
-
 /* --- Stage 2: the interactive merged stepper injected on a SPLIT buy row (replaces the theme's native
    per-split stepper, which would write only one split key). A slim \u2212/qty/+ group + a quiet "Remove",
    styled to read like a cart control without depending on the theme's button CSS. --- */
@@ -1849,9 +1725,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
 }
 .fge-merged-stepper.is-busy{ opacity:.55; }
 .fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; }
-/* A marked overlap unit kept read-only in the buys group (issue-#6 / \xA7M): subtly de-emphasized. */
-.fge-buy-line--locked{ opacity:.9; }
-
 /* --- Stage 2 (defect B.1): a transient failure notice (e.g. a VF-blocked update). Fixed bottom-center
    toast, appended to <body>; hidden until is-visible. Reduced-motion friendly (opacity only). --- */
 .fge-notice{
@@ -2430,7 +2303,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           return;
         }
         if (!applyTwoGroupLayout(itemsEl, lastPlan, {
-          ourCode: lastDiscount,
           onMergedQtyChange: onMergedBuyQtyChange
         })) {
           liftMask(itemsEl);

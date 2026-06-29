@@ -190,24 +190,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
   body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
 
-/* --- Stage 1: two-group cart layout (buys / gets). Quiet, blended group headers + read-only gift
-   rows. These target the theme's own line nodes (which lack the .fge token scope), so colors are
-   explicit hex matching the tokens above. No card/divider — just labeled sections in the same list. */
-.fge-group-head{ background:transparent; }
-.fge-group-head__cell{ padding:14px 0 6px; border:0; }
-.fge-group-head__title{
-  display:block; font-size:11px; font-weight:700; letter-spacing:.04em;
-  text-transform:uppercase; color:#707070;
-}
-.fge-group-head__sub{ display:block; margin-top:1px; font-size:11px; font-weight:600; color:#111111; }
-/* The "Free gift" / "Free gift — pending" badge injected into a gift line when the theme shows no
-   discount label, and the relabeled discount node. */
-.fge-line-badge, .fge-free-badge{
-  display:block; width:100%; font-size:11px; font-weight:700; color:#111111; text-transform:none;
-  letter-spacing:normal; margin-bottom:2px;
-}
-.fge-gift-line--pending .fge-line-badge{ color:#8a6d00; } /* amber: not-yet-free, needs attention */
-
 /* --- Stage 2: the interactive merged stepper injected on a SPLIT buy row (replaces the theme's native
    per-split stepper, which would write only one split key). A slim −/qty/+ group + a quiet "Remove",
    styled to read like a cart control without depending on the theme's button CSS. --- */
@@ -235,9 +217,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
 }
 .fge-merged-stepper.is-busy{ opacity:.55; }
 .fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; }
-/* A marked overlap unit kept read-only in the buys group (issue-#6 / §M): subtly de-emphasized. */
-.fge-buy-line--locked{ opacity:.9; }
-
 /* --- Stage 2 (defect B.1): a transient failure notice (e.g. a VF-blocked update). Fixed bottom-center
    toast, appended to <body>; hidden until is-visible. Reduced-motion friendly (opacity only). --- */
 .fge-notice{

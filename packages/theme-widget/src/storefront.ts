@@ -150,8 +150,7 @@ function toGroupingLines(cart: AjaxCart): RawCartLine[] {
 }
 
 // Recompute the grouping plan from the live cart and re-apply it to every surface. Fail-open: on any
-// error we keep the previous plan / the theme's untouched list. ourCode = the applied discount (the
-// per-line allocation title for our BXGY code), so gets are scoped to OUR discount.
+// error we keep the previous plan / the theme's untouched list.
 // The most recent authoritative per-line quantities from cart.js, for syncing native theme steppers.
 let lastCartQuantities: readonly number[] = [];
 
@@ -721,7 +720,6 @@ function init(): void {
       }
       if (
         !applyTwoGroupLayout(itemsEl, lastPlan, {
-          ourCode: lastDiscount,
           onMergedQtyChange: onMergedBuyQtyChange,
         })
       ) {
