@@ -1591,13 +1591,26 @@ body.fge-checkout-pending .cart__checkout-button::after{
 }
 .fge-notice.is-visible{ opacity:1; }
 
-/* --- FOUC mask: dims the line-items region until the first grouping pass completes, so the user
-   never sees native Dawn steppers, raw cVI_ codes, or duplicate split rows. Unconditional on load;
-   released when applyTwoGroupLayout sets data-fge-grouped, or by a 2s fail-safe timeout. The
-   header, footer, and checkout button stay fully usable (the mask is on the items host only). --- */
+/* --- FOUC mask: hides the line-items region + shows a spinner until the first grouping pass
+   completes, so native Dawn steppers, raw cVI_ codes, and duplicate split rows are never visible.
+   Unconditional on load; released when data-fge-grouped is set or a 2s fail-safe timeout fires.
+   Header, footer, and checkout stay fully usable (the mask is on the items host only).
+   min-height prevents the drawer collapsing when rows are hidden (no layout jump on lift). --- */
 cart-drawer-items[data-fge-pending]:not([data-fge-grouped]),
 cart-items[data-fge-pending]:not([data-fge-grouped]){
-  opacity:0.12; pointer-events:none; transition:opacity .15s ease-out;
+  position:relative; pointer-events:none; min-height:120px;
+}
+cart-drawer-items[data-fge-pending]:not([data-fge-grouped]) > *,
+cart-items[data-fge-pending]:not([data-fge-grouped]) > *{
+  visibility:hidden;
+}
+cart-drawer-items[data-fge-pending]:not([data-fge-grouped])::after,
+cart-items[data-fge-pending]:not([data-fge-grouped])::after{
+  content:""; box-sizing:border-box; position:absolute;
+  top:48px; left:50%; margin-left:-12px;
+  width:24px; height:24px; border:2.5px solid var(--fge-line,#e3e3e3);
+  border-top-color:var(--fge-ink,#111111); border-radius:50%;
+  animation:fge-spin .7s linear infinite;
 }
 `;
   function injectStyles() {
