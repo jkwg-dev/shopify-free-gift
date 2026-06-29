@@ -435,7 +435,7 @@ export function applyTwoGroupLayout(
       if (row.split) {
         setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
       }
-      if (opts.onMergedQtyChange !== undefined) {
+      if (row.split && opts.onMergedQtyChange !== undefined) {
         injectMergedStepper(
           keep,
           row.controllableQuantity,
