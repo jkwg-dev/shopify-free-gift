@@ -294,7 +294,10 @@ function injectMergedStepper(
   qtyEl.className = 'fge-merged-stepper__qty';
   qtyEl.setAttribute('aria-live', 'polite');
   qtyEl.textContent = String(qty);
-  wrap.append(dec, qtyEl, inc, del);
+  const inner = document.createElement('div');
+  inner.className = 'fge-merged-stepper__wrapper';
+  inner.append(dec, qtyEl, inc);
+  wrap.append(inner, del);
   cell.append(wrap);
 
   let current = qty;

@@ -202,10 +202,15 @@ body.fge-checkout-pending .cart__checkout-button::after{
   body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
 
-/* --- Stage 2: the interactive merged stepper, styled to match the theme's native quantity-input
-   (.quantity__wrapper): a single rounded-rectangle capsule with flat +/- buttons inside. --- */
+/* --- Stage 2: the interactive merged stepper, styled to match the theme's native quantity-input.
+   Outer container (.fge-merged-stepper) is a plain flex row; the bordered rectangle is the inner
+   __wrapper (mirrors .quantity__wrapper exactly); the remove button sits OUTSIDE the rectangle. --- */
 .fge-merged-stepper{
-  display:inline-flex; align-items:center; width:8rem;
+  display:inline-flex; align-items:center; gap:0.4rem;
+}
+.fge-merged-stepper__wrapper{
+  display:flex; justify-content:space-between; align-items:center; width:8rem;
+  padding:0 var(--spacing-2,0.8rem);
   border:0.1rem solid rgba(var(--color-border,235,235,235),var(--alpha-border,1));
   border-radius:var(--badge-border-radius,0.4rem);
 }
@@ -226,7 +231,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
 .fge-merged-stepper__remove{
   appearance:none; -webkit-appearance:none; cursor:pointer;
   display:inline-flex; align-items:center; justify-content:center;
-  margin-left:6px; padding:0; width:2.4rem; height:2.4rem;
+  padding:0; width:2.4rem; height:2.4rem;
   color:rgb(var(--color-foreground,17,17,17)); opacity:0.5;
   background:transparent; border:0;
 }
