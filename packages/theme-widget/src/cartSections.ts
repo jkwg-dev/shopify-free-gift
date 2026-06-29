@@ -253,9 +253,14 @@ export function mountCartContexts(opts: CartMountOptions = {}): CartSection[] {
 
   const drawer = findDrawer(opts.drawerSelector);
   if (drawer !== null) {
+    // Observe the .shopify-section wrapper instead of the drawer element itself. The theme (and
+    // our refreshDawnTotals fallback) can replace sectionWrapper.innerHTML, which detaches the
+    // drawer — if we observed the drawer directly, the MO would be on a dead node and never fire
+    // again. The section wrapper survives these swaps; our MO sees the subtree change and re-attaches.
+    const sectionRoot = drawer.closest<HTMLElement>('.shopify-section') ?? drawer;
     specs.push({
       context: 'drawer',
-      observeRoot: drawer,
+      observeRoot: sectionRoot,
       panelSelectors: PANEL_SELECTORS,
       headerSelectors: HEADER_SELECTORS,
       itemsSelectors: ITEMS_SELECTORS,

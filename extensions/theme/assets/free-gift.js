@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  // packages/core/src/money.ts
+  // ../core/src/money.ts
   function money(amountMinor, currency) {
     if (!Number.isInteger(amountMinor)) {
       throw new RangeError(`Money amount must be an integer minor-unit value, got ${amountMinor}`);
@@ -8,7 +8,7 @@
     return { amountMinor, currency };
   }
 
-  // packages/core/src/reconcile.ts
+  // ../core/src/reconcile.ts
   var GIFT_LINE_PROPERTY = "_fge_gift";
   function reconcileGiftLines(cart, result) {
     const desired = result.status === "gift" ? result.giftVariantIds : [];
@@ -46,7 +46,7 @@
     };
   }
 
-  // packages/theme-widget/src/cartSections.ts
+  // src/cartSections.ts
   var DRAWER_SELECTORS = [
     "cart-drawer",
     "#CartDrawer",
@@ -194,13 +194,14 @@
     return { context: spec.context, stepperEl, chooserEl, attach };
   }
   function mountCartContexts(opts = {}) {
-    var _a2;
+    var _a2, _b2;
     const specs = [];
     const drawer = findDrawer(opts.drawerSelector);
     if (drawer !== null) {
+      const sectionRoot = (_a2 = drawer.closest(".shopify-section")) != null ? _a2 : drawer;
       specs.push({
         context: "drawer",
-        observeRoot: drawer,
+        observeRoot: sectionRoot,
         panelSelectors: PANEL_SELECTORS,
         headerSelectors: HEADER_SELECTORS,
         itemsSelectors: ITEMS_SELECTORS,
@@ -213,7 +214,7 @@
       });
     }
     const pageItems = findFirst(document, PAGE_ITEMS_SELECTORS);
-    const pageSection = (_a2 = pageItems == null ? void 0 : pageItems.closest(".shopify-section")) != null ? _a2 : null;
+    const pageSection = (_b2 = pageItems == null ? void 0 : pageItems.closest(".shopify-section")) != null ? _b2 : null;
     if (pageSection instanceof HTMLElement) {
       specs.push({
         context: "page",
@@ -232,7 +233,7 @@
     return specs.map(mountOne);
   }
 
-  // packages/theme-widget/src/cartGrouping.ts
+  // src/cartGrouping.ts
   function isZeroedByOurCode(line, ourCode) {
     return line.finalLinePrice === 0 && ourCode !== null && line.allocationTitles.includes(ourCode);
   }
@@ -298,7 +299,7 @@
     });
   }
 
-  // packages/theme-widget/src/groupingTransform.ts
+  // src/groupingTransform.ts
   var LINE_SELECTORS = [
     ".cart-item",
     '[id^="CartDrawer-Item-"]',
@@ -683,7 +684,7 @@
     }
   }
 
-  // packages/theme-widget/src/cartMutations.ts
+  // src/cartMutations.ts
   var toNumericId = (gid) => Number(gid.split("/").pop());
   var addItem = (a) => ({
     id: toNumericId(a.variantId),
@@ -791,7 +792,7 @@
     (_a2 = c == null ? void 0 : c.warn) == null ? void 0 : _a2.call(c, `[free-gift] ${message}`, body.slice(0, 300));
   }
 
-  // packages/theme-widget/src/notice.ts
+  // src/notice.ts
   var NOTICE_ID = "fge-notice";
   var VISIBLE_MS = 6e3;
   var hideTimer;
@@ -820,7 +821,7 @@
     }, VISIBLE_MS);
   }
 
-  // packages/theme-widget/src/choices.ts
+  // src/choices.ts
   function groupGiftOptionsByProduct(options) {
     const order = [];
     const byProduct = /* @__PURE__ */ new Map();
@@ -885,7 +886,7 @@
     return choices;
   }
 
-  // packages/theme-widget/src/chooser.ts
+  // src/chooser.ts
   function buildChooserModel(config, state) {
     var _a2;
     if (config.status !== "active") {
@@ -1218,7 +1219,7 @@
     return label;
   }
 
-  // packages/theme-widget/src/configClient.ts
+  // src/configClient.ts
   var DEFAULT_CONFIG_PATH = "/apps/free-gift/config";
   async function getConfig(request, options = {}) {
     var _a2, _b2;
@@ -1241,7 +1242,7 @@
     return { ok: true, config: body };
   }
 
-  // packages/theme-widget/src/pending.ts
+  // src/pending.ts
   var PENDING_MIN_MS = 500;
   var PENDING_MAX_MS = 8e3;
   function pendingShouldClear(workDone, minElapsed) {
@@ -1291,7 +1292,7 @@
     }
   }
 
-  // packages/theme-widget/src/progressGraph.ts
+  // src/progressGraph.ts
   function giftLabelFor(gift) {
     if (gift.kind === "AND") {
       return gift.gifts.map((g) => g.variantLabel).join(" + ");
@@ -1477,7 +1478,7 @@
     }
   }
 
-  // packages/theme-widget/src/reconcileLoop.ts
+  // src/reconcileLoop.ts
   function reconcileSettled(expected, applied) {
     return applied.failed === 0 && applied.added === expected.adds && applied.removed === expected.removes && applied.adjusted === expected.adjusts;
   }
@@ -1540,7 +1541,7 @@
     return { passes: maxPasses, converged: false, appliedCode, failures };
   }
 
-  // packages/theme-widget/src/styles.ts
+  // src/styles.ts
   var FGE_STYLE_ID = "fge-styles";
   var FGE_CSS = `
 .fge{
@@ -1797,7 +1798,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     doc.head.append(style);
   }
 
-  // packages/theme-widget/src/validateClient.ts
+  // src/validateClient.ts
   var DEFAULT_PROXY_PATH = "/apps/free-gift/validate";
   async function postValidate(request, options = {}) {
     var _a2, _b2;
@@ -1819,7 +1820,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     return { ok: true, result: body };
   }
 
-  // packages/theme-widget/src/storefront.ts
+  // src/storefront.ts
   var SOURCE = "free-gift-engine";
   var CART_UPDATE_EVENT = "cart-update";
   var DEBOUNCE_MS = 300;
@@ -2322,26 +2323,27 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
     perceptionConfig = config;
     injectStyles();
+    let timer;
     sections = mountCartContexts({
       drawerSelector: config.drawerSelector,
       onReattach: (_context, itemsEl) => {
         remask(itemsEl);
+        const workPending = running || pending || timer !== void 0;
         if (lastPlan === null) {
-          liftMask(itemsEl);
+          if (!workPending) liftMask(itemsEl);
           syncNativeInputs(itemsEl, lastCartQuantities);
           return;
         }
         if (!applyTwoGroupLayout(itemsEl, lastPlan, {
           onMergedQtyChange: onMergedBuyQtyChange
         })) {
-          liftMask(itemsEl);
+          if (!workPending) liftMask(itemsEl);
         }
         syncNativeInputs(itemsEl, lastCartQuantities);
       }
     });
     applyInitialMask();
     observeDrawerOpen();
-    let timer;
     const trigger = (data) => {
       if (data !== null && typeof data === "object" && data.source === SOURCE) {
         return;
@@ -2349,7 +2351,10 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       if (timer !== void 0) {
         clearTimeout(timer);
       }
-      timer = setTimeout(() => schedule(config), DEBOUNCE_MS);
+      timer = setTimeout(() => {
+        timer = void 0;
+        schedule(config);
+      }, DEBOUNCE_MS);
     };
     (_a2 = w.subscribe) == null ? void 0 : _a2.call(w, CART_UPDATE_EVENT, trigger);
     const originalFetch = w.fetch.bind(w);

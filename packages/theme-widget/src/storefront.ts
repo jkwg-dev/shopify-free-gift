@@ -712,12 +712,22 @@ function init(): void {
 
   // Immediately: styles + cart sections (synchronous — no network wait).
   injectStyles();
+
+  // Declared before mountCartContexts so the onReattach closure can read it: when a debounced
+  // trigger is pending (timer !== undefined), don't lift the mask — the upcoming reconcile will
+  // apply fresh grouping and lift it cleanly.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
   sections = mountCartContexts({
     drawerSelector: config.drawerSelector,
     onReattach: (_context, itemsEl) => {
       remask(itemsEl);
+      // Don't show raw (ungrouped) state while a reconcile is running, queued, or about to start
+      // (debounce timer pending). The reconcile's refreshGrouping will re-call attach() with a
+      // fresh plan that matches the new DOM. The 2s mask timeout is the backstop.
+      const workPending = running || pending || timer !== undefined;
       if (lastPlan === null) {
-        liftMask(itemsEl);
+        if (!workPending) liftMask(itemsEl);
         syncNativeInputs(itemsEl, lastCartQuantities);
         return;
       }
@@ -726,7 +736,7 @@ function init(): void {
           onMergedQtyChange: onMergedBuyQtyChange,
         })
       ) {
-        liftMask(itemsEl);
+        if (!workPending) liftMask(itemsEl);
       }
       syncNativeInputs(itemsEl, lastCartQuantities);
     },
@@ -736,7 +746,6 @@ function init(): void {
   applyInitialMask();
   observeDrawerOpen(); // mask on drawer open (before paint) — catches the PDP add-to-cart case
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
   const trigger = (data?: unknown): void => {
     // Ignore the echo of our own theme re-render publish.
     if (
@@ -749,7 +758,10 @@ function init(): void {
     if (timer !== undefined) {
       clearTimeout(timer);
     }
-    timer = setTimeout(() => schedule(config), DEBOUNCE_MS);
+    timer = setTimeout(() => {
+      timer = undefined; // clear before schedule so onReattach sees "no pending trigger"
+      schedule(config);
+    }, DEBOUNCE_MS);
   };
 
   // Primary: Dawn pubsub cart-update.
