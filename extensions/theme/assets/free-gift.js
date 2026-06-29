@@ -2120,10 +2120,10 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   }
   async function refreshItemsBody(cart) {
     const drawerSectionId = detectDrawerSectionId();
-    const maxAttempts = 3;
+    const maxAttempts = 2;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        if (attempt > 1) await new Promise((r) => setTimeout(r, 300 * attempt));
+        if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
         const res = await fetch(`${root}?sections=${drawerSectionId}`, {
           headers: { Accept: "application/json" }
         });
@@ -2175,33 +2175,33 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     var _a2;
     try {
       const cart = await getCart();
-      const itemsEl = document.querySelector("cart-drawer-items, cart-items");
-      if (cartMutated) {
-        await refreshDawnTotals();
-      }
-      if (!domMatchesCart(itemsEl, cart)) {
-        console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch", {
-          domVariants: domVariantIds(itemsEl),
-          cartVariants: cart.items.map((i) => i.variant_id)
-        });
-        await refreshItemsBody(cart);
-      }
       lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
       lastCartQuantities = cart.items.map((item) => item.quantity);
       freshPlanAttach = true;
       for (const section of sections) section.attach();
       freshPlanAttach = false;
+      const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
+      const buyOnlyCount = ((_a2 = cart.item_count) != null ? _a2 : 0) - giftQty;
+      if (cart.total_price !== void 0 && cart.item_count !== void 0) {
+        stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
+      }
+      if (cartMutated) {
+        void refreshDawnTotals();
+      }
+      const itemsEl = document.querySelector("cart-drawer-items, cart-items");
+      if (!domMatchesCart(itemsEl, cart)) {
+        console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch");
+        await refreshItemsBody(cart);
+        freshPlanAttach = true;
+        for (const section of sections) section.attach();
+        freshPlanAttach = false;
+      }
       if (cartMutated) {
         setTimeout(() => {
           freshPlanAttach = true;
           for (const section of sections) section.attach();
           freshPlanAttach = false;
         }, 500);
-      }
-      const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
-      const buyOnlyCount = ((_a2 = cart.item_count) != null ? _a2 : 0) - giftQty;
-      if (cart.total_price !== void 0 && cart.item_count !== void 0) {
-        stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
       }
     } catch {
     }
@@ -2405,7 +2405,9 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       pending = true;
       return;
     }
-    remaskUngrouped();
+    if (lastPlan === null) {
+      remaskUngrouped();
+    }
     running = true;
     void reconcileOnce(config).catch(() => void 0).finally(() => {
       running = false;
@@ -2574,7 +2576,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   }
   var MASK_ATTR = "data-fge-pending";
   var GROUPED_ATTR = "data-fge-grouped";
-  var MASK_TIMEOUT_MS = 2e3;
+  var MASK_TIMEOUT_MS = 1e3;
   var maskTimer;
   function applyInitialMask() {
     document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => {
@@ -2648,7 +2650,9 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     sections = mountCartContexts({
       drawerSelector: config.drawerSelector,
       onReattach: (_context, itemsEl) => {
-        remask(itemsEl);
+        if (lastPlan === null) {
+          remask(itemsEl);
+        }
         const workPending = (running || pending || timer !== void 0) && !freshPlanAttach;
         if (lastPlan === null || workPending) {
           if (!workPending) liftMask(itemsEl);

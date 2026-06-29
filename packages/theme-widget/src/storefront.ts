@@ -200,10 +200,10 @@ function domMatchesCart(itemsEl: HTMLElement | null, cart: AjaxCart): boolean {
 // the stale-section-render race.
 async function refreshItemsBody(cart: AjaxCart): Promise<boolean> {
   const drawerSectionId = detectDrawerSectionId();
-  const maxAttempts = 3;
+  const maxAttempts = 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      if (attempt > 1) await new Promise((r) => setTimeout(r, 300 * attempt));
+      if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
       const res = await fetch(`${root}?sections=${drawerSectionId}`, {
         headers: { Accept: 'application/json' },
       });
@@ -256,50 +256,48 @@ async function refreshItemsBody(cart: AjaxCart): Promise<boolean> {
   return false;
 }
 
-// Verified display reconcile: single cart.js read → section-fetch (if mutated) → DOM divergence
-// check → grouping → stamp. Consolidates all post-reconcile display work into one cart.js read.
+// Verified display reconcile: cart.js read → grouping + stamp IMMEDIATELY (user sees content) →
+// then section-fetch + divergence check run without blocking the display. The critical path is
+// cart.js (one fetch) + grouping (synchronous DOM), not the section fetch.
 async function verifiedDisplayReconcile(cartMutated = false): Promise<void> {
   try {
     const cart = await getCart();
-    const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
 
-    // Section-fetch refresh (footer + badge HTML): only when the reconcile mutated the cart.
-    if (cartMutated) {
-      await refreshDawnTotals();
-    }
-
-    // DOM divergence check: if the rendered items don't match cart.js, force a body re-fetch.
-    if (!domMatchesCart(itemsEl, cart)) {
-      console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch', {
-        domVariants: domVariantIds(itemsEl),
-        cartVariants: cart.items.map((i) => i.variant_id),
-      });
-      await refreshItemsBody(cart);
-    }
-
-    // Recompute grouping from fresh cart and apply. The freshPlanAttach flag tells onReattach to
-    // apply this plan even though a reconcile is in-flight.
+    // FAST PATH: compute grouping + stamp FIRST so the mask lifts immediately.
     lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
     lastCartQuantities = cart.items.map((item) => item.quantity);
     freshPlanAttach = true;
     for (const section of sections) section.attach();
     freshPlanAttach = false;
 
-    // Deferred re-apply: catches Dawn's async gift-node insertion after cart/add.js. Only needed
-    // when the reconcile mutated the cart (a no-op can't produce a new async node).
+    const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
+    const buyOnlyCount = (cart.item_count ?? 0) - giftQty;
+    if (cart.total_price !== undefined && cart.item_count !== undefined) {
+      stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
+    }
+
+    // SLOW PATH (non-blocking): section fetch + divergence check run after the user already sees
+    // the correctly-grouped cart. These are corrections, not the primary display.
+    if (cartMutated) {
+      void refreshDawnTotals();
+    }
+
+    const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
+    if (!domMatchesCart(itemsEl, cart)) {
+      console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch');
+      await refreshItemsBody(cart);
+      freshPlanAttach = true;
+      for (const section of sections) section.attach();
+      freshPlanAttach = false;
+    }
+
+    // Deferred re-apply: catches Dawn's async gift-node insertion after cart/add.js.
     if (cartMutated) {
       setTimeout(() => {
         freshPlanAttach = true;
         for (const section of sections) section.attach();
         freshPlanAttach = false;
       }, 500);
-    }
-
-    // Stamp authoritative subtotal + badge (always, even on no-ops).
-    const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
-    const buyOnlyCount = (cart.item_count ?? 0) - giftQty;
-    if (cart.total_price !== undefined && cart.item_count !== undefined) {
-      stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
     }
   } catch {
     // Best-effort.
@@ -556,7 +554,11 @@ function schedule(config: WidgetConfig): void {
     pending = true;
     return;
   }
-  remaskUngrouped();
+  // Only mask on first load (no plan yet). After the first grouping, re-masking on every
+  // reconcile caused visible flash-hide-flash loops.
+  if (lastPlan === null) {
+    remaskUngrouped();
+  }
   running = true;
   void reconcileOnce(config)
     .catch(() => undefined)
@@ -780,7 +782,7 @@ async function onMergedBuyQtyChange(
 // safety timer as a backstop; remaskUngrouped() only starts a timer when none is running.
 const MASK_ATTR = 'data-fge-pending';
 const GROUPED_ATTR = 'data-fge-grouped';
-const MASK_TIMEOUT_MS = 2000;
+const MASK_TIMEOUT_MS = 1000;
 let maskTimer: ReturnType<typeof setTimeout> | undefined;
 
 function applyInitialMask(): void {
@@ -872,7 +874,12 @@ function init(): void {
   sections = mountCartContexts({
     drawerSelector: config.drawerSelector,
     onReattach: (_context, itemsEl) => {
-      remask(itemsEl);
+      // Only mask on FIRST load (no plan computed yet). Once grouping has been applied at least
+      // once, never re-mask — the reset-then-apply transform handles re-renders cleanly. This
+      // prevents the "flash visible then re-hide" loop that made loading feel infinite.
+      if (lastPlan === null) {
+        remask(itemsEl);
+      }
       // Don't apply a stale plan while a reconcile is running, queued, or about to start (debounce
       // timer pending) — UNLESS freshPlanAttach is set, meaning verifiedDisplayReconcile just
       // computed a fresh plan from the post-mutation cart and is calling attach() itself.
