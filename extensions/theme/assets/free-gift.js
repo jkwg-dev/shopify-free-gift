@@ -1555,7 +1555,7 @@
    only "Spend CA$X more to unlock <gift>" (or "You've unlocked\u2026"); the theme's own "Your cart" drawer
    header sits separately above and is NOT restated here. Kept slim so cart items below keep space. --- */
 .fge-stepper-wrap{
-  margin:6px 0 4px; padding:11px 14px 8px; color:var(--fge-ink);
+  margin:6px 14px 4px; padding:11px 14px 8px; color:var(--fge-ink);
   border:1px solid var(--fge-line); border-radius:12px; background-color:#fafafa;
 }
 
@@ -1607,8 +1607,10 @@
 
 /* THEME-OVERRIDE: hide per-line totals when our grouping is active \u2014 the subtotal in the footer
    is sufficient, and the line totals create visual noise (especially with the discount code tag
-   Dawn renders). Scoped to the grouped container so ungrouped fallback shows them. */
-[data-fge-grouped] .cart-item__totals{ display:none !important; }
+   Dawn renders). Scoped to the grouped container so ungrouped fallback shows them. Dawn uses
+   .cart-item__totals OR .cart-item__actions--price depending on theme variant. */
+[data-fge-grouped] .cart-item__totals,
+[data-fge-grouped] .cart-item__actions--price{ display:none !important; }
 
 /* THEME-OVERRIDE: Dawn renders TWO "Your cart" titles inside the drawer \u2014 the H2.drawer__heading
    (header) and the H1.title--primary (cart section title, normally suppressed). Our injected layout
