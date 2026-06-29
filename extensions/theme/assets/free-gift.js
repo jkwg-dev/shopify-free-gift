@@ -1884,13 +1884,28 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   }
   var idleResolvers = [];
   function remaskUngrouped() {
+    let any = false;
     document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => {
       if (!el.hasAttribute(GROUPED_ATTR)) {
         el.setAttribute(MASK_ATTR, "");
-        if (maskTimer !== void 0) clearTimeout(maskTimer);
-        maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+        any = true;
       }
     });
+    if (any) {
+      if (maskTimer !== void 0) clearTimeout(maskTimer);
+      maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+    }
+  }
+  function observeDrawerOpen() {
+    const drawer = document.querySelector(
+      'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart'
+    );
+    if (drawer === null) return;
+    new MutationObserver(() => {
+      if (drawer.classList.contains("active")) {
+        remaskUngrouped();
+      }
+    }).observe(drawer, { attributes: true, attributeFilter: ["class"] });
   }
   function schedule(config) {
     if (running) {
@@ -2083,6 +2098,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       }
     });
     applyInitialMask();
+    observeDrawerOpen();
     let timer;
     const trigger = (data) => {
       if (data !== null && typeof data === "object" && data.source === SOURCE) {

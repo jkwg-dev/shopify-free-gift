@@ -370,17 +370,35 @@ function renderPerception(config: WidgetConfig): void {
 // merged-buy write awaits this so its cart mutation never interleaves with a reconcile's mutations.
 let idleResolvers: (() => void)[] = [];
 
-// Re-mask elements that are NOT currently grouped (timeout-lifted or never grouped). A new reconcile
-// will either group them (mask lifts via data-fge-grouped) or the timeout fires again. Elements that
-// ARE grouped (data-fge-grouped present) are NOT re-masked — no flicker on a within-tier edit.
+// Re-mask elements that are NOT currently grouped (timeout-lifted or never grouped). Restarts the 2s
+// timeout. Elements that ARE grouped (data-fge-grouped present) are NOT re-masked (no flicker).
 function remaskUngrouped(): void {
+  let any = false;
   document.querySelectorAll<HTMLElement>('cart-drawer-items, cart-items').forEach((el) => {
     if (!el.hasAttribute(GROUPED_ATTR)) {
       el.setAttribute(MASK_ATTR, '');
-      if (maskTimer !== undefined) clearTimeout(maskTimer);
-      maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+      any = true;
     }
   });
+  if (any) {
+    if (maskTimer !== undefined) clearTimeout(maskTimer);
+    maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
+  }
+}
+
+// Observe the cart drawer for OPEN: Dawn adds 'active' class on open (synchronous via setTimeout(0)).
+// A MutationObserver on class-attribute fires in the microtask queue — before the browser paints — so
+// we mask ungrouped content at the exact moment the drawer becomes visible.
+function observeDrawerOpen(): void {
+  const drawer = document.querySelector<HTMLElement>(
+    'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart',
+  );
+  if (drawer === null) return;
+  new MutationObserver(() => {
+    if (drawer.classList.contains('active')) {
+      remaskUngrouped();
+    }
+  }).observe(drawer, { attributes: true, attributeFilter: ['class'] });
 }
 
 function schedule(config: WidgetConfig): void {
@@ -626,6 +644,7 @@ function init(): void {
 
   // FOUC mask: dim the line-items region until the first grouping pass or timeout.
   applyInitialMask();
+  observeDrawerOpen(); // mask on drawer open (before paint) — catches the PDP add-to-cart case
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const trigger = (data?: unknown): void => {
