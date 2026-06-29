@@ -12,7 +12,7 @@ export const FGE_CSS = `
   --fge-muted:rgb(var(--color-secondary-text,101,112,110));
   --fge-subtle:#f5f5f5;
   --fge-line:rgba(var(--color-border,235,235,235),var(--alpha-border,1));
-  --fge-brand:#111111; --fge-brand-strong:#000000; --fge-card-radius:0px;
+  --fge-brand:#111111; --fge-brand-strong:#000000; --fge-card-radius:10px;
   --fge-drawer-pad:36px;
   box-sizing:border-box; font-family:var(--font-body-family,inherit); line-height:1.35;
 }
