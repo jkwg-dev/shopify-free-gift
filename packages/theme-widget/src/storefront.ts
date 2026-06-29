@@ -469,16 +469,7 @@ function detectBadgeSectionId(): string {
   return 'cart-icon-bubble';
 }
 
-// Selectors to try for the subtotal/footer area, in order of specificity.
-const DRAWER_FOOTER_SELECTORS = [
-  '.cart-drawer__footer',
-  '.cart-drawer__bottom',
-  '.drawer__footer',
-  '[class*="drawer__footer" i]',
-  '[class*="cart-footer" i]',
-];
-
-// Refresh the cart drawer's footer subtotal + cart-count badge via Section Rendering. Resilient to
+// Refresh the cart drawer's body + cart-count badge via Section Rendering. Resilient to
 // different theme structures: detects the section ID from the DOM, tries multiple footer selectors,
 // and falls back to a full-section innerHTML swap if the surgical replace can't find the target.
 async function refreshDawnTotals(): Promise<void> {
@@ -497,36 +488,35 @@ async function refreshDawnTotals(): Promise<void> {
     if (!res.ok) return;
     const data = (await res.json()) as Record<string, string>;
 
-    // Drawer: try surgical footer replace first, then fall back to full-section swap.
+    // Drawer: replace the cart body (#CartDrawer-Body) so line items, stepper quantities, and
+    // the footer subtotal all reflect the post-reconcile cart. The CSS-first mask (body.fge-active)
+    // hides the content until grouping re-applies, preventing gift line flash. Falls back to
+    // full-section swap if the body element isn't found.
     const drawerHtml = data[drawerSectionId];
     if (drawerHtml !== undefined) {
       const parsed = new DOMParser().parseFromString(drawerHtml, 'text/html');
-      const drawer = document.querySelector(
-        'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart',
-      );
+      const BODY_SELECTORS = ['#CartDrawer-Body', '[data-cart-body]'];
       let replaced = false;
-      if (drawer !== null) {
-        for (const sel of DRAWER_FOOTER_SELECTORS) {
-          const newTotals = parsed.querySelector(sel);
-          const liveTotals = drawer.querySelector(sel);
-          if (newTotals !== null && liveTotals !== null) {
-            liveTotals.innerHTML = newTotals.innerHTML;
-            replaced = true;
-            break;
-          }
+      for (const sel of BODY_SELECTORS) {
+        const newBody = parsed.querySelector(sel);
+        const liveBody = document.querySelector(sel);
+        if (newBody !== null && liveBody !== null) {
+          liveBody.innerHTML = newBody.innerHTML;
+          replaced = true;
+          break;
         }
-        // Fallback: replace the shopify-section wrapper's full content (heavier but correct).
-        if (!replaced) {
+      }
+      if (!replaced) {
+        const drawer = document.querySelector(
+          'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart',
+        );
+        if (drawer !== null) {
           const sectionWrapper =
             drawer.closest<HTMLElement>('.shopify-section') ??
             drawer.querySelector<HTMLElement>('.shopify-section');
           const newSection = parsed.querySelector('.shopify-section');
           if (sectionWrapper !== null && newSection !== null) {
             sectionWrapper.innerHTML = newSection.innerHTML;
-            // warn so we can optimize later
-            globalThis.console?.warn?.(
-              '[free-gift] refreshDawnTotals: footer selector miss — used full-section fallback',
-            );
           }
         }
       }

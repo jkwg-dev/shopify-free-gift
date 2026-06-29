@@ -2152,15 +2152,8 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
     return "cart-icon-bubble";
   }
-  var DRAWER_FOOTER_SELECTORS = [
-    ".cart-drawer__footer",
-    ".cart-drawer__bottom",
-    ".drawer__footer",
-    '[class*="drawer__footer" i]',
-    '[class*="cart-footer" i]'
-  ];
   async function refreshDawnTotals() {
-    var _a2, _b2, _c2, _d;
+    var _a2, _b2;
     try {
       const drawerSectionId = detectDrawerSectionId();
       const badgeSectionId = detectBadgeSectionId();
@@ -2178,29 +2171,26 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       const drawerHtml = data[drawerSectionId];
       if (drawerHtml !== void 0) {
         const parsed = new DOMParser().parseFromString(drawerHtml, "text/html");
-        const drawer = document.querySelector(
-          'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart'
-        );
+        const BODY_SELECTORS = ["#CartDrawer-Body", "[data-cart-body]"];
         let replaced = false;
-        if (drawer !== null) {
-          for (const sel of DRAWER_FOOTER_SELECTORS) {
-            const newTotals = parsed.querySelector(sel);
-            const liveTotals = drawer.querySelector(sel);
-            if (newTotals !== null && liveTotals !== null) {
-              liveTotals.innerHTML = newTotals.innerHTML;
-              replaced = true;
-              break;
-            }
+        for (const sel of BODY_SELECTORS) {
+          const newBody = parsed.querySelector(sel);
+          const liveBody = document.querySelector(sel);
+          if (newBody !== null && liveBody !== null) {
+            liveBody.innerHTML = newBody.innerHTML;
+            replaced = true;
+            break;
           }
-          if (!replaced) {
+        }
+        if (!replaced) {
+          const drawer = document.querySelector(
+            'cart-drawer, #CartDrawer, .cart-drawer, [class*="cart-drawer" i], .drawer--cart'
+          );
+          if (drawer !== null) {
             const sectionWrapper = (_a2 = drawer.closest(".shopify-section")) != null ? _a2 : drawer.querySelector(".shopify-section");
             const newSection = parsed.querySelector(".shopify-section");
             if (sectionWrapper !== null && newSection !== null) {
               sectionWrapper.innerHTML = newSection.innerHTML;
-              (_c2 = (_b2 = globalThis.console) == null ? void 0 : _b2.warn) == null ? void 0 : _c2.call(
-                _b2,
-                "[free-gift] refreshDawnTotals: footer selector miss \u2014 used full-section fallback"
-              );
             }
           }
         }
@@ -2212,7 +2202,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           const parsed = new DOMParser().parseFromString(badgeHtml, "text/html");
           const newBadge = parsed.querySelector(".shopify-section");
           if (newBadge !== null) {
-            ((_d = liveBadge.querySelector(".shopify-section")) != null ? _d : liveBadge).innerHTML = newBadge.innerHTML;
+            ((_b2 = liveBadge.querySelector(".shopify-section")) != null ? _b2 : liveBadge).innerHTML = newBadge.innerHTML;
           }
         }
       }
