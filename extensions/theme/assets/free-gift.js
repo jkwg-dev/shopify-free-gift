@@ -872,21 +872,20 @@
       root2.append(hint("Add a little more to your cart to unlock your free gift."));
       return;
     }
+    const optionCount = current.kind === "or" ? current.groups.reduce((n, g) => n + g.options.length, 0) : 0;
+    const hasChoice = current.kind === "or" && optionCount > 1;
+    if (!hasChoice) return;
     const title = document.createElement("p");
     title.className = "fge-gift__title";
-    title.textContent = current.kind === "or" ? "Choose your free gift" : "Your free gift";
+    title.textContent = "Choose your free gift";
     root2.append(title);
-    if (current.kind === "or") {
-      const group = document.createElement("div");
-      group.setAttribute("role", "radiogroup");
-      group.setAttribute("aria-label", "Choose your free gift");
-      for (const g of current.groups) {
-        group.append(renderProductGroup(current.tierId, g, current.selected, handlers));
-      }
-      root2.append(group);
-    } else {
-      root2.append(renderBundle(current));
+    const group = document.createElement("div");
+    group.setAttribute("role", "radiogroup");
+    group.setAttribute("aria-label", "Choose your free gift");
+    for (const g of current.groups) {
+      group.append(renderProductGroup(current.tierId, g, current.selected, handlers));
     }
+    root2.append(group);
   }
   function hint(text) {
     const p = document.createElement("p");
@@ -1013,38 +1012,6 @@
     body.append(name, status);
     card.append(radio, giftImage(opt.imageUrl), body);
     return card;
-  }
-  function renderBundle(tier) {
-    const wrap = document.createElement("div");
-    for (const item of tier.items) {
-      const card = document.createElement("div");
-      card.className = "fge-card";
-      if (!item.available) card.classList.add("is-unavailable");
-      const body = document.createElement("div");
-      body.className = "fge-card__body";
-      const name = document.createElement("div");
-      name.className = "fge-card__name";
-      name.textContent = item.variantLabel;
-      const status = document.createElement("div");
-      status.className = "fge-card__status";
-      if (item.available) {
-        status.classList.add("is-unlocked");
-        status.textContent = "Unlocked \xB7 added free";
-      } else {
-        status.classList.add("is-unavailable");
-        status.textContent = "Currently unavailable";
-      }
-      body.append(name, status);
-      card.append(giftImage(item.imageUrl), body);
-      wrap.append(card);
-    }
-    if (tier.incomplete) {
-      const note = document.createElement("p");
-      note.className = "fge-note--unavailable";
-      note.textContent = "This gift can\u2019t be fully added right now \u2014 please check back.";
-      wrap.append(note);
-    }
-    return wrap;
   }
   function renderDecline(declined2, handlers) {
     const label = document.createElement("label");

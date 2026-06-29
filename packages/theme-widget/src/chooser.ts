@@ -181,23 +181,26 @@ function renderGiftSection(
     return;
   }
 
+  // No chooser when there's nothing to decide: AND tiers (all gifts granted together) and OR tiers
+  // with a single option (auto-selected, no pick needed). The stepper + gift line are sufficient.
+  const optionCount =
+    current.kind === 'or' ? current.groups.reduce((n, g) => n + g.options.length, 0) : 0;
+  const hasChoice = current.kind === 'or' && optionCount > 1;
+
+  if (!hasChoice) return;
+
   const title = document.createElement('p');
   title.className = 'fge-gift__title';
-  title.textContent = current.kind === 'or' ? 'Choose your free gift' : 'Your free gift';
+  title.textContent = 'Choose your free gift';
   root.append(title);
 
-  if (current.kind === 'or') {
-    // ONE card per PRODUCT (radios). Group them so AT announces "Choose your free gift, radio group".
-    const group = document.createElement('div');
-    group.setAttribute('role', 'radiogroup');
-    group.setAttribute('aria-label', 'Choose your free gift');
-    for (const g of current.groups) {
-      group.append(renderProductGroup(current.tierId, g, current.selected, handlers));
-    }
-    root.append(group);
-  } else {
-    root.append(renderBundle(current));
+  const group = document.createElement('div');
+  group.setAttribute('role', 'radiogroup');
+  group.setAttribute('aria-label', 'Choose your free gift');
+  for (const g of current.groups) {
+    group.append(renderProductGroup(current.tierId, g, current.selected, handlers));
   }
+  root.append(group);
 }
 
 function hint(text: string): HTMLElement {
@@ -369,41 +372,6 @@ function renderOptionCard(
 
   card.append(radio, giftImage(opt.imageUrl), body);
   return card;
-}
-
-// AND: every gift shown as an image card (no radios — both are granted together). Incomplete note when
-// a bundle item is unavailable (can't be fully added).
-function renderBundle(tier: ChooserAndTier): HTMLElement {
-  const wrap = document.createElement('div');
-  for (const item of tier.items) {
-    const card = document.createElement('div');
-    card.className = 'fge-card';
-    if (!item.available) card.classList.add('is-unavailable');
-    const body = document.createElement('div');
-    body.className = 'fge-card__body';
-    const name = document.createElement('div');
-    name.className = 'fge-card__name';
-    name.textContent = item.variantLabel;
-    const status = document.createElement('div');
-    status.className = 'fge-card__status';
-    if (item.available) {
-      status.classList.add('is-unlocked');
-      status.textContent = 'Unlocked · added free';
-    } else {
-      status.classList.add('is-unavailable');
-      status.textContent = 'Currently unavailable';
-    }
-    body.append(name, status);
-    card.append(giftImage(item.imageUrl), body);
-    wrap.append(card);
-  }
-  if (tier.incomplete) {
-    const note = document.createElement('p');
-    note.className = 'fge-note--unavailable';
-    note.textContent = 'This gift can’t be fully added right now — please check back.';
-    wrap.append(note);
-  }
-  return wrap;
 }
 
 // "Add my free gift" — checked by default (declined=false); unchecking removes the gift.
