@@ -508,11 +508,7 @@ async function refreshDawnTotals(): Promise<void> {
     if (!sectionsRes.ok) return;
     const data = (await sectionsRes.json()) as Record<string, string>;
 
-    // Drawer: replace ONLY the footer block via the extracted helper.
     const drawerHtml = data[drawerSectionId];
-    if (drawerHtml !== undefined) {
-      replaceDrawerFooter(drawerHtml);
-    }
 
     // Badge: replace the cart-icon-bubble content.
     const badgeHtml = data[badgeSectionId];
@@ -542,11 +538,16 @@ async function refreshDawnTotals(): Promise<void> {
 
     // Defense in depth: stamp authoritative cart.js values into the subtotal and badge so the
     // displayed numbers are never wrong, even if the section HTML is momentarily stale.
+    const footerTargetReplaced = drawerHtml !== undefined ? replaceDrawerFooter(drawerHtml) : false;
+    let stampResult = { subtotalTargetsFound: 0, badgeTargetsFound: 0 };
     if (cart.total_price !== undefined && cart.item_count !== undefined) {
-      stampAuthoritativeCart({ total_price: cart.total_price, item_count: cart.item_count });
+      stampResult = stampAuthoritativeCart({
+        total_price: cart.total_price,
+        item_count: cart.item_count,
+      });
     }
 
-    // Diagnostic: log the count-match invariant for dev verification.
+    // Diagnostic: log selector hits + the count-match invariant for dev verification.
     const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
     const renderedLineNodes = itemsEl
       ? itemsEl.querySelectorAll(
@@ -556,8 +557,11 @@ async function refreshDawnTotals(): Promise<void> {
     console.warn('[FGE-DRAWERFIX]', {
       renderedLineNodes,
       cartItemsLen: cart.items.length,
-      displayedSubtotal: cart.total_price,
-      displayedBadge: cart.item_count,
+      realSubtotal: cart.total_price,
+      realBadge: cart.item_count,
+      footerTargetReplaced,
+      subtotalTargetsFound: stampResult.subtotalTargetsFound,
+      badgeTargetsFound: stampResult.badgeTargetsFound,
     });
   } catch {
     // Best-effort: a failed refresh leaves stale totals (no worse than before).

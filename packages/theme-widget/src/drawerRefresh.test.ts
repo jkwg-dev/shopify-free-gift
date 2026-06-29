@@ -12,6 +12,9 @@ beforeEach(() => {
   document.body.innerHTML = '';
 });
 
+// ---------------------------------------------------------------------------
+// overwritePriceFromMinorUnits
+// ---------------------------------------------------------------------------
 describe('overwritePriceFromMinorUnits', () => {
   it('overwrites a USD-style price preserving the $ prefix', () => {
     const el = document.createElement('span');
@@ -42,7 +45,10 @@ describe('overwritePriceFromMinorUnits', () => {
   });
 });
 
-describe('replaceDrawerFooter', () => {
+// ---------------------------------------------------------------------------
+// replaceDrawerFooter — stock Dawn fixture
+// ---------------------------------------------------------------------------
+describe('replaceDrawerFooter (stock Dawn)', () => {
   it('replaces only the footer, leaving items untouched', () => {
     document.body.innerHTML = `
       <div id="CartDrawer-Body">
@@ -70,68 +76,110 @@ describe('replaceDrawerFooter', () => {
     const result = replaceDrawerFooter(sectionHtml);
     expect(result).toBe(true);
 
-    // Footer was replaced.
     const subtotal = document.querySelector('.totals__subtotal-value');
     expect(subtotal?.textContent).toBe('$200.00');
 
-    // Items were NOT replaced.
     const items = document.querySelectorAll('.cart-item');
     expect(items).toHaveLength(2);
     expect(items[0]?.textContent).toBe('Buy item A');
     expect(items[1]?.textContent).toBe('Gift line B');
   });
 
-  it('falls back to finding footer inside #CartDrawer-Body when top-level fails', () => {
-    document.body.innerHTML = `
-      <div id="CartDrawer-Body">
-        <div class="items-wrapper">Items here</div>
-        <div class="cart-drawer__footer">OLD footer</div>
-      </div>
-    `;
-
-    const sectionHtml = `
-      <div class="other-wrapper">
-        <div id="CartDrawer-Body">
-          <div class="items-wrapper">New items</div>
-          <div class="cart-drawer__footer">NEW footer</div>
-        </div>
-      </div>
-    `;
-
-    const result = replaceDrawerFooter(sectionHtml);
-    expect(result).toBe(true);
-    expect(document.querySelector('.cart-drawer__footer')?.textContent).toBe('NEW footer');
-    expect(document.querySelector('.items-wrapper')?.textContent).toBe('Items here');
-  });
-
-  it('returns false when no footer selector matches', () => {
+  it('returns false when no summary/footer selector matches', () => {
     document.body.innerHTML = '<div>no footer here</div>';
     const result = replaceDrawerFooter('<div>also no footer</div>');
     expect(result).toBe(false);
   });
 });
 
-describe('stampAuthoritativeCart', () => {
-  it('overwrites subtotal from cart.total_price', () => {
+// ---------------------------------------------------------------------------
+// replaceDrawerFooter — CUSTOM THEME fixture (greenteegolfshop)
+// ---------------------------------------------------------------------------
+describe('replaceDrawerFooter (custom theme)', () => {
+  it('replaces .cart-drawer__summary, items list byte-for-byte unchanged', () => {
+    document.body.innerHTML = `
+      <div id="CartDrawer-Body">
+        <cart-drawer-items>
+          <div class="cart-item" id="CartDrawer-Item-1">Buy item A</div>
+          <div class="cart-item" id="CartDrawer-Item-2">Gift line B</div>
+        </cart-drawer-items>
+        <div class="cart-drawer__summary">
+          <form id="CartDrawer-FormSummary" class="cart-drawer__form-summary">
+            <div id="cart-summary">
+              <span class="cart-drawer__total-price">$809.98 CAD</span>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    const itemsBefore = document.querySelector('cart-drawer-items')!.innerHTML;
+
+    const sectionHtml = `
+      <div id="CartDrawer-Body">
+        <cart-drawer-items>
+          <div class="cart-item" id="CartDrawer-Item-1">STALE item</div>
+        </cart-drawer-items>
+        <div class="cart-drawer__summary">
+          <form id="CartDrawer-FormSummary" class="cart-drawer__form-summary">
+            <div id="cart-summary">
+              <span class="cart-drawer__total-price">$1,214.97 CAD</span>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    const result = replaceDrawerFooter(sectionHtml);
+    expect(result).toBe(true);
+
+    expect(document.querySelector('.cart-drawer__total-price')?.textContent).toBe('$1,214.97 CAD');
+
+    expect(document.querySelector('cart-drawer-items')!.innerHTML).toBe(itemsBefore);
+  });
+
+  it('never falls back to replacing #CartDrawer-Body even if summary is absent', () => {
+    document.body.innerHTML = `
+      <div id="CartDrawer-Body">
+        <cart-drawer-items>
+          <div class="cart-item">Original item</div>
+        </cart-drawer-items>
+      </div>
+    `;
+    const sectionHtml = `
+      <div id="CartDrawer-Body">
+        <cart-drawer-items>
+          <div class="cart-item">REPLACED item</div>
+        </cart-drawer-items>
+      </div>
+    `;
+
+    const result = replaceDrawerFooter(sectionHtml);
+    expect(result).toBe(false);
+    expect(document.querySelector('.cart-item')?.textContent).toBe('Original item');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stampAuthoritativeCart — stock Dawn fixture
+// ---------------------------------------------------------------------------
+describe('stampAuthoritativeCart (stock Dawn)', () => {
+  it('overwrites .totals__subtotal-value and .cart-count-bubble badge', () => {
     document.body.innerHTML = `
       <div class="cart-drawer__footer">
         <span class="totals__subtotal-value">$999.99</span>
       </div>
-    `;
-    stampAuthoritativeCart({ total_price: 121497, item_count: 5 });
-    expect(document.querySelector('.totals__subtotal-value')?.textContent).toBe('$1,214.97');
-  });
-
-  it('overwrites badge count from cart.item_count', () => {
-    document.body.innerHTML = `
       <div class="cart-count-bubble">
         <span aria-hidden="true">4</span>
       </div>
     `;
-    stampAuthoritativeCart({ total_price: 0, item_count: 5 });
+    const r = stampAuthoritativeCart({ total_price: 121497, item_count: 5 });
+    expect(document.querySelector('.totals__subtotal-value')?.textContent).toBe('$1,214.97');
     expect(document.querySelector('.cart-count-bubble span[aria-hidden="true"]')?.textContent).toBe(
       '5',
     );
+    expect(r.subtotalTargetsFound).toBeGreaterThan(0);
+    expect(r.badgeTargetsFound).toBeGreaterThan(0);
   });
 
   it('overwrites data-cart-subtotal and data-cart-count selectors', () => {
@@ -139,8 +187,48 @@ describe('stampAuthoritativeCart', () => {
       <span data-cart-subtotal>$50.00</span>
       <span data-cart-count>2</span>
     `;
-    stampAuthoritativeCart({ total_price: 7500, item_count: 3 });
+    const r = stampAuthoritativeCart({ total_price: 7500, item_count: 3 });
     expect(document.querySelector('[data-cart-subtotal]')?.textContent).toBe('$75.00');
     expect(document.querySelector('[data-cart-count]')?.textContent).toBe('3');
+    expect(r.subtotalTargetsFound).toBe(1);
+    expect(r.badgeTargetsFound).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stampAuthoritativeCart — CUSTOM THEME fixture (greenteegolfshop)
+// ---------------------------------------------------------------------------
+describe('stampAuthoritativeCart (custom theme)', () => {
+  it('overwrites .cart-drawer__total-price subtotal', () => {
+    document.body.innerHTML = `
+      <div class="cart-drawer__summary">
+        <form id="CartDrawer-FormSummary" class="cart-drawer__form-summary">
+          <div id="cart-summary">
+            <span class="cart-drawer__total-price">$809.98 CAD</span>
+          </div>
+        </form>
+      </div>
+    `;
+    const r = stampAuthoritativeCart({ total_price: 121497, item_count: 5 });
+    expect(document.querySelector('.cart-drawer__total-price')?.textContent).toBe('$1,214.97 CAD');
+    expect(r.subtotalTargetsFound).toBeGreaterThan(0);
+  });
+
+  it('overwrites BOTH .cart-count-badge (header) and .cart-drawer__title-counter (drawer)', () => {
+    document.body.innerHTML = `
+      <span class="cart-count-badge">3</span>
+      <span class="cart-drawer__title-counter">3</span>
+    `;
+    const r = stampAuthoritativeCart({ total_price: 0, item_count: 5 });
+    expect(document.querySelector('.cart-count-badge')?.textContent).toBe('5');
+    expect(document.querySelector('.cart-drawer__title-counter')?.textContent).toBe('5');
+    expect(r.badgeTargetsFound).toBe(2);
+  });
+
+  it('returns zero counts when no elements match (selector miss diagnostic)', () => {
+    document.body.innerHTML = '<div>empty page</div>';
+    const r = stampAuthoritativeCart({ total_price: 100, item_count: 1 });
+    expect(r.subtotalTargetsFound).toBe(0);
+    expect(r.badgeTargetsFound).toBe(0);
   });
 });

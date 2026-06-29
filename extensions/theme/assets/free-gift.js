@@ -1880,12 +1880,31 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   }
 
   // src/drawerRefresh.ts
-  var DRAWER_FOOTER_SELECTORS = [
+  var DRAWER_SUMMARY_SELECTORS = [
+    ".cart-drawer__summary",
+    "#cart-summary",
+    "#CartDrawer-FormSummary",
     ".cart-drawer__footer",
     "[data-cart-footer]",
     ".cart__footer",
     ".drawer__footer"
   ];
+  var SUBTOTAL_SELECTORS = [
+    ".cart-drawer__total-price",
+    ".totals__subtotal-value",
+    ".cart-drawer__subtotal .price",
+    ".totals__total-value",
+    "[data-cart-subtotal]"
+  ];
+  var BADGE_SELECTORS = [
+    ".cart-count-badge",
+    ".cart-drawer__title-counter",
+    '.cart-count-bubble span[aria-hidden="true"]',
+    "[data-cart-count]"
+  ];
+  function warn(msg, ...data) {
+    console.warn(`[FGE-DRAWERFIX] ${msg}`, ...data);
+  }
   function overwritePriceFromMinorUnits(el, minorUnits) {
     var _a2;
     const text = (_a2 = el.textContent) != null ? _a2 : "";
@@ -1913,56 +1932,40 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     el.textContent = text.replace(token, num);
   }
   function stampAuthoritativeCart(cart) {
-    const subtotalSelectors = [
-      ".totals__subtotal-value",
-      ".cart-drawer__subtotal .price",
-      ".totals__total-value",
-      "[data-cart-subtotal]"
-    ];
-    for (const sel of subtotalSelectors) {
+    let subtotalTargetsFound = 0;
+    for (const sel of SUBTOTAL_SELECTORS) {
       document.querySelectorAll(sel).forEach((el) => {
         overwritePriceFromMinorUnits(el, cart.total_price);
+        subtotalTargetsFound++;
       });
     }
-    const badgeDots = document.querySelectorAll(
-      '.cart-count-bubble span[aria-hidden="true"], [data-cart-count]'
-    );
-    badgeDots.forEach((el) => {
-      el.textContent = String(cart.item_count);
-    });
+    let badgeTargetsFound = 0;
+    for (const sel of BADGE_SELECTORS) {
+      document.querySelectorAll(sel).forEach((el) => {
+        el.textContent = String(cart.item_count);
+        badgeTargetsFound++;
+      });
+    }
+    if (subtotalTargetsFound === 0) {
+      warn("stamp: no subtotal target found", SUBTOTAL_SELECTORS);
+    }
+    if (badgeTargetsFound === 0) {
+      warn("stamp: no badge target found", BADGE_SELECTORS);
+    }
+    return { subtotalTargetsFound, badgeTargetsFound };
   }
   function replaceDrawerFooter(drawerHtml) {
     const parsed = new DOMParser().parseFromString(drawerHtml, "text/html");
-    let replaced = false;
-    for (const sel of DRAWER_FOOTER_SELECTORS) {
-      const newFooter = parsed.querySelector(sel);
-      const liveFooter = document.querySelector(sel);
-      if (newFooter !== null && liveFooter !== null) {
-        liveFooter.innerHTML = newFooter.innerHTML;
-        replaced = true;
-        break;
+    for (const sel of DRAWER_SUMMARY_SELECTORS) {
+      const newBlock = parsed.querySelector(sel);
+      const liveBlock = document.querySelector(sel);
+      if (newBlock !== null && liveBlock !== null) {
+        liveBlock.innerHTML = newBlock.innerHTML;
+        return true;
       }
     }
-    if (!replaced) {
-      const bodySelectors = ["#CartDrawer-Body", "[data-cart-body]"];
-      for (const bodySel of bodySelectors) {
-        const newBody = parsed.querySelector(bodySel);
-        const liveBody = document.querySelector(bodySel);
-        if (newBody !== null && liveBody !== null) {
-          for (const fSel of DRAWER_FOOTER_SELECTORS) {
-            const innerFooter = newBody.querySelector(fSel);
-            const liveInner = liveBody.querySelector(fSel);
-            if (innerFooter !== null && liveInner !== null) {
-              liveInner.innerHTML = innerFooter.innerHTML;
-              replaced = true;
-              break;
-            }
-          }
-          if (replaced) break;
-        }
-      }
-    }
-    return replaced;
+    warn("footer: no summary target found", DRAWER_SUMMARY_SELECTORS);
+    return false;
   }
 
   // src/storefront.ts
@@ -2301,9 +2304,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       if (!sectionsRes.ok) return;
       const data = await sectionsRes.json();
       const drawerHtml = data[drawerSectionId];
-      if (drawerHtml !== void 0) {
-        replaceDrawerFooter(drawerHtml);
-      }
       const badgeHtml = data[badgeSectionId];
       if (badgeHtml !== void 0) {
         const liveBadge = document.getElementById("cart-icon-bubble");
@@ -2326,8 +2326,13 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           }
         }
       }
+      const footerTargetReplaced = drawerHtml !== void 0 ? replaceDrawerFooter(drawerHtml) : false;
+      let stampResult = { subtotalTargetsFound: 0, badgeTargetsFound: 0 };
       if (cart.total_price !== void 0 && cart.item_count !== void 0) {
-        stampAuthoritativeCart({ total_price: cart.total_price, item_count: cart.item_count });
+        stampResult = stampAuthoritativeCart({
+          total_price: cart.total_price,
+          item_count: cart.item_count
+        });
       }
       const itemsEl = document.querySelector("cart-drawer-items, cart-items");
       const renderedLineNodes = itemsEl ? itemsEl.querySelectorAll(
@@ -2336,8 +2341,11 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       console.warn("[FGE-DRAWERFIX]", {
         renderedLineNodes,
         cartItemsLen: cart.items.length,
-        displayedSubtotal: cart.total_price,
-        displayedBadge: cart.item_count
+        realSubtotal: cart.total_price,
+        realBadge: cart.item_count,
+        footerTargetReplaced,
+        subtotalTargetsFound: stampResult.subtotalTargetsFound,
+        badgeTargetsFound: stampResult.badgeTargetsFound
       });
     } catch {
     }

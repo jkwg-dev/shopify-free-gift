@@ -1,14 +1,42 @@
 // Extracted helpers for refreshing the cart drawer's footer + badge from section rendering responses
 // and stamping authoritative cart.js values. Separated from storefront.ts (which auto-inits) so
 // they can be unit-tested without triggering storefront side effects.
+//
+// Selector lists are ORDERED: custom-theme (greenteegolfshop) first, stock Dawn after, so the live
+// theme hits on the first pass and stock Dawn still works as a fallback.
 
-// Footer selectors tried in order — Dawn first, then broader fallbacks.
-export const DRAWER_FOOTER_SELECTORS = [
+// Summary/footer selectors — the block containing the subtotal + checkout button.
+// Custom theme uses .cart-drawer__summary; stock Dawn uses .cart-drawer__footer.
+export const DRAWER_SUMMARY_SELECTORS = [
+  '.cart-drawer__summary',
+  '#cart-summary',
+  '#CartDrawer-FormSummary',
   '.cart-drawer__footer',
   '[data-cart-footer]',
   '.cart__footer',
   '.drawer__footer',
 ];
+
+// Subtotal price element selectors (custom theme first, then stock Dawn).
+const SUBTOTAL_SELECTORS = [
+  '.cart-drawer__total-price',
+  '.totals__subtotal-value',
+  '.cart-drawer__subtotal .price',
+  '.totals__total-value',
+  '[data-cart-subtotal]',
+];
+
+// Badge count element selectors (custom theme first, then stock Dawn).
+const BADGE_SELECTORS = [
+  '.cart-count-badge',
+  '.cart-drawer__title-counter',
+  '.cart-count-bubble span[aria-hidden="true"]',
+  '[data-cart-count]',
+];
+
+function warn(msg: string, ...data: unknown[]): void {
+  console.warn(`[FGE-DRAWERFIX] ${msg}`, ...data);
+}
 
 // Overwrite a price element's numeric text from an authoritative minor-unit integer, preserving the
 // node's currency symbol/format. Same in-place approach used by setLineTotals in groupingTransform.
@@ -38,61 +66,57 @@ export function overwritePriceFromMinorUnits(el: HTMLElement, minorUnits: number
   el.textContent = text.replace(token, num);
 }
 
+export type StampResult = {
+  readonly subtotalTargetsFound: number;
+  readonly badgeTargetsFound: number;
+};
+
 // Stamp the authoritative cart.js total_price into all subtotal elements and item_count into all
 // badge elements, so the displayed numbers never contradict the real cart — even if the section HTML
-// was fetched before the discount fully settled.
-export function stampAuthoritativeCart(cart: { total_price: number; item_count: number }): void {
-  const subtotalSelectors = [
-    '.totals__subtotal-value',
-    '.cart-drawer__subtotal .price',
-    '.totals__total-value',
-    '[data-cart-subtotal]',
-  ];
-  for (const sel of subtotalSelectors) {
+// was fetched before the discount fully settled. Returns counts so callers can log misses.
+export function stampAuthoritativeCart(cart: {
+  total_price: number;
+  item_count: number;
+}): StampResult {
+  let subtotalTargetsFound = 0;
+  for (const sel of SUBTOTAL_SELECTORS) {
     document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
       overwritePriceFromMinorUnits(el, cart.total_price);
+      subtotalTargetsFound++;
     });
   }
-  const badgeDots = document.querySelectorAll<HTMLElement>(
-    '.cart-count-bubble span[aria-hidden="true"], [data-cart-count]',
-  );
-  badgeDots.forEach((el) => {
-    el.textContent = String(cart.item_count);
-  });
+
+  let badgeTargetsFound = 0;
+  for (const sel of BADGE_SELECTORS) {
+    document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+      el.textContent = String(cart.item_count);
+      badgeTargetsFound++;
+    });
+  }
+
+  if (subtotalTargetsFound === 0) {
+    warn('stamp: no subtotal target found', SUBTOTAL_SELECTORS);
+  }
+  if (badgeTargetsFound === 0) {
+    warn('stamp: no badge target found', BADGE_SELECTORS);
+  }
+
+  return { subtotalTargetsFound, badgeTargetsFound };
 }
 
-// Replace ONLY the footer block in the drawer section HTML, leaving the items container untouched.
-// Returns true if a footer was replaced.
+// Replace ONLY the summary/footer block in the drawer section HTML, leaving the items container
+// untouched. Returns true if a summary block was replaced. Never falls back to replacing the whole
+// body — if no summary selector matches, returns false and relies on stampAuthoritativeCart.
 export function replaceDrawerFooter(drawerHtml: string): boolean {
   const parsed = new DOMParser().parseFromString(drawerHtml, 'text/html');
-  let replaced = false;
-  for (const sel of DRAWER_FOOTER_SELECTORS) {
-    const newFooter = parsed.querySelector(sel);
-    const liveFooter = document.querySelector(sel);
-    if (newFooter !== null && liveFooter !== null) {
-      liveFooter.innerHTML = newFooter.innerHTML;
-      replaced = true;
-      break;
+  for (const sel of DRAWER_SUMMARY_SELECTORS) {
+    const newBlock = parsed.querySelector(sel);
+    const liveBlock = document.querySelector(sel);
+    if (newBlock !== null && liveBlock !== null) {
+      liveBlock.innerHTML = newBlock.innerHTML;
+      return true;
     }
   }
-  if (!replaced) {
-    const bodySelectors = ['#CartDrawer-Body', '[data-cart-body]'];
-    for (const bodySel of bodySelectors) {
-      const newBody = parsed.querySelector(bodySel);
-      const liveBody = document.querySelector(bodySel);
-      if (newBody !== null && liveBody !== null) {
-        for (const fSel of DRAWER_FOOTER_SELECTORS) {
-          const innerFooter = newBody.querySelector(fSel);
-          const liveInner = liveBody.querySelector(fSel);
-          if (innerFooter !== null && liveInner !== null) {
-            liveInner.innerHTML = innerFooter.innerHTML;
-            replaced = true;
-            break;
-          }
-        }
-        if (replaced) break;
-      }
-    }
-  }
-  return replaced;
+  warn('footer: no summary target found', DRAWER_SUMMARY_SELECTORS);
+  return false;
 }
