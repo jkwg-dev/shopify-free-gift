@@ -420,16 +420,16 @@
     const num = fmt2.decimals > 0 ? `${grouped}${fmt2.decimalSep}${fracPart}` : grouped;
     return `${fmt2.prefix}${num}${fmt2.suffix}`;
   }
-  function buildPriceHtml(finalMinor, originalMinor, moneyFmt) {
+  function buildPriceInner(finalMinor, originalMinor, moneyFmt) {
     const finalStr = formatMoney(finalMinor, moneyFmt);
     if (finalMinor === originalMinor) {
       return finalStr;
     }
     const originalStr = formatMoney(originalMinor, moneyFmt);
-    return `<div class="cart-item__discounted-prices"><span class="visually-hidden">Sale price</span><ins class="color-red">${finalStr}</ins><span class="visually-hidden">Regular price</span><del>${originalStr}</del></div>`;
+    return `<span class="visually-hidden">Sale price</span><ins class="color-red">${finalStr}</ins><span class="visually-hidden">Regular price</span><del>${originalStr}</del>`;
   }
   function setLineTotals(node, sumFinal, sumOriginal) {
-    var _a2, _b2, _c2, _d, _e;
+    var _a2, _b2, _c2, _d;
     const priceEl = (_b2 = (_a2 = node.querySelector(".cart-item__actions--price")) != null ? _a2 : node.querySelector(".cart-item__price")) != null ? _b2 : findFirst2(node, TOTALS_SELECTORS);
     if (priceEl === null) {
       diag("setLineTotals: no price element found in", node.tagName, node.id);
@@ -441,33 +441,28 @@
       diag("setLineTotals: no number found in price text", existingText);
       return;
     }
-    const html = buildPriceHtml(sumFinal, sumOriginal, fmt2);
+    const inner = buildPriceInner(sumFinal, sumOriginal, fmt2);
+    const isDiscounted = sumFinal !== sumOriginal;
     const lineTotal = node.querySelector(".cart-item__actions--price");
     if (lineTotal !== null) {
-      const inner = (_e = lineTotal.querySelector(".cart-item__discounted-prices")) != null ? _e : lineTotal.querySelector(".cart-item__price");
-      if (inner !== null) {
-        inner.innerHTML = buildPriceHtml(sumFinal, sumOriginal, fmt2).replace(
-          '<div class="cart-item__discounted-prices">',
-          ""
-        ).replace("</div>", "");
-        if (sumFinal !== sumOriginal && !inner.classList.contains("cart-item__discounted-prices")) {
-          inner.className = "cart-item__discounted-prices cart-item__price";
-        } else if (sumFinal === sumOriginal) {
-          inner.className = "cart-item__price";
-        }
+      if (isDiscounted) {
+        lineTotal.innerHTML = `<div class="cart-item__discounted-prices cart-item__price">${inner}</div>`;
       } else {
-        lineTotal.innerHTML = `<div class="cart-item__price">${html}</div>`;
+        lineTotal.innerHTML = `<span class="cart-item__price">${inner}</span>`;
       }
+      return;
     }
-    if (lineTotal === null) {
-      for (const sel of TOTALS_SELECTORS) {
-        const cells = node.querySelectorAll(sel);
-        if (cells.length > 0) {
-          cells.forEach((cell) => {
-            cell.innerHTML = `<div class="cart-item__price">${html}</div>`;
-          });
-          break;
-        }
+    for (const sel of TOTALS_SELECTORS) {
+      const cells = node.querySelectorAll(sel);
+      if (cells.length > 0) {
+        cells.forEach((cell) => {
+          if (isDiscounted) {
+            cell.innerHTML = `<div class="cart-item__discounted-prices cart-item__price">${inner}</div>`;
+          } else {
+            cell.innerHTML = `<span class="cart-item__price">${inner}</span>`;
+          }
+        });
+        break;
       }
     }
   }

@@ -142,9 +142,9 @@ function formatMoney(
   return `${fmt.prefix}${num}${fmt.suffix}`;
 }
 
-// Build native-theme-identical price HTML: <ins class="color-red"> for sale, <del> for compare,
-// with visually-hidden a11y labels. When final === original, render a single plain price (no ins/del).
-function buildPriceHtml(
+// Build the inner content for a price slot: the <ins>/<del> pair (or plain text for no-discount).
+// Does NOT include the outer wrapper div — the caller sets that per slot.
+function buildPriceInner(
   finalMinor: number,
   originalMinor: number,
   moneyFmt: {
@@ -161,19 +161,24 @@ function buildPriceHtml(
   }
   const originalStr = formatMoney(originalMinor, moneyFmt);
   return (
-    '<div class="cart-item__discounted-prices">' +
     '<span class="visually-hidden">Sale price</span>' +
     `<ins class="color-red">${finalStr}</ins>` +
     '<span class="visually-hidden">Regular price</span>' +
-    `<del>${originalStr}</del>` +
-    '</div>'
+    `<del>${originalStr}</del>`
   );
 }
 
-// Overwrite the line total in the price cells with theme-native markup: <ins class="color-red"> for
-// sale price, <del> for compare, visually-hidden labels. Detects the money format from existing price
-// text so the currency symbol/style is preserved. Targets both the right-column line total
-// (.cart-item__actions--price) and the under-title unit price (.cart-item__price inside .cart-item__details).
+// Overwrite the right-column LINE TOTAL with theme-native markup. Detects the money format from
+// existing price text. The exact native structure is:
+//   <div class="cart-item__actions--price">
+//     <div class="cart-item__discounted-prices cart-item__price">
+//       <span class="visually-hidden">Sale price</span>
+//       <ins class="color-red">$1,214.97</ins>
+//       <span class="visually-hidden">Regular price</span>
+//       <del>$1,349.97</del>
+//     </div>
+//   </div>
+// For no-discount: a single <span class="cart-item__price">$1,214.97</span>.
 function setLineTotals(node: HTMLElement, sumFinal: number, sumOriginal: number): void {
   // Find an existing price element to extract the money format from.
   const priceEl =
@@ -184,7 +189,6 @@ function setLineTotals(node: HTMLElement, sumFinal: number, sumOriginal: number)
     diag('setLineTotals: no price element found in', node.tagName, node.id);
     return;
   }
-  // Extract format from any existing price text in the node.
   const existingText = priceEl.textContent?.trim() ?? '';
   const fmt = extractMoneyFormat(existingText);
   if (fmt === null) {
@@ -192,39 +196,32 @@ function setLineTotals(node: HTMLElement, sumFinal: number, sumOriginal: number)
     return;
   }
 
-  // Build the new price HTML.
-  const html = buildPriceHtml(sumFinal, sumOriginal, fmt);
+  const inner = buildPriceInner(sumFinal, sumOriginal, fmt);
+  const isDiscounted = sumFinal !== sumOriginal;
 
   // Update the right-column line total (.cart-item__actions--price).
   const lineTotal = node.querySelector<HTMLElement>('.cart-item__actions--price');
   if (lineTotal !== null) {
-    const inner =
-      lineTotal.querySelector<HTMLElement>('.cart-item__discounted-prices') ??
-      lineTotal.querySelector<HTMLElement>('.cart-item__price');
-    if (inner !== null) {
-      inner.innerHTML = buildPriceHtml(sumFinal, sumOriginal, fmt)
-        .replace('<div class="cart-item__discounted-prices">', '')
-        .replace('</div>', '');
-      if (sumFinal !== sumOriginal && !inner.classList.contains('cart-item__discounted-prices')) {
-        inner.className = 'cart-item__discounted-prices cart-item__price';
-      } else if (sumFinal === sumOriginal) {
-        inner.className = 'cart-item__price';
-      }
+    if (isDiscounted) {
+      lineTotal.innerHTML = `<div class="cart-item__discounted-prices cart-item__price">${inner}</div>`;
     } else {
-      lineTotal.innerHTML = `<div class="cart-item__price">${html}</div>`;
+      lineTotal.innerHTML = `<span class="cart-item__price">${inner}</span>`;
     }
+    return;
   }
 
   // Fallback: update any totals cells that match the stock-Dawn selectors.
-  if (lineTotal === null) {
-    for (const sel of TOTALS_SELECTORS) {
-      const cells = node.querySelectorAll<HTMLElement>(sel);
-      if (cells.length > 0) {
-        cells.forEach((cell) => {
-          cell.innerHTML = `<div class="cart-item__price">${html}</div>`;
-        });
-        break;
-      }
+  for (const sel of TOTALS_SELECTORS) {
+    const cells = node.querySelectorAll<HTMLElement>(sel);
+    if (cells.length > 0) {
+      cells.forEach((cell) => {
+        if (isDiscounted) {
+          cell.innerHTML = `<div class="cart-item__discounted-prices cart-item__price">${inner}</div>`;
+        } else {
+          cell.innerHTML = `<span class="cart-item__price">${inner}</span>`;
+        }
+      });
+      break;
     }
   }
 }
