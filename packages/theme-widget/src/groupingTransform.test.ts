@@ -2,7 +2,11 @@
  * @vitest-environment jsdom
  */
 import { describe, expect, it, beforeEach } from 'vitest';
-import { applyGiftLineHiding, syncNativeInputs } from './groupingTransform.js';
+import {
+  applyGiftLineHiding,
+  shouldSkipNativeQtySync,
+  syncNativeInputs,
+} from './groupingTransform.js';
 import type { GroupingPlan, GiftLineRef } from './cartGrouping.js';
 
 function plan(over: Partial<GroupingPlan>): GroupingPlan {
@@ -132,5 +136,49 @@ describe('syncNativeInputs', () => {
     const inputs = itemsEl.querySelectorAll<HTMLInputElement>('.quantity__input');
     expect(inputs[0]!.value).toBe('3');
     expect(inputs[1]!.value).toBe('2');
+  });
+
+  it('does not overwrite visible buy inputs from hidden gift rows', () => {
+    const itemsEl = buildDawnItems(2);
+    document.body.appendChild(itemsEl);
+    const rows = itemsEl.querySelectorAll<HTMLElement>('.cart-item');
+    rows[0]!.querySelector<HTMLInputElement>('.quantity__input')!.value = '2';
+    rows[1]!.setAttribute('data-fge-gift-hidden', '');
+    rows[1]!.style.display = 'none';
+
+    syncNativeInputs(itemsEl, [2, 1]);
+
+    expect(rows[0]!.querySelector<HTMLInputElement>('.quantity__input')!.value).toBe('2');
+    expect(rows[1]!.querySelector<HTMLInputElement>('.quantity__input')!.value).toBe('1');
+  });
+});
+
+describe('shouldSkipNativeQtySync', () => {
+  it('returns true when a visible row is optimistically ahead of cart.js', () => {
+    const itemsEl = buildDawnItems(2);
+    document.body.appendChild(itemsEl);
+    itemsEl.querySelector<HTMLInputElement>('.quantity__input')!.value = '2';
+
+    expect(shouldSkipNativeQtySync(itemsEl, [1, 1])).toBe(true);
+  });
+
+  it('returns false when visible rows match or lag cart.js (authoritative sync safe)', () => {
+    const itemsEl = buildDawnItems(2);
+    document.body.appendChild(itemsEl);
+    itemsEl.querySelector<HTMLInputElement>('.quantity__input')!.value = '1';
+
+    expect(shouldSkipNativeQtySync(itemsEl, [1, 1])).toBe(false);
+    expect(shouldSkipNativeQtySync(itemsEl, [2, 1])).toBe(false);
+  });
+
+  it('ignores hidden gift rows when comparing', () => {
+    const itemsEl = buildDawnItems(2);
+    document.body.appendChild(itemsEl);
+    const rows = itemsEl.querySelectorAll<HTMLElement>('.cart-item');
+    rows[0]!.querySelector<HTMLInputElement>('.quantity__input')!.value = '1';
+    rows[1]!.setAttribute('data-fge-gift-hidden', '');
+    rows[1]!.querySelector<HTMLInputElement>('.quantity__input')!.value = '9';
+
+    expect(shouldSkipNativeQtySync(itemsEl, [1, 1])).toBe(false);
   });
 });

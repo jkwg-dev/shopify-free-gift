@@ -77,7 +77,30 @@ export function applyGiftLineHiding(itemsEl: HTMLElement | null, plan: GroupingP
   return true;
 }
 
-// Sync native theme quantity inputs to authoritative cart values after reconcile.
+// True when any visible (non-hidden) line's native qty input exceeds cart.js — Dawn is optimistically
+// ahead of a stale snapshot (common during gift pending while the shopper taps +/- on a buy row).
+export function shouldSkipNativeQtySync(
+  itemsEl: HTMLElement | null,
+  actualQuantities: readonly number[],
+): boolean {
+  if (itemsEl === null) return false;
+  const lineNodes = findLineNodes(itemsEl);
+  if (lineNodes.length !== actualQuantities.length) return false;
+  for (let i = 0; i < lineNodes.length; i++) {
+    const node = lineNodes[i]!;
+    if (node.hasAttribute(HIDDEN_MARK)) continue;
+    const input = findFirst(node, QTY_INPUT_SELECTORS);
+    if (!(input instanceof HTMLInputElement)) continue;
+    const domQty = Number.parseInt(input.value, 10);
+    if (Number.isNaN(domQty)) continue;
+    if (domQty > actualQuantities[i]!) return true;
+  }
+  return false;
+}
+
+// Sync native theme quantity inputs to authoritative cart values after reconcile. Skips gift rows
+// hidden by applyGiftLineHiding — their qty (always 1) must not overwrite a visible buy row when
+// DOM/cart index correlation is otherwise correct.
 export function syncNativeInputs(
   itemsEl: HTMLElement | null,
   actualQuantities: readonly number[],
@@ -86,7 +109,9 @@ export function syncNativeInputs(
   const lineNodes = findLineNodes(itemsEl);
   if (lineNodes.length !== actualQuantities.length) return;
   for (let i = 0; i < lineNodes.length; i++) {
-    const input = findFirst(lineNodes[i]!, QTY_INPUT_SELECTORS);
+    const node = lineNodes[i]!;
+    if (node.hasAttribute(HIDDEN_MARK)) continue;
+    const input = findFirst(node, QTY_INPUT_SELECTORS);
     if (input instanceof HTMLInputElement) {
       const actual = String(actualQuantities[i]);
       if (input.value !== actual) {

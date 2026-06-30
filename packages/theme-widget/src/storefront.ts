@@ -17,7 +17,11 @@ import {
 import { mountCartContexts, type CartSection } from './cartSections.js';
 import { allCampaignGiftVariantIds, stampGiftPropertiesOnAddBody } from './cartAddStamp.js';
 import { classifyAndGroup, type GroupingPlan, type RawCartLine } from './cartGrouping.js';
-import { applyGiftLineHiding, syncNativeInputs } from './groupingTransform.js';
+import {
+  applyGiftLineHiding,
+  shouldSkipNativeQtySync,
+  syncNativeInputs,
+} from './groupingTransform.js';
 import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
@@ -280,10 +284,16 @@ async function doVerifiedDisplayReconcile(
     for (const section of sections) section.attach();
   }
 
-  // Sync qty inputs only here — after lastCartQuantities is refreshed from cart.js. onReattach also
-  // runs on Dawn's optimistic +/- repaints and on gift-pending re-attaches; syncing there reverted
-  // the theme's in-flight quantity and caused a visible flicker.
-  syncNativeInputs(itemsEl, lastCartQuantities);
+  // Sync qty inputs only when Dawn is not ahead of cart.js on any visible buy row (optimistic +/-).
+  // A finishing gift reconcile often reads a stale snapshot (buy qty 1 + hidden gift qty 1) and
+  // would otherwise force the visible stepper back to 1.
+  if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
+    const freshCart = await getCart();
+    lastCartQuantities = freshCart.items.map((item) => item.quantity);
+    if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
+      syncNativeInputs(itemsEl, lastCartQuantities);
+    }
+  }
 
   if (cartMutated) {
     await refreshDawnTotals(prefetchedDrawerHtml);

@@ -390,12 +390,29 @@
     }
     return true;
   }
+  function shouldSkipNativeQtySync(itemsEl, actualQuantities) {
+    if (itemsEl === null) return false;
+    const lineNodes = findLineNodes(itemsEl);
+    if (lineNodes.length !== actualQuantities.length) return false;
+    for (let i = 0; i < lineNodes.length; i++) {
+      const node = lineNodes[i];
+      if (node.hasAttribute(HIDDEN_MARK)) continue;
+      const input = findFirst2(node, QTY_INPUT_SELECTORS);
+      if (!(input instanceof HTMLInputElement)) continue;
+      const domQty = Number.parseInt(input.value, 10);
+      if (Number.isNaN(domQty)) continue;
+      if (domQty > actualQuantities[i]) return true;
+    }
+    return false;
+  }
   function syncNativeInputs(itemsEl, actualQuantities) {
     if (itemsEl === null) return;
     const lineNodes = findLineNodes(itemsEl);
     if (lineNodes.length !== actualQuantities.length) return;
     for (let i = 0; i < lineNodes.length; i++) {
-      const input = findFirst2(lineNodes[i], QTY_INPUT_SELECTORS);
+      const node = lineNodes[i];
+      if (node.hasAttribute(HIDDEN_MARK)) continue;
+      const input = findFirst2(node, QTY_INPUT_SELECTORS);
       if (input instanceof HTMLInputElement) {
         const actual = String(actualQuantities[i]);
         if (input.value !== actual) {
@@ -1763,7 +1780,13 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       prefetchedDrawerHtml = bodyRefresh.drawerHtml;
       for (const section of sections) section.attach();
     }
-    syncNativeInputs(itemsEl, lastCartQuantities);
+    if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
+      const freshCart = await getCart();
+      lastCartQuantities = freshCart.items.map((item) => item.quantity);
+      if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
+        syncNativeInputs(itemsEl, lastCartQuantities);
+      }
+    }
     if (cartMutated) {
       await refreshDawnTotals(prefetchedDrawerHtml);
     }
