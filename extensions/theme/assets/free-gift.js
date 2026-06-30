@@ -247,6 +247,60 @@
     return specs.map(mountOne);
   }
 
+  // src/cartAddStamp.ts
+  var toGid = (numericId) => `gid://shopify/ProductVariant/${numericId}`;
+  function allCampaignGiftVariantIds(config) {
+    if (config === null || config.status !== "active") {
+      return /* @__PURE__ */ new Set();
+    }
+    const ids = /* @__PURE__ */ new Set();
+    for (const tier of config.tiers) {
+      if (tier.gift.kind === "OR") {
+        for (const option of tier.gift.options) {
+          ids.add(option.variantId);
+        }
+      } else {
+        for (const gift of tier.gift.gifts) {
+          ids.add(gift.variantId);
+        }
+      }
+    }
+    return ids;
+  }
+  function stampItem(item, stampVariants) {
+    var _a2;
+    if (item.id === void 0) {
+      return item;
+    }
+    if (!stampVariants.has(toGid(item.id))) {
+      return item;
+    }
+    if (((_a2 = item.properties) == null ? void 0 : _a2[GIFT_LINE_PROPERTY]) != null) {
+      return item;
+    }
+    return {
+      ...item,
+      properties: { ...item.properties, [GIFT_LINE_PROPERTY]: "1" }
+    };
+  }
+  function stampGiftPropertiesOnAddBody(body, stampVariants) {
+    if (stampVariants.size === 0 || body === null || typeof body !== "object") {
+      return body;
+    }
+    const record = body;
+    if (Array.isArray(record["items"])) {
+      const items = record["items"];
+      const next = items.map((item) => stampItem(item, stampVariants));
+      const changed = next.some((item, i) => item !== items[i]);
+      return changed ? { ...record, items: next } : body;
+    }
+    if (typeof record["id"] === "number") {
+      const next = stampItem(record, stampVariants);
+      return next === record ? body : next;
+    }
+    return body;
+  }
+
   // src/cartGrouping.ts
   function isZeroedByOurCode(line, ourCode) {
     return line.finalLinePrice === 0 && ourCode !== null && line.allocationTitles.includes(ourCode);
@@ -1140,6 +1194,20 @@
         const res = await applyCartPlan({ ...plan, remove: [], adjust: [], add }, io.post);
         added.push(...res.added);
         passFailures.push(...res.failures);
+        if (res.added.length > 0) {
+          const verify = await io.readCart();
+          for (const variantId of res.added) {
+            const settledGift = verify.lines.some(
+              (l) => {
+                var _a3;
+                return l.variantId === variantId && l.appAdded && ((_a3 = l.finalLinePrice) != null ? _a3 : 0) === 0;
+              }
+            );
+            if (!settledGift) {
+              addAttempted.delete(variantId);
+            }
+          }
+        }
       }
       failures.push(...passFailures);
       (_c2 = io.nudge) == null ? void 0 : _c2.call(io);
@@ -1541,7 +1609,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     var _a2, _b2;
     return (_b2 = (_a2 = w.Shopify) == null ? void 0 : _a2.currency) == null ? void 0 : _b2.rate;
   };
-  var toGid = (variantId) => `gid://shopify/ProductVariant/${variantId}`;
+  var toGid2 = (variantId) => `gid://shopify/ProductVariant/${variantId}`;
   var isGiftLine = (item) => item.properties != null && item.properties[GIFT_LINE_PROPERTY] != null;
   function readConfig() {
     var _a2, _b2, _c2;
@@ -1733,7 +1801,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       var _a2, _b2, _c2;
       return {
         id: item.key,
-        variantId: toGid(item.variant_id),
+        variantId: toGid2(item.variant_id),
         quantity: item.quantity,
         appAdded: isGiftLine(item),
         finalLinePrice: (_a2 = item.final_line_price) != null ? _a2 : 0,
@@ -2160,7 +2228,25 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     (_a2 = w.subscribe) == null ? void 0 : _a2.call(w, CART_UPDATE_EVENT, trigger);
     const originalFetch = w.fetch.bind(w);
     w.fetch = async (input, init2) => {
-      const result = await originalFetch(input, init2);
+      let nextInit = init2;
+      if (!selfMutating) {
+        const url2 = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+        if (/\/cart\/add(\.js)?(\?|$)/.test(url2)) {
+          const stampVariants = allCampaignGiftVariantIds(campaignConfig);
+          const body = init2 == null ? void 0 : init2.body;
+          if (stampVariants.size > 0 && typeof body === "string") {
+            try {
+              const parsed = JSON.parse(body);
+              const stamped = stampGiftPropertiesOnAddBody(parsed, stampVariants);
+              if (stamped !== parsed) {
+                nextInit = { ...init2, body: JSON.stringify(stamped) };
+              }
+            } catch {
+            }
+          }
+        }
+      }
+      const result = await originalFetch(input, nextInit != null ? nextInit : init2);
       const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
       if (!selfMutating && /\/cart\/(add|change|update|clear)(\.js)?/.test(url)) {
         trigger();

@@ -140,6 +140,20 @@ export async function reconcileGiftCart(
       const res = await applyCartPlan({ ...plan, remove: [], adjust: [], add }, io.post);
       added.push(...res.added);
       passFailures.push(...res.failures);
+      // Shopify can merge/split the just-added gift without leaving a settled $0 app-added line
+      // (Model C / issue #6). If the HTTP add succeeded but the marker still isn't a free gift line,
+      // drop the once-per-run guard so the next pass can retry instead of converging stuck at full price.
+      if (res.added.length > 0) {
+        const verify = await io.readCart();
+        for (const variantId of res.added) {
+          const settledGift = verify.lines.some(
+            (l) => l.variantId === variantId && l.appAdded && (l.finalLinePrice ?? 0) === 0,
+          );
+          if (!settledGift) {
+            addAttempted.delete(variantId);
+          }
+        }
+      }
     }
     failures.push(...passFailures);
     io.nudge?.();

@@ -377,7 +377,7 @@ describe('reconcileGiftCart — round-trip reduction (step 3a)', () => {
     expect(outcome.converged).toBe(true);
     expect(outcome.passes).toBe(1);
     expect(validateCalls).toBe(1); // no confirming SECOND /validate
-    expect(readCalls).toBe(2); // plan read + charged-gift invariant check
+    expect(readCalls).toBe(3); // plan read + post-add verify + charged-gift invariant check
     expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 });
   });
 

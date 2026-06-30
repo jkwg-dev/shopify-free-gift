@@ -15,6 +15,7 @@ import {
   type ValidateResult,
 } from '@free-gift-engine/core';
 import { mountCartContexts, type CartSection } from './cartSections.js';
+import { allCampaignGiftVariantIds, stampGiftPropertiesOnAddBody } from './cartAddStamp.js';
 import { classifyAndGroup, type GroupingPlan, type RawCartLine } from './cartGrouping.js';
 import { applyGiftLineHiding, syncNativeInputs } from './groupingTransform.js';
 import { failedAddVariantIds } from './cartMutations.js';
@@ -884,10 +885,30 @@ function init(): void {
   // Primary: Dawn pubsub cart-update.
   w.subscribe?.(CART_UPDATE_EVENT, trigger);
 
-  // Safety net (theme-agnostic): detect cart mutations via fetch, except our own.
+  // Safety net (theme-agnostic): stamp gift-variant cart/add payloads, then detect cart mutations.
   const originalFetch = w.fetch.bind(w);
   (w as { fetch: typeof fetch }).fetch = async (input, init) => {
-    const result = await originalFetch(input, init);
+    let nextInit = init;
+    if (!selfMutating) {
+      const url =
+        typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (/\/cart\/add(\.js)?(\?|$)/.test(url)) {
+        const stampVariants = allCampaignGiftVariantIds(campaignConfig);
+        const body = init?.body;
+        if (stampVariants.size > 0 && typeof body === 'string') {
+          try {
+            const parsed = JSON.parse(body) as unknown;
+            const stamped = stampGiftPropertiesOnAddBody(parsed, stampVariants);
+            if (stamped !== parsed) {
+              nextInit = { ...init, body: JSON.stringify(stamped) };
+            }
+          } catch {
+            // Non-JSON body — leave untouched.
+          }
+        }
+      }
+    }
+    const result = await originalFetch(input, nextInit ?? init);
     const url =
       typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
     if (!selfMutating && /\/cart\/(add|change|update|clear)(\.js)?/.test(url)) {
