@@ -369,8 +369,10 @@ function injectMergedStepper(
     for (const b of [dec, inc, del]) b.disabled = d;
     wrap.classList.toggle('is-busy', d);
   };
-  // Repaint the row to an absolute quantity q: qty text + line total, hiding the whole row at q==0.
-  const repaint = (q: number): void => {
+  // Repaint the row to an absolute quantity q. `updatePrice` controls whether the line total is
+  // also rewritten — skipped on the optimistic click (avoids a flash of FGE-rendered price before
+  // the theme section re-renders) and enabled for the authoritative post-write sync.
+  const repaint = (q: number, updatePrice: boolean): void => {
     qtyEl.textContent = String(q);
     if (q === 0) {
       node.style.display = 'none';
@@ -378,36 +380,36 @@ function injectMergedStepper(
     } else {
       node.style.display = '';
       node.removeAttribute('data-fge-merged-removed');
-      setLineTotals(node, Math.round(perUnitFinal * q), Math.round(perUnitOriginal * q));
+      if (updatePrice) {
+        setLineTotals(node, Math.round(perUnitFinal * q), Math.round(perUnitOriginal * q));
+      }
     }
   };
   const onAct = (target: number): void => {
     if (inFlight) return; // §5.1: ignore compounding clicks while a write is in flight
     inFlight = true;
     setDisabled(true);
-    const prev = current; // pre-click state, for a self-contained rollback on failure (B.1)
+    const prev = current;
     current = Math.max(0, target);
-    // Optimistic widget-owned repaint (ⓥ1): qty + line total reflect T at once; siblings were already
-    // hidden when the row was grouped. A delete (T==0) hides the whole interactive row.
-    repaint(current);
+    // Optimistic: update the qty NUMBER immediately but do NOT repaint the price (no custom-line
+    // flash). The price updates authoritatively when the reconcile finishes.
+    repaint(current, false);
     Promise.resolve(onChange(writableKeys, current))
       .then((result) => {
         if (!result.applied) {
           current = prev;
-          repaint(prev);
+          repaint(prev, true);
         } else {
-          // Authoritative: sync from the post-write cart (kills stale-base drift / off-by-one).
           current = result.qty;
           if (current > 0) {
             perUnitFinal = result.finalPrice / current;
             perUnitOriginal = result.originalPrice / current;
           }
-          repaint(current);
+          repaint(current, true);
         }
       })
       .finally(() => {
         inFlight = false;
-        // Re-enable if the row still exists (a tier-change re-render replaces the node, leaving it stale).
         if (node.isConnected) setDisabled(false);
       });
   };

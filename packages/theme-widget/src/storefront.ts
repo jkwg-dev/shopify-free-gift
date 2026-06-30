@@ -745,6 +745,9 @@ async function onMergedBuyQtyChange(
 ): Promise<MergedQtyChangeResult> {
   const fail: MergedQtyChangeResult = { applied: false, qty: 0, finalPrice: 0, originalPrice: 0 };
   if (perceptionConfig === null) return fail;
+  // Engage the pending/loading state IMMEDIATELY (same tick as the click) so the user sees feedback
+  // before the debounce/reconcile-idle wait. This is synchronous — no await before it.
+  beginGiftPending();
   // Resolve the variant from the pre-write plan (cart keys may change after write).
   const preRow = lastPlan?.buys.find(
     (r) => r.writableKeys.length > 0 && writableKeys.includes(r.writableKeys[0]!),

@@ -568,7 +568,7 @@
       for (const b of [dec, inc, del]) b.disabled = d;
       wrap.classList.toggle("is-busy", d);
     };
-    const repaint = (q) => {
+    const repaint = (q, updatePrice) => {
       qtyEl.textContent = String(q);
       if (q === 0) {
         node.style.display = "none";
@@ -576,7 +576,9 @@
       } else {
         node.style.display = "";
         node.removeAttribute("data-fge-merged-removed");
-        setLineTotals(node, Math.round(perUnitFinal * q), Math.round(perUnitOriginal * q));
+        if (updatePrice) {
+          setLineTotals(node, Math.round(perUnitFinal * q), Math.round(perUnitOriginal * q));
+        }
       }
     };
     const onAct = (target) => {
@@ -585,18 +587,18 @@
       setDisabled(true);
       const prev = current;
       current = Math.max(0, target);
-      repaint(current);
+      repaint(current, false);
       Promise.resolve(onChange(writableKeys, current)).then((result) => {
         if (!result.applied) {
           current = prev;
-          repaint(prev);
+          repaint(prev, true);
         } else {
           current = result.qty;
           if (current > 0) {
             perUnitFinal = result.finalPrice / current;
             perUnitOriginal = result.originalPrice / current;
           }
-          repaint(current);
+          repaint(current, true);
         }
       }).finally(() => {
         inFlight = false;
@@ -2559,6 +2561,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     var _a2, _b2, _c2;
     const fail = { applied: false, qty: 0, finalPrice: 0, originalPrice: 0 };
     if (perceptionConfig === null) return fail;
+    beginGiftPending();
     const preRow = lastPlan == null ? void 0 : lastPlan.buys.find(
       (r) => r.writableKeys.length > 0 && writableKeys.includes(r.writableKeys[0])
     );
