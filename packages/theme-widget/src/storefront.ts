@@ -279,6 +279,11 @@ async function doVerifiedDisplayReconcile(
     for (const section of sections) section.attach();
   }
 
+  // Sync qty inputs only here — after lastCartQuantities is refreshed from cart.js. onReattach also
+  // runs on Dawn's optimistic +/- repaints and on gift-pending re-attaches; syncing there reverted
+  // the theme's in-flight quantity and caused a visible flicker.
+  syncNativeInputs(itemsEl, lastCartQuantities);
+
   if (cartMutated) {
     await refreshDawnTotals(prefetchedDrawerHtml);
   }
@@ -834,7 +839,6 @@ function init(): void {
 
       if (lastPlan !== null && lastPlan.lineCount === 0) {
         showNativeEmptyCart(host);
-        syncNativeInputs(itemsEl, lastCartQuantities);
         return;
       }
 
@@ -848,7 +852,6 @@ function init(): void {
         host.removeAttribute(GROUPED_ATTR);
         maskCartHost(host);
       }
-      syncNativeInputs(itemsEl, lastCartQuantities);
     },
   });
 

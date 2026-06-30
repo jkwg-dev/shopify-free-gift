@@ -1685,7 +1685,9 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     let prefetchedDrawerHtml;
     if (forceItemsRefresh || !domMatchesCart(itemsEl, cart)) {
       if (forceItemsRefresh && domMatchesCart(itemsEl, cart)) {
-        console.warn("[FGE-DRAWERFIX] refreshing items body after FGE cart write (line keys may be stale)");
+        console.warn(
+          "[FGE-DRAWERFIX] refreshing items body after FGE cart write (line keys may be stale)"
+        );
       } else if (!domMatchesCart(itemsEl, cart)) {
         console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch");
       }
@@ -1693,6 +1695,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       prefetchedDrawerHtml = bodyRefresh.drawerHtml;
       for (const section of sections) section.attach();
     }
+    syncNativeInputs(itemsEl, lastCartQuantities);
     if (cartMutated) {
       await refreshDawnTotals(prefetchedDrawerHtml);
     }
@@ -1701,7 +1704,11 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     if (displayReconcileInFlight !== null) {
       return displayReconcileInFlight;
     }
-    displayReconcileInFlight = doVerifiedDisplayReconcile(cartMutated, existingCart, forceItemsRefresh).catch(() => void 0).finally(() => {
+    displayReconcileInFlight = doVerifiedDisplayReconcile(
+      cartMutated,
+      existingCart,
+      forceItemsRefresh
+    ).catch(() => void 0).finally(() => {
       displayReconcileInFlight = null;
     });
     return displayReconcileInFlight;
@@ -2120,7 +2127,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         const host = cartHost(itemsEl);
         if (lastPlan !== null && lastPlan.lineCount === 0) {
           showNativeEmptyCart(host);
-          syncNativeInputs(itemsEl, lastCartQuantities);
           return;
         }
         if (host !== null) {
@@ -2132,7 +2138,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           host.removeAttribute(GROUPED_ATTR);
           maskCartHost(host);
         }
-        syncNativeInputs(itemsEl, lastCartQuantities);
       }
     });
     applyInitialMask();
