@@ -1377,20 +1377,20 @@ body.fge-checkout-pending .cart__checkout-button::after{
 .fge-notice.is-visible{ opacity:1; }
 
 /* --- FOUC mask: hides the line-items region until the grouping pass applies. Two layers:
-   1. body.fge-active hides ALL cart-drawer-items content by default (CSS-first, no attribute
-      race). Content becomes visible only when data-fge-grouped is set (grouping succeeded).
+   1. body.fge-active hides cart line-items until data-fge-grouped (FGE transform applied) or
+      data-fge-empty-native (empty cart \u2014 show the theme's native empty state without grouping).
       This prevents gift lines from flashing during theme section re-renders \u2014 new DOM elements
       start hidden, no MO callback timing dependency.
    2. data-fge-pending adds a spinner for the initial load. It is NOT required for hiding.
    The 2s fail-safe (ensureUnmasked) sets data-fge-grouped to lift both layers.
    Header, footer, and checkout stay fully usable (the mask is on the items host only).
    min-height prevents the drawer collapsing when rows are hidden (no layout jump on lift). --- */
-body.fge-active cart-drawer-items:not([data-fge-grouped]),
-body.fge-active cart-items:not([data-fge-grouped]){
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]),
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]){
   position:relative; pointer-events:none; min-height:120px;
 }
-body.fge-active cart-drawer-items:not([data-fge-grouped]) > *,
-body.fge-active cart-items:not([data-fge-grouped]) > *{
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]) > *,
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]) > *{
   visibility:hidden;
 }
 cart-drawer-items[data-fge-pending]:not([data-fge-grouped])::after,
@@ -1874,24 +1874,58 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       section.attach();
     }
   }
-  function remaskUngrouped() {
-    let any = false;
-    document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => {
-      if (!el.hasAttribute(GROUPED_ATTR)) {
-        el.setAttribute(MASK_ATTR, "");
-        any = true;
-      }
-    });
-    if (any && maskTimer === void 0) {
+  function cartHost(itemsEl) {
+    var _a2;
+    return (_a2 = itemsEl == null ? void 0 : itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl;
+  }
+  var MASK_ATTR = "data-fge-pending";
+  var GROUPED_ATTR = "data-fge-grouped";
+  var EMPTY_NATIVE_ATTR = "data-fge-empty-native";
+  var MASK_TIMEOUT_MS = 1e3;
+  var maskTimer;
+  function cartHasFgeLines() {
+    return lastPlan === null || lastPlan.lineCount > 0;
+  }
+  function showNativeEmptyCart(host) {
+    if (host === null) return;
+    host.removeAttribute(GROUPED_ATTR);
+    host.removeAttribute(MASK_ATTR);
+    host.setAttribute(EMPTY_NATIVE_ATTR, "");
+  }
+  function maskCartHost(host) {
+    if (host === null) return;
+    host.removeAttribute(EMPTY_NATIVE_ATTR);
+    host.removeAttribute(GROUPED_ATTR);
+    host.setAttribute(MASK_ATTR, "");
+    if (maskTimer === void 0) {
       maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
     }
+  }
+  function maskAllCartHosts() {
+    document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => {
+      maskCartHost(el);
+    });
+  }
+  function applyFgeCartDisplay(itemsEl) {
+    if (lastPlan === null) return;
+    if (lastPlan.lineCount === 0) {
+      showNativeEmptyCart(cartHost(itemsEl));
+      return;
+    }
+    if (applyGiftLineHiding(itemsEl, lastPlan)) return;
+    maskCartHost(cartHost(itemsEl));
+    void verifiedDisplayReconcile();
   }
   function observeDrawerOpen() {
     const drawer = document.querySelector(DRAWER_PANEL_SELECTOR);
     if (drawer === null) return;
     new MutationObserver(() => {
       if (drawer.classList.contains("active")) {
-        remaskUngrouped();
+        if (cartHasFgeLines()) {
+          maskAllCartHosts();
+        } else {
+          document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => showNativeEmptyCart(el));
+        }
         void verifiedDisplayReconcile();
       }
     }).observe(drawer, { attributes: true, attributeFilter: ["class"] });
@@ -1899,10 +1933,13 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   function schedule(config) {
     if (running) {
       pending = true;
+      if (cartHasFgeLines()) {
+        maskAllCartHosts();
+      }
       return;
     }
-    if (lastPlan === null) {
-      remaskUngrouped();
+    if (cartHasFgeLines()) {
+      maskAllCartHosts();
     }
     running = true;
     void reconcileOnce(config).catch(() => void 0).finally(() => {
@@ -2004,10 +2041,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     } catch {
     }
   }
-  var MASK_ATTR = "data-fge-pending";
-  var GROUPED_ATTR = "data-fge-grouped";
-  var MASK_TIMEOUT_MS = 1e3;
-  var maskTimer;
   function applyInitialMask() {
     document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => {
       el.setAttribute(MASK_ATTR, "");
@@ -2023,34 +2056,22 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
       return;
     }
+    if (lastPlan !== null && lastPlan.lineCount === 0) {
+      document.querySelectorAll(`[${MASK_ATTR}]`).forEach((el) => {
+        el.removeAttribute(MASK_ATTR);
+      });
+      document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => showNativeEmptyCart(el));
+      return;
+    }
     document.querySelectorAll(`[${MASK_ATTR}]`).forEach((el) => {
       el.setAttribute(GROUPED_ATTR, "");
       el.removeAttribute(MASK_ATTR);
     });
     document.querySelectorAll(
-      "cart-drawer-items:not([data-fge-grouped]), cart-items:not([data-fge-grouped])"
+      "cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]), cart-items:not([data-fge-grouped]):not([data-fge-empty-native])"
     ).forEach((el) => {
       el.setAttribute(GROUPED_ATTR, "");
     });
-  }
-  function remask(itemsEl) {
-    var _a2;
-    const host = (_a2 = itemsEl == null ? void 0 : itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl;
-    if (host !== null) {
-      host.setAttribute(MASK_ATTR, "");
-      host.removeAttribute(GROUPED_ATTR);
-      if (maskTimer === void 0) {
-        maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
-      }
-    }
-  }
-  function liftMask(itemsEl) {
-    var _a2;
-    const host = (_a2 = itemsEl == null ? void 0 : itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl;
-    if (host !== null && host.hasAttribute(MASK_ATTR)) {
-      host.setAttribute(GROUPED_ATTR, "");
-      host.removeAttribute(MASK_ATTR);
-    }
   }
   async function loadCampaignConfig(config) {
     const rate = presentmentRate();
@@ -2080,18 +2101,23 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     sections = mountCartContexts({
       drawerSelector: config.drawerSelector,
       onReattach: (_context, itemsEl) => {
-        if (lastPlan === null) {
-          remask(itemsEl);
-        }
+        const host = cartHost(itemsEl);
         const workPending = (running || pending || timer !== void 0) && !freshPlanAttach;
-        if (lastPlan === null || workPending) {
-          if (!workPending) liftMask(itemsEl);
+        if (lastPlan !== null && lastPlan.lineCount === 0) {
+          showNativeEmptyCart(host);
           syncNativeInputs(itemsEl, lastCartQuantities);
           return;
         }
-        if (!applyGiftLineHiding(itemsEl, lastPlan)) {
-          liftMask(itemsEl);
+        if (host !== null) {
+          host.removeAttribute(EMPTY_NATIVE_ATTR);
+          host.removeAttribute(GROUPED_ATTR);
         }
+        if (lastPlan !== null && !workPending) {
+          applyFgeCartDisplay(itemsEl);
+          syncNativeInputs(itemsEl, lastCartQuantities);
+          return;
+        }
+        maskCartHost(host);
         syncNativeInputs(itemsEl, lastCartQuantities);
       }
     });
@@ -2100,6 +2126,9 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     const trigger = (data) => {
       if (data !== null && typeof data === "object" && data.source === SOURCE) {
         return;
+      }
+      if (cartHasFgeLines()) {
+        maskAllCartHosts();
       }
       if (timer !== void 0) {
         clearTimeout(timer);

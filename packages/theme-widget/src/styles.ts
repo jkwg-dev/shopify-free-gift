@@ -214,20 +214,20 @@ body.fge-checkout-pending .cart__checkout-button::after{
 .fge-notice.is-visible{ opacity:1; }
 
 /* --- FOUC mask: hides the line-items region until the grouping pass applies. Two layers:
-   1. body.fge-active hides ALL cart-drawer-items content by default (CSS-first, no attribute
-      race). Content becomes visible only when data-fge-grouped is set (grouping succeeded).
+   1. body.fge-active hides cart line-items until data-fge-grouped (FGE transform applied) or
+      data-fge-empty-native (empty cart — show the theme's native empty state without grouping).
       This prevents gift lines from flashing during theme section re-renders — new DOM elements
       start hidden, no MO callback timing dependency.
    2. data-fge-pending adds a spinner for the initial load. It is NOT required for hiding.
    The 2s fail-safe (ensureUnmasked) sets data-fge-grouped to lift both layers.
    Header, footer, and checkout stay fully usable (the mask is on the items host only).
    min-height prevents the drawer collapsing when rows are hidden (no layout jump on lift). --- */
-body.fge-active cart-drawer-items:not([data-fge-grouped]),
-body.fge-active cart-items:not([data-fge-grouped]){
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]),
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]){
   position:relative; pointer-events:none; min-height:120px;
 }
-body.fge-active cart-drawer-items:not([data-fge-grouped]) > *,
-body.fge-active cart-items:not([data-fge-grouped]) > *{
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]) > *,
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]) > *{
   visibility:hidden;
 }
 cart-drawer-items[data-fge-pending]:not([data-fge-grouped])::after,

@@ -504,19 +504,56 @@ function renderPerception(config: WidgetConfig): void {
   }
 }
 
-// Re-mask elements that are NOT currently grouped (timeout-lifted or never grouped). Restarts the 2s
-// timeout. Elements that ARE grouped (data-fge-grouped present) are NOT re-masked (no flicker).
-function remaskUngrouped(): void {
-  let any = false;
-  document.querySelectorAll<HTMLElement>('cart-drawer-items, cart-items').forEach((el) => {
-    if (!el.hasAttribute(GROUPED_ATTR)) {
-      el.setAttribute(MASK_ATTR, '');
-      any = true;
-    }
-  });
-  if (any && maskTimer === undefined) {
+function cartHost(itemsEl: HTMLElement | null): HTMLElement | null {
+  return itemsEl?.closest<HTMLElement>('cart-drawer-items, cart-items') ?? itemsEl;
+}
+
+// Hide raw theme cart content until the FGE transform runs. Always strips data-fge-grouped first so
+// a stale grouped flag cannot skip the CSS mask after a theme section re-render.
+const MASK_ATTR = 'data-fge-pending';
+const GROUPED_ATTR = 'data-fge-grouped';
+const EMPTY_NATIVE_ATTR = 'data-fge-empty-native';
+const MASK_TIMEOUT_MS = 1000;
+let maskTimer: ReturnType<typeof setTimeout> | undefined;
+
+function cartHasFgeLines(): boolean {
+  return lastPlan === null || lastPlan.lineCount > 0;
+}
+
+// Empty cart: lift the fge-active hide without grouping — show the theme's native empty state.
+function showNativeEmptyCart(host: HTMLElement | null): void {
+  if (host === null) return;
+  host.removeAttribute(GROUPED_ATTR);
+  host.removeAttribute(MASK_ATTR);
+  host.setAttribute(EMPTY_NATIVE_ATTR, '');
+}
+
+function maskCartHost(host: HTMLElement | null): void {
+  if (host === null) return;
+  host.removeAttribute(EMPTY_NATIVE_ATTR);
+  host.removeAttribute(GROUPED_ATTR);
+  host.setAttribute(MASK_ATTR, '');
+  if (maskTimer === undefined) {
     maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
   }
+}
+
+function maskAllCartHosts(): void {
+  document.querySelectorAll<HTMLElement>('cart-drawer-items, cart-items').forEach((el) => {
+    maskCartHost(el);
+  });
+}
+
+// Apply the current grouping plan synchronously. On line-count mismatch, keep masked and re-fetch.
+function applyFgeCartDisplay(itemsEl: HTMLElement | null): void {
+  if (lastPlan === null) return;
+  if (lastPlan.lineCount === 0) {
+    showNativeEmptyCart(cartHost(itemsEl));
+    return;
+  }
+  if (applyGiftLineHiding(itemsEl, lastPlan)) return;
+  maskCartHost(cartHost(itemsEl));
+  void verifiedDisplayReconcile();
 }
 
 // Observe the cart drawer for OPEN: Dawn adds 'active' class on open (synchronous via setTimeout(0)).
@@ -527,7 +564,13 @@ function observeDrawerOpen(): void {
   if (drawer === null) return;
   new MutationObserver(() => {
     if (drawer.classList.contains('active')) {
-      remaskUngrouped();
+      if (cartHasFgeLines()) {
+        maskAllCartHosts();
+      } else {
+        document
+          .querySelectorAll<HTMLElement>('cart-drawer-items, cart-items')
+          .forEach((el) => showNativeEmptyCart(el));
+      }
       // On drawer open, run the verified display reconcile: compare DOM to cart.js, force a body
       // re-fetch if divergent, then apply grouping + stamp. Never shows a frozen prior render.
       void verifiedDisplayReconcile();
@@ -538,12 +581,13 @@ function observeDrawerOpen(): void {
 function schedule(config: WidgetConfig): void {
   if (running) {
     pending = true;
+    if (cartHasFgeLines()) {
+      maskAllCartHosts();
+    }
     return;
   }
-  // Only mask on first load (no plan yet). After the first grouping, re-masking on every
-  // reconcile caused visible flash-hide-flash loops.
-  if (lastPlan === null) {
-    remaskUngrouped();
+  if (cartHasFgeLines()) {
+    maskAllCartHosts();
   }
   running = true;
   void reconcileOnce(config)
@@ -676,12 +720,8 @@ async function refreshDawnTotals(): Promise<void> {
 }
 
 // FOUC mask: data-fge-pending signals "FGE controls this region". data-fge-grouped lifts it.
-// onReattach always lifts (grouped or ungrouped) so the mask is never permanent. remask() starts a
-// safety timer as a backstop; remaskUngrouped() only starts a timer when none is running.
-const MASK_ATTR = 'data-fge-pending';
-const GROUPED_ATTR = 'data-fge-grouped';
-const MASK_TIMEOUT_MS = 1000;
-let maskTimer: ReturnType<typeof setTimeout> | undefined;
+// maskCartHost() always strips grouped first so a stale flag cannot skip the CSS hide after a theme
+// re-render. ensureUnmasked() is the safety backstop; maskCartHost() only starts a timer when none runs.
 
 function applyInitialMask(): void {
   document.querySelectorAll<HTMLElement>('cart-drawer-items, cart-items').forEach((el) => {
@@ -701,38 +741,27 @@ function ensureUnmasked(): void {
     maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
     return;
   }
+  if (lastPlan !== null && lastPlan.lineCount === 0) {
+    document.querySelectorAll<HTMLElement>(`[${MASK_ATTR}]`).forEach((el) => {
+      el.removeAttribute(MASK_ATTR);
+    });
+    document
+      .querySelectorAll<HTMLElement>('cart-drawer-items, cart-items')
+      .forEach((el) => showNativeEmptyCart(el));
+    return;
+  }
   document.querySelectorAll<HTMLElement>(`[${MASK_ATTR}]`).forEach((el) => {
     el.setAttribute(GROUPED_ATTR, '');
     el.removeAttribute(MASK_ATTR);
   });
-  // Also lift the body.fge-active mask on any cart-drawer-items without data-fge-grouped (the
-  // reconcile finished but grouping didn't run — e.g. empty cart or no campaign).
+  // Fail-safe: lift the body.fge-active hide when grouping did not run (e.g. no campaign).
   document
     .querySelectorAll<HTMLElement>(
-      'cart-drawer-items:not([data-fge-grouped]), cart-items:not([data-fge-grouped])',
+      'cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]), cart-items:not([data-fge-grouped]):not([data-fge-empty-native])',
     )
     .forEach((el) => {
       el.setAttribute(GROUPED_ATTR, '');
     });
-}
-
-function remask(itemsEl: HTMLElement | null): void {
-  const host = itemsEl?.closest<HTMLElement>('cart-drawer-items, cart-items') ?? itemsEl;
-  if (host !== null) {
-    host.setAttribute(MASK_ATTR, '');
-    host.removeAttribute(GROUPED_ATTR);
-    if (maskTimer === undefined) {
-      maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
-    }
-  }
-}
-
-function liftMask(itemsEl: HTMLElement | null): void {
-  const host = itemsEl?.closest<HTMLElement>('cart-drawer-items, cart-items') ?? itemsEl;
-  if (host !== null && host.hasAttribute(MASK_ATTR)) {
-    host.setAttribute(GROUPED_ATTR, '');
-    host.removeAttribute(MASK_ATTR);
-  }
 }
 
 // Fetch /config in parallel (Part 1) — sets the chooser state and re-schedules so the next /validate
@@ -772,24 +801,27 @@ function init(): void {
   sections = mountCartContexts({
     drawerSelector: config.drawerSelector,
     onReattach: (_context, itemsEl) => {
-      // Only mask on FIRST load (no plan computed yet). Once grouping has been applied at least
-      // once, never re-mask — the reset-then-apply transform handles re-renders cleanly. This
-      // prevents the "flash visible then re-hide" loop that made loading feel infinite.
-      if (lastPlan === null) {
-        remask(itemsEl);
-      }
-      // Don't apply a stale plan while a reconcile is running, queued, or about to start (debounce
-      // timer pending) — UNLESS freshPlanAttach is set, meaning verifiedDisplayReconcile just
-      // computed a fresh plan from the post-mutation cart and is calling attach() itself.
+      const host = cartHost(itemsEl);
       const workPending = (running || pending || timer !== undefined) && !freshPlanAttach;
-      if (lastPlan === null || workPending) {
-        if (!workPending) liftMask(itemsEl);
+
+      if (lastPlan !== null && lastPlan.lineCount === 0) {
+        showNativeEmptyCart(host);
         syncNativeInputs(itemsEl, lastCartQuantities);
         return;
       }
-      if (!applyGiftLineHiding(itemsEl, lastPlan)) {
-        liftMask(itemsEl);
+
+      if (host !== null) {
+        host.removeAttribute(EMPTY_NATIVE_ATTR);
+        host.removeAttribute(GROUPED_ATTR);
       }
+
+      if (lastPlan !== null && !workPending) {
+        applyFgeCartDisplay(itemsEl);
+        syncNativeInputs(itemsEl, lastCartQuantities);
+        return;
+      }
+
+      maskCartHost(host);
       syncNativeInputs(itemsEl, lastCartQuantities);
     },
   });
@@ -806,6 +838,10 @@ function init(): void {
       (data as { source?: string }).source === SOURCE
     ) {
       return;
+    }
+    // Mask immediately (before debounce) so the spinner is visible during theme re-render + reconcile.
+    if (cartHasFgeLines()) {
+      maskAllCartHosts();
     }
     if (timer !== undefined) {
       clearTimeout(timer);
