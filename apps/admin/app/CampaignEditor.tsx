@@ -24,7 +24,7 @@ import {
   TextField,
 } from '@shopify/polaris';
 import { useEffect, useState } from 'react';
-import { authedFetch, pickVariantIds, resolveVariantLabels } from './appBridge.js';
+import { authedFetch, pickCollection, pickVariantIds, resolveVariantLabels } from './appBridge.js';
 import type {
   CampaignEditorInput,
   CampaignEditorView,
@@ -92,6 +92,8 @@ export function CampaignEditor({
   const [startsLocal, setStartsLocal] = useState(defaultStart);
   const [endsLocal, setEndsLocal] = useState(defaultEnd);
   const [declineEnabled, setDeclineEnabled] = useState(true);
+  const [collectionId, setCollectionId] = useState<string | null>(null);
+  const [collectionTitle, setCollectionTitle] = useState<string | null>(null);
   const [tiers, setTiers] = useState<readonly TierForm[]>([blankTier(baseCurrency)]);
   // Whether the campaign was LIVE when opened — saving then SUPERSEDES (confirm first).
   const [wasActive, setWasActive] = useState(false);
@@ -115,6 +117,8 @@ export function CampaignEditor({
         setStartsLocal(isoToLocal(view.startsAt));
         setEndsLocal(isoToLocal(view.endsAt));
         setDeclineEnabled(view.declineEnabled);
+        setCollectionId(view.qualifyingCollectionId ?? null);
+        setCollectionTitle(view.qualifyingCollectionTitle ?? null);
         setWasActive(view.active);
         setTiers(
           view.tiers.map((t) => ({
@@ -188,6 +192,7 @@ export function CampaignEditor({
       endsAt: localToIso(endsLocal),
       declineEnabled,
       suppression: 'highest-only',
+      qualifyingCollectionId: collectionId,
       // Single base-currency threshold per tier; no per-market rows (FX track is separate).
       tiers: tiers.map((t) => ({
         position: t.position,
@@ -286,6 +291,66 @@ export function CampaignEditor({
                 (fixed — cumulative needs Shopify Plus)
               </Text>
             </InlineStack>
+          </BlockStack>
+        </Card>
+
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">
+              Qualifying collection
+            </Text>
+            <Text as="p" tone="subdued">
+              Only products in this collection count toward the gift tier threshold. Use a smart
+              collection with a &quot;Compare at price is not set&quot; rule to restrict to
+              full-price items.
+            </Text>
+            {collectionId !== null ? (
+              <InlineStack gap="200" blockAlign="center">
+                <Badge tone="success">{collectionTitle ?? collectionId}</Badge>
+                <Button
+                  variant="plain"
+                  onClick={async () => {
+                    try {
+                      const picked = await pickCollection();
+                      if (picked !== null) {
+                        setCollectionId(picked.id);
+                        setCollectionTitle(picked.title);
+                      }
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : String(err));
+                    }
+                  }}
+                >
+                  Change
+                </Button>
+                <Button
+                  variant="plain"
+                  tone="critical"
+                  onClick={() => {
+                    setCollectionId(null);
+                    setCollectionTitle(null);
+                  }}
+                >
+                  Remove
+                </Button>
+              </InlineStack>
+            ) : (
+              <Button
+                onClick={async () => {
+                  try {
+                    const picked = await pickCollection();
+                    if (picked !== null) {
+                      setCollectionId(picked.id);
+                      setCollectionTitle(picked.title);
+                    }
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err));
+                  }
+                }}
+              >
+                Select collection
+              </Button>
+            )}
           </BlockStack>
         </Card>
 

@@ -52,4 +52,5 @@ export type CampaignEditorInput = {
 export type CampaignEditorView = CampaignEditorInput & {
   readonly id: string;
   readonly active: boolean;
+  readonly qualifyingCollectionTitle?: string | null;
 };

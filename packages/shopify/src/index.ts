@@ -68,6 +68,7 @@ export {
   collectionProductCount,
   giftProductsStillInCollection,
   fetchCollectionMembership,
+  fetchCollectionTitle,
   type QualifyingCollection,
   type QualifyingRule,
   type EnsureQualifyingOptions,

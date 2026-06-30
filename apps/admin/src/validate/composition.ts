@@ -16,6 +16,7 @@ import {
   ensureQualifyingCollection,
   EXCLUDE_GIFTS_RULE,
   fetchCollectionMembership,
+  fetchCollectionTitle,
   exchangeAccessToken,
   fetchGiftChannelAvailability,
   fetchGiftVariants,
@@ -374,7 +375,16 @@ export async function getCampaignEditorView(
   if (campaign === null || campaign.shopId !== shop.id) {
     return null;
   }
-  return campaignToEditorView(campaign, await giftVariantTitles(shopDomain, campaign));
+  const [titles, collectionTitle] = await Promise.all([
+    giftVariantTitles(shopDomain, campaign),
+    campaign.qualifyingCollectionId !== null
+      ? (async () => {
+          const client = await adminClientForShop(shopDomain);
+          return fetchCollectionTitle(client, campaign.qualifyingCollectionId!);
+        })()
+      : Promise.resolve(null),
+  ]);
+  return campaignToEditorView(campaign, titles, collectionTitle);
 }
 
 // Edit a campaign (Phase 3c Q4 supersede). Ownership-checked (null -> 404). A DRAFT is a plain

@@ -51,6 +51,21 @@ export async function pickVariantIds(): Promise<string[]> {
   return selected === undefined ? [] : flattenPickedVariantIds(selected);
 }
 
+// Open the COLLECTION resource picker; returns { id, title } for the selected collection, or null
+// if the merchant cancels. Single-select (one qualifying collection per campaign).
+export async function pickCollection(): Promise<{ id: string; title: string } | null> {
+  const selected = await bridge().resourcePicker({
+    type: 'collection',
+    multiple: false,
+    action: 'select',
+  });
+  if (selected === undefined || selected.length === 0) {
+    return null;
+  }
+  const col = selected[0] as { id: string; title?: string };
+  return { id: col.id, title: col.title ?? col.id };
+}
+
 // fetch() with the App Bridge session token attached as a Bearer header (the embedded admin's JWT
 // boundary). Does NOT throw — the caller inspects the Response (used by flows that must read a
 // non-2xx body, e.g. the 409 confirm-and-replace signal).

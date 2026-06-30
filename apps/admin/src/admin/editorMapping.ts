@@ -129,6 +129,7 @@ type EditorMarketThresholdView = CampaignEditorView['tiers'][number]['marketThre
 export function campaignToEditorView(
   campaign: CampaignDTO,
   titles: ReadonlyMap<string, string>,
+  collectionTitle?: string | null,
 ): CampaignEditorView {
   return {
     id: campaign.id,
@@ -139,6 +140,7 @@ export function campaignToEditorView(
     declineEnabled: campaign.declineEnabled,
     suppression: campaign.suppression,
     qualifyingCollectionId: campaign.qualifyingCollectionId,
+    qualifyingCollectionTitle: collectionTitle ?? null,
     tiers: [...campaign.tiers]
       .sort((a, b) => a.position - b.position)
       .map((tier) => ({

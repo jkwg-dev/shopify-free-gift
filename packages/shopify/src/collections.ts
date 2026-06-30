@@ -221,6 +221,20 @@ export async function waitForGiftProductsIncluded(
   return false;
 }
 
+const COLLECTION_TITLE = `query CollectionTitle($id: ID!) {
+  collection(id: $id) { id title }
+}`;
+
+type TitleResponse = { readonly collection: { readonly title: string } | null };
+
+export async function fetchCollectionTitle(
+  client: AdminGraphqlClient,
+  collectionId: string,
+): Promise<string | null> {
+  const data = await client.request<TitleResponse>(COLLECTION_TITLE, { id: collectionId });
+  return data.collection?.title ?? null;
+}
+
 const COLLECTION_PRODUCT_COUNT = `query QualifyingCollectionProductCount($id: ID!) {
   collection(id: $id) { id productsCount { count } }
 }`;
