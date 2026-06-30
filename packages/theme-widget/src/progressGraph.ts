@@ -252,7 +252,8 @@ function ensureSkeleton(mount: HTMLElement, nodes: readonly StepNode[]): Stepper
   subnote.textContent = 'You receive the gift for your highest unlocked tier — not one per step.';
   const fullPriceNote = document.createElement('p');
   fullPriceNote.className = 'fge-fullprice-note';
-  fullPriceNote.textContent = 'Only full-price items count toward your gift tier.';
+  fullPriceNote.textContent =
+    'Only full-price & non-promotional items count toward your gift tier.';
   mount.append(headline, stepper, fullPriceNote, subnote);
   mount.dataset['fgeTiers'] = key;
   return { headline, fill, steps };
