@@ -1566,7 +1566,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   var unavailableVariantIds = /* @__PURE__ */ new Set();
   var sections = [];
   var lastPlan = null;
-  var freshPlanAttach = false;
+  var displayReconcileInFlight = null;
   function toGroupingLines(cart) {
     return cart.items.map((item, index) => {
       var _a2, _b2, _c2;
@@ -1613,6 +1613,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   async function refreshItemsBody(cart) {
     const drawerSectionId = detectDrawerSectionId();
     const maxAttempts = 2;
+    let lastDrawerHtml;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
@@ -1623,6 +1624,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         const data = await res.json();
         const html = data[drawerSectionId];
         if (html === void 0) continue;
+        lastDrawerHtml = html;
         const parsed = new DOMParser().parseFromString(html, "text/html");
         const ITEMS_SELECTORS2 = ["cart-drawer-items", "[data-cart-items]", ".cart-drawer__items"];
         for (const sel of ITEMS_SELECTORS2) {
@@ -1631,7 +1633,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           if (newItems !== null && liveItems !== null) {
             liveItems.innerHTML = newItems.innerHTML;
             if (domMatchesCart(liveItems, cart)) {
-              return true;
+              return { ok: true, drawerHtml: html };
             }
             break;
           }
@@ -1661,42 +1663,39 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         cartKeys: cart.items.map((i) => i.variant_id)
       });
     }
-    return false;
+    return lastDrawerHtml !== void 0 ? { ok: false, drawerHtml: lastDrawerHtml } : { ok: false };
   }
-  async function verifiedDisplayReconcile(cartMutated = false) {
+  async function doVerifiedDisplayReconcile(cartMutated, existingCart) {
     var _a2;
-    try {
-      const cart = await getCart();
-      lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
-      lastCartQuantities = cart.items.map((item) => item.quantity);
-      freshPlanAttach = true;
-      for (const section of sections) section.attach();
-      freshPlanAttach = false;
-      const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
-      const buyOnlyCount = ((_a2 = cart.item_count) != null ? _a2 : 0) - giftQty;
-      if (cart.total_price !== void 0 && cart.item_count !== void 0) {
-        stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
-      }
-      if (cartMutated) {
-        void refreshDawnTotals();
-      }
-      const itemsEl = document.querySelector("cart-drawer-items, cart-items");
-      if (!domMatchesCart(itemsEl, cart)) {
-        console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch");
-        await refreshItemsBody(cart);
-        freshPlanAttach = true;
-        for (const section of sections) section.attach();
-        freshPlanAttach = false;
-      }
-      if (cartMutated) {
-        setTimeout(() => {
-          freshPlanAttach = true;
-          for (const section of sections) section.attach();
-          freshPlanAttach = false;
-        }, 500);
-      }
-    } catch {
+    const cart = existingCart != null ? existingCart : await getCart();
+    lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+    lastCartQuantities = cart.items.map((item) => item.quantity);
+    for (const section of sections) section.attach();
+    const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
+    const buyOnlyCount = ((_a2 = cart.item_count) != null ? _a2 : 0) - giftQty;
+    if (cart.total_price !== void 0 && cart.item_count !== void 0) {
+      stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
     }
+    const itemsEl = document.querySelector("cart-drawer-items, cart-items");
+    let prefetchedDrawerHtml;
+    if (!domMatchesCart(itemsEl, cart)) {
+      console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch");
+      const bodyRefresh = await refreshItemsBody(cart);
+      prefetchedDrawerHtml = bodyRefresh.drawerHtml;
+      for (const section of sections) section.attach();
+    }
+    if (cartMutated) {
+      await refreshDawnTotals(prefetchedDrawerHtml);
+    }
+  }
+  function verifiedDisplayReconcile(cartMutated = false, existingCart) {
+    if (displayReconcileInFlight !== null) {
+      return displayReconcileInFlight;
+    }
+    displayReconcileInFlight = doVerifiedDisplayReconcile(cartMutated, existingCart).catch(() => void 0).finally(() => {
+      displayReconcileInFlight = null;
+    });
+    return displayReconcileInFlight;
   }
   var giftPendingActive = false;
   var giftPendingWorkDone = false;
@@ -1777,10 +1776,10 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       for (const variantId of failedAddVariantIds(outcome.failures)) {
         unavailableVariantIds.add(variantId);
       }
-      markGiftWorkDone();
       renderPerception(config);
       const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
-      await verifiedDisplayReconcile(cartMutated);
+      const cart = await getCart();
+      await verifiedDisplayReconcile(cartMutated, cart);
     } finally {
       markGiftWorkDone();
       selfMutating = false;
@@ -1914,7 +1913,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
     if (applyGiftLineHiding(itemsEl, lastPlan)) return;
     maskCartHost(cartHost(itemsEl));
-    void verifiedDisplayReconcile();
   }
   function observeDrawerOpen() {
     const drawer = document.querySelector(DRAWER_PANEL_SELECTOR);
@@ -1998,47 +1996,56 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
     return "cart-icon-bubble";
   }
-  async function refreshDawnTotals() {
-    var _a2;
+  async function refreshDawnTotals(prefetchedDrawerHtml) {
     try {
       const drawerSectionId = detectDrawerSectionId();
       const badgeSectionId = detectBadgeSectionId();
-      const sectionIds = [drawerSectionId, badgeSectionId];
       const pageFooterEl = document.getElementById("main-cart-footer");
       const pageFooterSection = pageFooterEl == null ? void 0 : pageFooterEl.dataset["id"];
+      const sectionIds = [badgeSectionId];
       if (pageFooterSection !== void 0 && pageFooterSection !== "") {
         sectionIds.push(pageFooterSection);
+      }
+      if (prefetchedDrawerHtml === void 0) {
+        sectionIds.unshift(drawerSectionId);
       }
       const res = await fetch(`${root}?sections=${sectionIds.join(",")}`, {
         headers: { Accept: "application/json" }
       });
       if (!res.ok) return;
       const data = await res.json();
-      const drawerHtml = data[drawerSectionId];
-      const badgeHtml = data[badgeSectionId];
-      if (badgeHtml !== void 0) {
-        const liveBadge = document.getElementById("cart-icon-bubble");
-        if (liveBadge !== null) {
-          const parsed = new DOMParser().parseFromString(badgeHtml, "text/html");
-          const newBadge = parsed.querySelector(".shopify-section");
-          if (newBadge !== null) {
-            ((_a2 = liveBadge.querySelector(".shopify-section")) != null ? _a2 : liveBadge).innerHTML = newBadge.innerHTML;
-          }
-        }
-      }
-      if (pageFooterSection !== void 0 && pageFooterEl !== null) {
-        const footerHtml = data[pageFooterSection];
-        if (footerHtml !== void 0) {
-          const parsed = new DOMParser().parseFromString(footerHtml, "text/html");
-          const newContent = parsed.querySelector(".js-contents");
-          const liveContent = pageFooterEl.querySelector(".js-contents");
-          if (newContent !== null && liveContent !== null) {
-            liveContent.innerHTML = newContent.innerHTML;
-          }
-        }
-      }
+      applyBadgeAndPageFooter(data, badgeSectionId, pageFooterEl, pageFooterSection);
+      const drawerHtml = prefetchedDrawerHtml != null ? prefetchedDrawerHtml : data[drawerSectionId];
       if (drawerHtml !== void 0) replaceDrawerFooter(drawerHtml);
     } catch {
+    }
+  }
+  function applyPageFooter(data, pageFooterEl, pageFooterSection) {
+    if (pageFooterEl === null) return;
+    const footerHtml = data[pageFooterSection];
+    if (footerHtml === void 0) return;
+    const parsed = new DOMParser().parseFromString(footerHtml, "text/html");
+    const newContent = parsed.querySelector(".js-contents");
+    const liveContent = pageFooterEl.querySelector(".js-contents");
+    if (newContent !== null && liveContent !== null) {
+      liveContent.innerHTML = newContent.innerHTML;
+    }
+  }
+  function applyBadgeAndPageFooter(data, badgeSectionId, pageFooterEl, pageFooterSection) {
+    var _a2;
+    const badgeHtml = data[badgeSectionId];
+    if (badgeHtml !== void 0) {
+      const liveBadge = document.getElementById("cart-icon-bubble");
+      if (liveBadge !== null) {
+        const parsed = new DOMParser().parseFromString(badgeHtml, "text/html");
+        const newBadge = parsed.querySelector(".shopify-section");
+        if (newBadge !== null) {
+          ((_a2 = liveBadge.querySelector(".shopify-section")) != null ? _a2 : liveBadge).innerHTML = newBadge.innerHTML;
+        }
+      }
+    }
+    if (pageFooterSection !== void 0 && pageFooterSection !== "") {
+      applyPageFooter(data, pageFooterEl, pageFooterSection);
     }
   }
   function applyInitialMask() {
@@ -2102,7 +2109,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       drawerSelector: config.drawerSelector,
       onReattach: (_context, itemsEl) => {
         const host = cartHost(itemsEl);
-        const workPending = (running || pending || timer !== void 0) && !freshPlanAttach;
         if (lastPlan !== null && lastPlan.lineCount === 0) {
           showNativeEmptyCart(host);
           syncNativeInputs(itemsEl, lastCartQuantities);
@@ -2110,14 +2116,13 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         }
         if (host !== null) {
           host.removeAttribute(EMPTY_NATIVE_ATTR);
-          host.removeAttribute(GROUPED_ATTR);
         }
-        if (lastPlan !== null && !workPending) {
+        if (lastPlan !== null) {
           applyFgeCartDisplay(itemsEl);
-          syncNativeInputs(itemsEl, lastCartQuantities);
-          return;
+        } else if (host !== null) {
+          host.removeAttribute(GROUPED_ATTR);
+          maskCartHost(host);
         }
-        maskCartHost(host);
         syncNativeInputs(itemsEl, lastCartQuantities);
       }
     });

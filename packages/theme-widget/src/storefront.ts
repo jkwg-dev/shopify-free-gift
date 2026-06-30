@@ -134,9 +134,8 @@ let sections: CartSection[] = [];
 
 // Gift-line hide plan: recomputed after each reconcile from /cart.js. cartSections re-attach applies it.
 let lastPlan: GroupingPlan | null = null;
-// Set by verifiedDisplayReconcile to tell onReattach "this attach carries a fresh plan — apply it
-// even though a reconcile is in-flight". Cleared after the attach calls complete.
-let freshPlanAttach = false;
+// Coalesce overlapping display-reconcile calls (theme MO + reconcile finish can overlap).
+let displayReconcileInFlight: Promise<void> | null = null;
 
 function toGroupingLines(cart: AjaxCart): RawCartLine[] {
   return cart.items.map((item, index) => ({
@@ -186,9 +185,10 @@ function domMatchesCart(itemsEl: HTMLElement | null, cart: AjaxCart): boolean {
 // diverges from cart.js (stale/duplicate nodes, missing buy nodes). Replaces only the items
 // container, then re-applies grouping. Retries up to `maxAttempts` with a short backoff to handle
 // the stale-section-render race.
-async function refreshItemsBody(cart: AjaxCart): Promise<boolean> {
+async function refreshItemsBody(cart: AjaxCart): Promise<{ ok: boolean; drawerHtml?: string }> {
   const drawerSectionId = detectDrawerSectionId();
   const maxAttempts = 2;
+  let lastDrawerHtml: string | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
@@ -199,6 +199,7 @@ async function refreshItemsBody(cart: AjaxCart): Promise<boolean> {
       const data = (await res.json()) as Record<string, string>;
       const html = data[drawerSectionId];
       if (html === undefined) continue;
+      lastDrawerHtml = html;
 
       const parsed = new DOMParser().parseFromString(html, 'text/html');
       const ITEMS_SELECTORS = ['cart-drawer-items', '[data-cart-items]', '.cart-drawer__items'];
@@ -207,11 +208,10 @@ async function refreshItemsBody(cart: AjaxCart): Promise<boolean> {
         const liveItems = document.querySelector(sel);
         if (newItems !== null && liveItems !== null) {
           liveItems.innerHTML = newItems.innerHTML;
-          // Verify the fetched section matches cart.js.
           if (domMatchesCart(liveItems as HTMLElement, cart)) {
-            return true;
+            return { ok: true, drawerHtml: html };
           }
-          break; // replaced but still mismatched — retry
+          break;
         }
       }
     } catch {
@@ -241,55 +241,50 @@ async function refreshItemsBody(cart: AjaxCart): Promise<boolean> {
       cartKeys: cart.items.map((i) => i.variant_id),
     });
   }
-  return false;
+  return lastDrawerHtml !== undefined ? { ok: false, drawerHtml: lastDrawerHtml } : { ok: false };
 }
 
-// Verified display reconcile: cart.js read → grouping + stamp IMMEDIATELY (user sees content) →
-// then section-fetch + divergence check run without blocking the display. The critical path is
-// cart.js (one fetch) + grouping (synchronous DOM), not the section fetch.
-async function verifiedDisplayReconcile(cartMutated = false): Promise<void> {
-  try {
-    const cart = await getCart();
+// Verified display reconcile: cart.js read → grouping + stamp → optional section corrections.
+async function doVerifiedDisplayReconcile(
+  cartMutated: boolean,
+  existingCart?: AjaxCart,
+): Promise<void> {
+  const cart = existingCart ?? (await getCart());
 
-    // FAST PATH: compute grouping + stamp FIRST so the mask lifts immediately.
-    lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
-    lastCartQuantities = cart.items.map((item) => item.quantity);
-    freshPlanAttach = true;
-    for (const section of sections) section.attach();
-    freshPlanAttach = false;
+  lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+  lastCartQuantities = cart.items.map((item) => item.quantity);
+  for (const section of sections) section.attach();
 
-    const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
-    const buyOnlyCount = (cart.item_count ?? 0) - giftQty;
-    if (cart.total_price !== undefined && cart.item_count !== undefined) {
-      stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
-    }
-
-    // SLOW PATH (non-blocking): section fetch + divergence check run after the user already sees
-    // the correctly-grouped cart. These are corrections, not the primary display.
-    if (cartMutated) {
-      void refreshDawnTotals();
-    }
-
-    const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
-    if (!domMatchesCart(itemsEl, cart)) {
-      console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch');
-      await refreshItemsBody(cart);
-      freshPlanAttach = true;
-      for (const section of sections) section.attach();
-      freshPlanAttach = false;
-    }
-
-    // Deferred re-apply: catches Dawn's async gift-node insertion after cart/add.js.
-    if (cartMutated) {
-      setTimeout(() => {
-        freshPlanAttach = true;
-        for (const section of sections) section.attach();
-        freshPlanAttach = false;
-      }, 500);
-    }
-  } catch {
-    // Best-effort.
+  const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
+  const buyOnlyCount = (cart.item_count ?? 0) - giftQty;
+  if (cart.total_price !== undefined && cart.item_count !== undefined) {
+    stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
   }
+
+  const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
+  let prefetchedDrawerHtml: string | undefined;
+  if (!domMatchesCart(itemsEl, cart)) {
+    console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch');
+    const bodyRefresh = await refreshItemsBody(cart);
+    prefetchedDrawerHtml = bodyRefresh.drawerHtml;
+    for (const section of sections) section.attach();
+  }
+
+  if (cartMutated) {
+    await refreshDawnTotals(prefetchedDrawerHtml);
+  }
+}
+
+function verifiedDisplayReconcile(cartMutated = false, existingCart?: AjaxCart): Promise<void> {
+  if (displayReconcileInFlight !== null) {
+    return displayReconcileInFlight;
+  }
+  displayReconcileInFlight = doVerifiedDisplayReconcile(cartMutated, existingCart)
+    .catch(() => undefined)
+    .finally(() => {
+      displayReconcileInFlight = null;
+    });
+  return displayReconcileInFlight;
 }
 
 // Pending-indicator state (5b-2b): masks the residual gift-reconcile latency. Engaged IMMEDIATELY and
@@ -383,13 +378,12 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     for (const variantId of failedAddVariantIds(outcome.failures)) {
       unavailableVariantIds.add(variantId);
     }
-    markGiftWorkDone(); // work finished → clear once the min-duration has elapsed (whichever is later)
     renderPerception(config);
-    // Single cart.js read shared by section-fetch refresh + verified display reconcile.
     const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
-    await verifiedDisplayReconcile(cartMutated);
+    const cart = await getCart();
+    await verifiedDisplayReconcile(cartMutated, cart);
   } finally {
-    markGiftWorkDone(); // safety: also mark done on error/throw (idempotent)
+    markGiftWorkDone(); // clear checkout lock only after display reconcile finishes
     selfMutating = false;
   }
 }
@@ -544,7 +538,8 @@ function maskAllCartHosts(): void {
   });
 }
 
-// Apply the current grouping plan synchronously. On line-count mismatch, keep masked and re-fetch.
+// Apply the current grouping plan synchronously. On line-count mismatch, keep masked — the in-flight
+// reconcile (or the next cart event) will re-attach with a fresh plan; never spawn a nested reconcile.
 function applyFgeCartDisplay(itemsEl: HTMLElement | null): void {
   if (lastPlan === null) return;
   if (lastPlan.lineCount === 0) {
@@ -553,7 +548,6 @@ function applyFgeCartDisplay(itemsEl: HTMLElement | null): void {
   }
   if (applyGiftLineHiding(itemsEl, lastPlan)) return;
   maskCartHost(cartHost(itemsEl));
-  void verifiedDisplayReconcile();
 }
 
 // Observe the cart drawer for OPEN: Dawn adds 'active' class on open (synchronous via setTimeout(0)).
@@ -668,54 +662,72 @@ function detectBadgeSectionId(): string {
 // badge so a stale section response (fetched before the discount settles) never shows wrong numbers.
 // Section-fetch refresh for footer + badge. Accepts an already-fetched cart to avoid a redundant
 // getCart() (the caller already read cart.js for the verified display reconcile).
-async function refreshDawnTotals(): Promise<void> {
+// Reuse drawer section HTML from refreshItemsBody when available — avoids a duplicate section fetch.
+async function refreshDawnTotals(prefetchedDrawerHtml?: string): Promise<void> {
   try {
     const drawerSectionId = detectDrawerSectionId();
     const badgeSectionId = detectBadgeSectionId();
-    const sectionIds = [drawerSectionId, badgeSectionId];
     const pageFooterEl = document.getElementById('main-cart-footer');
     const pageFooterSection = pageFooterEl?.dataset['id'];
+
+    const sectionIds = [badgeSectionId];
     if (pageFooterSection !== undefined && pageFooterSection !== '') {
       sectionIds.push(pageFooterSection);
     }
+    if (prefetchedDrawerHtml === undefined) {
+      sectionIds.unshift(drawerSectionId);
+    }
+
     const res = await fetch(`${root}?sections=${sectionIds.join(',')}`, {
       headers: { Accept: 'application/json' },
     });
     if (!res.ok) return;
     const data = (await res.json()) as Record<string, string>;
 
-    const drawerHtml = data[drawerSectionId];
+    applyBadgeAndPageFooter(data, badgeSectionId, pageFooterEl, pageFooterSection);
 
-    // Badge: replace the cart-icon-bubble content.
-    const badgeHtml = data[badgeSectionId];
-    if (badgeHtml !== undefined) {
-      const liveBadge = document.getElementById('cart-icon-bubble');
-      if (liveBadge !== null) {
-        const parsed = new DOMParser().parseFromString(badgeHtml, 'text/html');
-        const newBadge = parsed.querySelector('.shopify-section');
-        if (newBadge !== null) {
-          (liveBadge.querySelector('.shopify-section') ?? liveBadge).innerHTML = newBadge.innerHTML;
-        }
-      }
-    }
-
-    // Full /cart page footer (if present): replace the .js-contents block.
-    if (pageFooterSection !== undefined && pageFooterEl !== null) {
-      const footerHtml = data[pageFooterSection];
-      if (footerHtml !== undefined) {
-        const parsed = new DOMParser().parseFromString(footerHtml, 'text/html');
-        const newContent = parsed.querySelector('.js-contents');
-        const liveContent = pageFooterEl.querySelector('.js-contents');
-        if (newContent !== null && liveContent !== null) {
-          liveContent.innerHTML = newContent.innerHTML;
-        }
-      }
-    }
-
-    // Replace the drawer summary/footer block.
+    const drawerHtml = prefetchedDrawerHtml ?? data[drawerSectionId];
     if (drawerHtml !== undefined) replaceDrawerFooter(drawerHtml);
   } catch {
     // Best-effort.
+  }
+}
+
+function applyPageFooter(
+  data: Record<string, string>,
+  pageFooterEl: HTMLElement | null,
+  pageFooterSection: string,
+): void {
+  if (pageFooterEl === null) return;
+  const footerHtml = data[pageFooterSection];
+  if (footerHtml === undefined) return;
+  const parsed = new DOMParser().parseFromString(footerHtml, 'text/html');
+  const newContent = parsed.querySelector('.js-contents');
+  const liveContent = pageFooterEl.querySelector('.js-contents');
+  if (newContent !== null && liveContent !== null) {
+    liveContent.innerHTML = newContent.innerHTML;
+  }
+}
+
+function applyBadgeAndPageFooter(
+  data: Record<string, string>,
+  badgeSectionId: string,
+  pageFooterEl: HTMLElement | null,
+  pageFooterSection: string | undefined,
+): void {
+  const badgeHtml = data[badgeSectionId];
+  if (badgeHtml !== undefined) {
+    const liveBadge = document.getElementById('cart-icon-bubble');
+    if (liveBadge !== null) {
+      const parsed = new DOMParser().parseFromString(badgeHtml, 'text/html');
+      const newBadge = parsed.querySelector('.shopify-section');
+      if (newBadge !== null) {
+        (liveBadge.querySelector('.shopify-section') ?? liveBadge).innerHTML = newBadge.innerHTML;
+      }
+    }
+  }
+  if (pageFooterSection !== undefined && pageFooterSection !== '') {
+    applyPageFooter(data, pageFooterEl, pageFooterSection);
   }
 }
 
@@ -802,7 +814,6 @@ function init(): void {
     drawerSelector: config.drawerSelector,
     onReattach: (_context, itemsEl) => {
       const host = cartHost(itemsEl);
-      const workPending = (running || pending || timer !== undefined) && !freshPlanAttach;
 
       if (lastPlan !== null && lastPlan.lineCount === 0) {
         showNativeEmptyCart(host);
@@ -812,16 +823,14 @@ function init(): void {
 
       if (host !== null) {
         host.removeAttribute(EMPTY_NATIVE_ATTR);
-        host.removeAttribute(GROUPED_ATTR);
       }
 
-      if (lastPlan !== null && !workPending) {
+      if (lastPlan !== null) {
         applyFgeCartDisplay(itemsEl);
-        syncNativeInputs(itemsEl, lastCartQuantities);
-        return;
+      } else if (host !== null) {
+        host.removeAttribute(GROUPED_ATTR);
+        maskCartHost(host);
       }
-
-      maskCartHost(host);
       syncNativeInputs(itemsEl, lastCartQuantities);
     },
   });
