@@ -15,19 +15,9 @@ import {
   type ValidateResult,
 } from '@free-gift-engine/core';
 import { mountCartContexts, type CartSection } from './cartSections.js';
-import {
-  classifyAndGroup,
-  giftLineKeysToRemove,
-  type GroupingPlan,
-  type RawCartLine,
-} from './cartGrouping.js';
-import {
-  applyTwoGroupLayout,
-  syncNativeInputs,
-  type MergedQtyChangeResult,
-} from './groupingTransform.js';
-import { applyMergedBuyEdit, failedAddVariantIds } from './cartMutations.js';
-import { showNotice } from './notice.js';
+import { classifyAndGroup, type GroupingPlan, type RawCartLine } from './cartGrouping.js';
+import { applyGiftLineHiding, syncNativeInputs } from './groupingTransform.js';
+import { failedAddVariantIds } from './cartMutations.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
@@ -142,9 +132,7 @@ const unavailableVariantIds = new Set<string>();
 // into each so the widget works wherever the shopper is.
 let sections: CartSection[] = [];
 
-// Two-group line transform (Stage 1): the latest classification/merge plan + cart currency, recomputed
-// after each reconcile from a fresh /cart.js read. The cartSections re-attach hook applies it to each
-// surface's line list. Presentation-only — no cart write.
+// Gift-line hide plan: recomputed after each reconcile from /cart.js. cartSections re-attach applies it.
 let lastPlan: GroupingPlan | null = null;
 // Set by verifiedDisplayReconcile to tell onReattach "this attach carries a fresh plan — apply it
 // even though a reconcile is in-flight". Cleared after the attach calls complete.
@@ -516,10 +504,6 @@ function renderPerception(config: WidgetConfig): void {
   }
 }
 
-// Resolved when the reconcile single-flight goes fully idle (no run in progress, none pending). The
-// merged-buy write awaits this so its cart mutation never interleaves with a reconcile's mutations.
-let idleResolvers: (() => void)[] = [];
-
 // Re-mask elements that are NOT currently grouped (timeout-lifted or never grouped). Restarts the 2s
 // timeout. Elements that ARE grouped (data-fge-grouped present) are NOT re-masked (no flicker).
 function remaskUngrouped(): void {
@@ -569,25 +553,14 @@ function schedule(config: WidgetConfig): void {
       if (pending) {
         pending = false;
         schedule(config);
-      } else {
-        const resolvers = idleResolvers;
-        idleResolvers = [];
-        for (const resolve of resolvers) resolve();
       }
     });
 }
 
-async function whenReconcileIdle(): Promise<void> {
-  // Re-checks after each settle: a chained (pending) reconcile keeps us waiting until the chain ends.
-  while (running) {
-    await new Promise<void>((resolve) => idleResolvers.push(resolve));
-  }
-}
-
 let cachedDrawerSectionId: string | null = null;
 
-// Detect the Shopify section ID for the cart drawer from the live DOM. Anchored on the ITEMS
-// CONTAINER (#CartDrawer-Body, cart-drawer-items) — the node the refetch needs to replace — so it
+// Detect the Shopify section ID for the cart drawer from the live DOM. Anchored on the items
+// container (#CartDrawer-Body, cart-drawer-items) — the node the refetch needs to replace — so it
 // returns the section that actually contains cart line items, never a recommendations or trigger
 // button section. Cached after the first successful detection (the section ID never changes).
 function detectDrawerSectionId(): string {
@@ -702,86 +675,6 @@ async function refreshDawnTotals(): Promise<void> {
   }
 }
 
-// The reconcile-owned gift line keys currently in the cart (realized $0 gets + lingering), for the
-// gift-first orphan removal (defect B). Pure classification — an issue-#6 paid unit is never included.
-async function currentGiftLineKeys(): Promise<readonly string[]> {
-  try {
-    const cart = await getCart();
-    return giftLineKeysToRemove(classifyAndGroup(toGroupingLines(cart), lastDiscount));
-  } catch {
-    return [];
-  }
-}
-
-// Surface a cart-write failure to the shopper (defect B.1). Display-only: the message text is parsed
-// from the response body, but NO control flow depends on it (the retry is gated on gift-line existence).
-function surfaceMergedWriteFailure(failureBody: string | null): void {
-  const fallback = "Couldn't update your cart — your free gift requires this item.";
-  let message = fallback;
-  if (failureBody !== null) {
-    try {
-      const parsed = JSON.parse(failureBody) as { description?: unknown; message?: unknown };
-      if (typeof parsed.description === 'string' && parsed.description !== '') {
-        message = parsed.description;
-      } else if (typeof parsed.message === 'string' && parsed.message !== '') {
-        message = parsed.message;
-      }
-    } catch {
-      // Non-JSON body — keep the fallback.
-    }
-  }
-  showNotice(message);
-  announcePending(message); // also announce to assistive tech
-}
-
-// Stage 2 (defect #2 + B): the interactive merged buy stepper's absolute-target write. Sequenced so it
-// never overlaps a reconcile (§5): wait for reconcile idle, then run the buy edit under `selfMutating`
-// (so the fetch-patch doesn't re-trigger us). The edit is buy-only first; if it 422s and the cart still
-// holds gift lines, it removes the orphaned gift FIRST then applies the buy (gift-first atomic sequence,
-// docs §M) so a legitimate "remove my purchase" is never VF-blocked. Write-safety: `writableKeys` are
-// UNMARKED keys, and the gift removal targets only gets ∪ lingering (never a paid unit). Returns whether
-// the edit applied — the stepper rolls back its optimistic UI on false. Always re-validates via reconcile.
-async function onMergedBuyQtyChange(
-  writableKeys: readonly string[],
-  targetQty: number,
-): Promise<MergedQtyChangeResult> {
-  const fail: MergedQtyChangeResult = { applied: false, qty: 0, finalPrice: 0, originalPrice: 0 };
-  if (perceptionConfig === null) return fail;
-  // Engage the pending/loading state IMMEDIATELY (same tick as the click) so the user sees feedback
-  // before the debounce/reconcile-idle wait. This is synchronous — no await before it.
-  beginGiftPending();
-  // Resolve the variant from the pre-write plan (cart keys may change after write).
-  const preRow = lastPlan?.buys.find(
-    (r) => r.writableKeys.length > 0 && writableKeys.includes(r.writableKeys[0]!),
-  );
-  await whenReconcileIdle();
-  selfMutating = true;
-  let result: { applied: boolean; failureBody: string | null };
-  try {
-    result = await applyMergedBuyEdit(cartPost, writableKeys, targetQty, currentGiftLineKeys);
-  } finally {
-    selfMutating = false;
-  }
-  if (!result.applied) {
-    surfaceMergedWriteFailure(result.failureBody);
-  }
-  // Read the authoritative post-write cart ONCE so the stepper syncs from ground truth.
-  const cart = await getCart();
-  lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
-  const row =
-    preRow !== undefined ? lastPlan.buys.find((r) => r.variantId === preRow.variantId) : undefined;
-  await refreshDawnTotals();
-  for (const section of sections) section.attach();
-  schedule(perceptionConfig);
-  if (!result.applied) return fail;
-  return {
-    applied: true,
-    qty: row?.controllableQuantity ?? 0,
-    finalPrice: row?.controllableFinalPrice ?? 0,
-    originalPrice: row?.controllableOriginalPrice ?? 0,
-  };
-}
-
 // FOUC mask: data-fge-pending signals "FGE controls this region". data-fge-grouped lifts it.
 // onReattach always lifts (grouped or ungrouped) so the mask is never permanent. remask() starts a
 // safety timer as a backstop; remaskUngrouped() only starts a timer when none is running.
@@ -894,11 +787,7 @@ function init(): void {
         syncNativeInputs(itemsEl, lastCartQuantities);
         return;
       }
-      if (
-        !applyTwoGroupLayout(itemsEl, lastPlan, {
-          onMergedQtyChange: onMergedBuyQtyChange,
-        })
-      ) {
+      if (!applyGiftLineHiding(itemsEl, lastPlan)) {
         liftMask(itemsEl);
       }
       syncNativeInputs(itemsEl, lastCartQuantities);

@@ -251,9 +251,6 @@
   function isZeroedByOurCode(line, ourCode) {
     return line.finalLinePrice === 0 && ourCode !== null && line.allocationTitles.includes(ourCode);
   }
-  function giftLineKeysToRemove(plan) {
-    return [...plan.gets.map((g) => g.key), ...plan.lingering.map((l) => l.key)];
-  }
   function classifyAndGroup(lines, ourCode) {
     const zeroedVariantIds = /* @__PURE__ */ new Set();
     for (const line of lines) {
@@ -263,54 +260,19 @@
     }
     const gets = [];
     const lingering = [];
-    const buyLines = [];
     for (const line of lines) {
       if (isZeroedByOurCode(line, ourCode)) {
         gets.push({ index: line.index, key: line.key, variantId: line.variantId });
       } else if (line.marked && !zeroedVariantIds.has(line.variantId)) {
         lingering.push({ index: line.index, key: line.key, variantId: line.variantId });
-      } else {
-        buyLines.push(line);
       }
     }
-    const buys = mergeBuysByVariant(buyLines);
     return {
       gets,
       lingering,
-      buys,
       hasGifts: gets.length > 0 || lingering.length > 0,
       lineCount: lines.length
     };
-  }
-  function mergeBuysByVariant(buyLines) {
-    const order = [];
-    const byVariant = /* @__PURE__ */ new Map();
-    for (const line of buyLines) {
-      const existing = byVariant.get(line.variantId);
-      if (existing === void 0) {
-        byVariant.set(line.variantId, [line]);
-        order.push(line.variantId);
-      } else {
-        existing.push(line);
-      }
-    }
-    return order.map((variantId) => {
-      var _a2, _b2;
-      const group = byVariant.get(variantId);
-      const unmarked = group.filter((l) => !l.marked);
-      const marked = group.filter((l) => l.marked);
-      return {
-        variantId,
-        controllableQuantity: unmarked.reduce((n, l) => n + l.quantity, 0),
-        controllableFinalPrice: unmarked.reduce((n, l) => n + l.finalLinePrice, 0),
-        controllableOriginalPrice: unmarked.reduce((n, l) => n + l.originalLinePrice, 0),
-        interactiveIndex: (_b2 = (_a2 = unmarked[0]) == null ? void 0 : _a2.index) != null ? _b2 : null,
-        hideIndexes: unmarked.slice(1).map((l) => l.index),
-        readOnlyIndexes: marked.map((l) => l.index),
-        writableKeys: unmarked.map((l) => l.key),
-        split: unmarked.length > 1
-      };
-    });
   }
 
   // src/groupingTransform.ts
@@ -321,38 +283,14 @@
     "cart-item",
     ".cart__row"
   ];
-  var TOTALS_SELECTORS = [
-    ".cart-item__totals",
-    '[class*="cart-item__price"]',
-    '[class*="line-item__price"]',
-    '[class*="cart-item__total"]'
-  ];
-  var QTY_CELL_SELECTORS = [
-    ".cart-item__quantity",
-    '[class*="cart-item__quantity"]',
-    '[class*="cart-item__qty"]'
-  ];
   var QTY_INPUT_SELECTORS = [
     ".quantity__input",
     'input[name="updates[]"]',
     'input[name*="quantity" i]',
     'input[type="number"]'
   ];
-  var QTY_BUTTON_SELECTORS = [".quantity__button", "cart-remove-button", ".button--tertiary"];
-  var QTY_WIDGET_SELECTORS = [
-    "quantity-input",
-    ".quantity",
-    ".cart-item__quantity-wrapper",
-    '[class*="quantity-selector"]'
-  ];
-  var REMOVE_SELECTORS = [
-    "cart-remove-button",
-    ".button--tertiary",
-    '[id^="Remove-"]',
-    'a[href*="/cart/change"]'
-  ];
   var MARK = "data-fge-grouped";
-  var HIDDEN_MARK = "data-fge-merged-hidden";
+  var HIDDEN_MARK = "data-fge-gift-hidden";
   function findFirst2(root2, selectors) {
     for (const sel of selectors) {
       const el = root2.querySelector(sel);
@@ -367,390 +305,35 @@
     }
     return [];
   }
-  function diag(msg, ...data) {
-    console.warn(`[FGE] ${msg}`, ...data);
-  }
-  function findTotalsCell(node) {
-    for (const sel of TOTALS_SELECTORS) {
-      const el = node.querySelector(sel);
-      if (el !== null) return el;
-    }
-    return null;
-  }
-  function findQtyContainer(node) {
-    const named = findFirst2(node, QTY_CELL_SELECTORS);
-    if (named !== null) return named;
-    const input = findFirst2(node, QTY_INPUT_SELECTORS);
-    if (input !== null) {
-      const parent = input.parentElement;
-      if (parent !== null && parent !== node) {
-        diag("findQtyContainer: fallback to input parent", parent.tagName, parent.className);
-        return parent;
-      }
-    }
-    diag("findQtyContainer: no qty cell found, falling back to node", node.tagName, node.id);
-    return node;
-  }
-  function extractMoneyFormat(text) {
-    const m = text.match(/^(.*?)(\d[\d.,\u00A0\u202F' ]*\d|\d)(.*)$/s);
-    if (m === null) return null;
-    const prefix = m[1];
-    const token = m[2];
-    const suffix = m[3];
-    const lastDot = token.lastIndexOf(".");
-    const lastComma = token.lastIndexOf(",");
-    const decPos = Math.max(lastDot, lastComma);
-    let decimals = 0;
-    let decimalSep = ".";
-    if (decPos !== -1 && /^\d{1,3}$/.test(token.slice(decPos + 1))) {
-      decimals = token.length - decPos - 1;
-      decimalSep = token.charAt(decPos);
-    }
-    const intText = decimals > 0 ? token.slice(0, decPos) : token;
-    const gMatch = intText.match(/[.,\u00A0\u202F' ]/);
-    const groupSep = gMatch !== null ? gMatch[0] : decimalSep === "." ? "," : ".";
-    return { prefix, suffix, decimals, decimalSep, groupSep };
-  }
-  function formatMoney(minorUnits, fmt2) {
-    const fixed = (minorUnits / Math.pow(10, fmt2.decimals)).toFixed(fmt2.decimals);
-    const dot = fixed.indexOf(".");
-    const intPart = dot === -1 ? fixed : fixed.slice(0, dot);
-    const fracPart = dot === -1 ? "" : fixed.slice(dot + 1);
-    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, fmt2.groupSep);
-    const num = fmt2.decimals > 0 ? `${grouped}${fmt2.decimalSep}${fracPart}` : grouped;
-    return `${fmt2.prefix}${num}${fmt2.suffix}`;
-  }
-  function buildPriceInner(finalMinor, originalMinor, moneyFmt) {
-    const finalStr = formatMoney(finalMinor, moneyFmt);
-    if (finalMinor === originalMinor) {
-      return finalStr;
-    }
-    const originalStr = formatMoney(originalMinor, moneyFmt);
-    return `<span class="visually-hidden">Sale price</span><ins class="color-red">${finalStr}</ins><span class="visually-hidden">Regular price</span><del>${originalStr}</del>`;
-  }
-  function setLineTotals(node, sumFinal, sumOriginal) {
-    var _a2, _b2, _c2, _d;
-    const priceEl = (_b2 = (_a2 = node.querySelector(".cart-item__actions--price")) != null ? _a2 : node.querySelector(".cart-item__price")) != null ? _b2 : findFirst2(node, TOTALS_SELECTORS);
-    if (priceEl === null) {
-      diag("setLineTotals: no price element found in", node.tagName, node.id);
-      return;
-    }
-    const existingText = (_d = (_c2 = priceEl.textContent) == null ? void 0 : _c2.trim()) != null ? _d : "";
-    const fmt2 = extractMoneyFormat(existingText);
-    if (fmt2 === null) {
-      diag("setLineTotals: no number found in price text", existingText);
-      return;
-    }
-    const inner = buildPriceInner(sumFinal, sumOriginal, fmt2);
-    const isDiscounted = sumFinal !== sumOriginal;
-    const lineTotal = node.querySelector(".cart-item__actions--price");
-    if (lineTotal !== null) {
-      if (isDiscounted) {
-        lineTotal.innerHTML = `<div class="cart-item__discounted-prices cart-item__price">${inner}</div>`;
-      } else {
-        lineTotal.innerHTML = `<span class="cart-item__price">${inner}</span>`;
-      }
-      return;
-    }
-    for (const sel of TOTALS_SELECTORS) {
-      const cells = node.querySelectorAll(sel);
-      if (cells.length > 0) {
-        cells.forEach((cell) => {
-          if (isDiscounted) {
-            cell.innerHTML = `<div class="cart-item__discounted-prices cart-item__price">${inner}</div>`;
-          } else {
-            cell.innerHTML = `<span class="cart-item__price">${inner}</span>`;
-          }
-        });
-        break;
-      }
-    }
-  }
-  function showMergedQtyReadOnly(node, qty) {
-    const input = findFirst2(node, QTY_INPUT_SELECTORS);
-    if (input instanceof HTMLInputElement) {
-      input.value = String(qty);
-      input.setAttribute("value", String(qty));
-      input.readOnly = true;
-      input.style.pointerEvents = "none";
-    }
-    for (const sel of QTY_BUTTON_SELECTORS) {
-      node.querySelectorAll(sel).forEach((el) => {
-        el.style.display = "none";
-        el.setAttribute("aria-hidden", "true");
-      });
-    }
-  }
-  function hideNativeStepper(node) {
-    let hiddenCount = 0;
-    for (const sel of [...QTY_WIDGET_SELECTORS, ...REMOVE_SELECTORS]) {
-      node.querySelectorAll(sel).forEach((el) => {
-        el.style.display = "none";
-        el.setAttribute("aria-hidden", "true");
-        hiddenCount++;
-      });
-    }
-    const input = findFirst2(node, QTY_INPUT_SELECTORS);
-    if (input instanceof HTMLInputElement) input.readOnly = true;
-    if (hiddenCount === 0) {
-      diag(
-        "hideNativeStepper: no elements matched widget/remove selectors in",
-        node.tagName,
-        node.id,
-        node.className
-      );
-      if (input !== null) {
-        const container = findQtyContainer(node);
-        if (container !== node) {
-          for (const child of Array.from(container.children)) {
-            if (child instanceof HTMLElement && !child.classList.contains("fge-merged-stepper")) {
-              child.style.display = "none";
-              child.setAttribute("aria-hidden", "true");
-              hiddenCount++;
-            }
-          }
-          if (hiddenCount === 0 && input.parentElement === container) {
-            container.querySelectorAll("button, a").forEach((el) => {
-              el.style.display = "none";
-              el.setAttribute("aria-hidden", "true");
-            });
-            input.style.display = "none";
-          }
-          diag(
-            "hideNativeStepper: fallback hid",
-            hiddenCount,
-            "children in",
-            container.tagName,
-            container.className
-          );
-        }
-      }
-    }
-  }
-  function injectMergedStepper(node, qty, finalLinePrice, originalLinePrice, writableKeys, onChange) {
-    var _a2;
-    hideNativeStepper(node);
-    (_a2 = node.querySelector(".fge-merged-stepper")) == null ? void 0 : _a2.remove();
-    const cell = findQtyContainer(node);
-    diag("injectMergedStepper: cell=", cell.tagName, cell.className, "node=", node.tagName, node.id);
-    let perUnitFinal = qty > 0 ? finalLinePrice / qty : 0;
-    let perUnitOriginal = qty > 0 ? originalLinePrice / qty : 0;
-    const wrap = document.createElement("div");
-    wrap.className = "fge fge-merged-stepper";
-    wrap.setAttribute("role", "group");
-    wrap.setAttribute("aria-label", "Quantity");
-    const mkBtn = (act, label) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = act === "del" ? "fge-merged-stepper__remove" : "fge-merged-stepper__btn";
-      b.setAttribute("data-fge-act", act);
-      b.setAttribute("aria-label", label);
-      return b;
-    };
-    const dec = mkBtn("dec", "Decrease quantity");
-    dec.innerHTML = '<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 12H20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
-    const inc = mkBtn("inc", "Increase quantity");
-    inc.innerHTML = '<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4V12M12 12V20M12 12H4M12 12H20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
-    const del = mkBtn("del", "Remove item");
-    del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
-    const qtyEl = document.createElement("span");
-    qtyEl.className = "fge-merged-stepper__qty";
-    qtyEl.setAttribute("aria-live", "polite");
-    qtyEl.textContent = String(qty);
-    const inner = document.createElement("div");
-    inner.className = "fge-merged-stepper__wrapper";
-    inner.append(dec, qtyEl, inc);
-    wrap.append(inner, del);
-    cell.append(wrap);
-    let current = qty;
-    let inFlight = false;
-    const setDisabled = (d) => {
-      for (const b of [dec, inc, del]) b.disabled = d;
-      wrap.classList.toggle("is-busy", d);
-    };
-    const repaint = (q, updatePrice) => {
-      qtyEl.textContent = String(q);
-      if (q === 0) {
-        node.style.display = "none";
-        node.setAttribute("data-fge-merged-removed", "");
-      } else {
-        node.style.display = "";
-        node.removeAttribute("data-fge-merged-removed");
-        if (updatePrice) {
-          setLineTotals(node, Math.round(perUnitFinal * q), Math.round(perUnitOriginal * q));
-        }
-      }
-    };
-    const onAct = (target) => {
-      if (inFlight) return;
-      inFlight = true;
-      setDisabled(true);
-      const prev = current;
-      current = Math.max(0, target);
-      repaint(current, false);
-      Promise.resolve(onChange(writableKeys, current)).then((result) => {
-        if (!result.applied) {
-          current = prev;
-          repaint(prev, true);
-        } else {
-          current = result.qty;
-          if (current > 0) {
-            perUnitFinal = result.finalPrice / current;
-            perUnitOriginal = result.originalPrice / current;
-          }
-          repaint(current, true);
-        }
-      }).finally(() => {
-        inFlight = false;
-        if (node.isConnected) setDisabled(false);
-      });
-    };
-    dec.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onAct(current - 1);
-    });
-    inc.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onAct(current + 1);
-    });
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onAct(0);
-    });
-  }
-  function resetRows(lineNodes) {
-    var _a2;
+  function resetGiftHides(lineNodes) {
     for (const node of lineNodes) {
-      node.style.display = "";
-      node.removeAttribute(HIDDEN_MARK);
-      node.removeAttribute("data-fge-merged-removed");
-      (_a2 = node.querySelector(".fge-merged-stepper")) == null ? void 0 : _a2.remove();
-      for (const sel of [...QTY_WIDGET_SELECTORS, ...REMOVE_SELECTORS]) {
-        node.querySelectorAll(sel).forEach((el) => {
-          el.style.display = "";
-          el.removeAttribute("aria-hidden");
-        });
-      }
-      const input = findFirst2(node, QTY_INPUT_SELECTORS);
-      if (input instanceof HTMLInputElement) {
-        input.readOnly = false;
-        input.style.pointerEvents = "";
+      if (node.hasAttribute(HIDDEN_MARK)) {
+        node.style.display = "";
+        node.removeAttribute(HIDDEN_MARK);
       }
     }
   }
-  function applyTwoGroupLayout(itemsEl, plan, opts) {
+  function applyGiftLineHiding(itemsEl, plan) {
     var _a2;
     if (itemsEl === null) return false;
+    if (plan.lineCount === 0) return false;
     const lineNodes = findLineNodes(itemsEl);
-    diag("applyTwoGroupLayout entry:", {
-      lineNodes: lineNodes.length,
-      planLineCount: plan.lineCount,
-      hasGifts: plan.hasGifts,
-      buys: plan.buys.length,
-      gets: plan.gets.length,
-      lingering: plan.lingering.length,
-      hasMergedQtyChange: opts.onMergedQtyChange !== void 0,
-      containerTag: itemsEl.tagName,
-      containerId: itemsEl.id,
-      lineNodeInfo: lineNodes.slice(0, 3).map((n) => `${n.tagName}#${n.id}.${n.className.slice(0, 50)}`)
-    });
-    if (plan.lineCount === 0) {
-      diag("applyTwoGroupLayout: FAIL OPEN \u2014 empty plan");
-      return false;
-    }
     if (lineNodes.length > plan.lineCount) {
-      diag("applyTwoGroupLayout: removing stale nodes", {
-        domNodes: lineNodes.length,
-        cartLines: plan.lineCount
-      });
       for (let i = lineNodes.length - 1; i >= plan.lineCount; i--) {
         lineNodes[i].remove();
       }
       lineNodes.length = plan.lineCount;
     }
-    if (lineNodes.length !== plan.lineCount) {
-      diag(
-        "applyTwoGroupLayout: FAIL OPEN \u2014 lineCount mismatch (DOM < cart)",
-        lineNodes.length,
-        "\u2260",
-        plan.lineCount
-      );
-      return false;
-    }
-    for (const row of plan.buys) {
-      if (!row.split) continue;
-      const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
-      if (keep == null || findTotalsCell(keep) === null) {
-        diag(
-          "applyTwoGroupLayout: FAIL OPEN \u2014 split row has no totals cell",
-          keep == null ? void 0 : keep.tagName,
-          keep == null ? void 0 : keep.id
-        );
-        return false;
-      }
-    }
-    resetRows(lineNodes);
+    if (lineNodes.length !== plan.lineCount) return false;
+    resetGiftHides(lineNodes);
     ((_a2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl).setAttribute(MARK, "");
-    const needsMergedOnAll = plan.hasGifts && opts.onMergedQtyChange !== void 0;
-    const buyIndexes = /* @__PURE__ */ new Set();
-    let steppersInjected = 0;
-    for (const row of plan.buys) {
-      if (row.interactiveIndex !== null) buyIndexes.add(row.interactiveIndex);
-      const keep = row.interactiveIndex === null ? null : lineNodes[row.interactiveIndex];
-      if (keep != null) {
-        if (row.split) {
-          setLineTotals(keep, row.controllableFinalPrice, row.controllableOriginalPrice);
-        }
-        if ((row.split || needsMergedOnAll) && opts.onMergedQtyChange !== void 0) {
-          injectMergedStepper(
-            keep,
-            row.controllableQuantity,
-            row.controllableFinalPrice,
-            row.controllableOriginalPrice,
-            row.writableKeys,
-            opts.onMergedQtyChange
-          );
-          steppersInjected++;
-        } else if (row.split) {
-          showMergedQtyReadOnly(keep, row.controllableQuantity);
-        }
-      }
-      for (const hideIdx of row.hideIndexes) {
-        buyIndexes.add(hideIdx);
-        const sib = lineNodes[hideIdx];
-        if (sib != null) {
-          sib.style.display = "none";
-          sib.setAttribute(HIDDEN_MARK, "");
-        }
-      }
-    }
-    for (const ref of plan.gets) {
+    for (const ref of [...plan.gets, ...plan.lingering]) {
       const node = lineNodes[ref.index];
       if (node != null) {
         node.style.display = "none";
         node.setAttribute(HIDDEN_MARK, "");
       }
     }
-    for (const ref of plan.lingering) {
-      const node = lineNodes[ref.index];
-      if (node != null) {
-        node.style.display = "none";
-        node.setAttribute(HIDDEN_MARK, "");
-      }
-    }
-    for (const row of plan.buys) {
-      if (row.interactiveIndex === null) continue;
-      const node = lineNodes[row.interactiveIndex];
-      if (node != null && node.style.display === "none" && !node.hasAttribute(HIDDEN_MARK)) {
-        node.style.display = "";
-        diag("buy row was wrongly hidden, corrected", { variant: row.variantId });
-      }
-    }
-    diag("applyTwoGroupLayout done:", {
-      steppersInjected,
-      giftsHidden: plan.gets.length + plan.lingering.length,
-      mergedSteppersInDOM: itemsEl.querySelectorAll(".fge-merged-stepper").length
-    });
     return true;
   }
   function syncNativeInputs(itemsEl, actualQuantities) {
@@ -758,9 +341,7 @@
     const lineNodes = findLineNodes(itemsEl);
     if (lineNodes.length !== actualQuantities.length) return;
     for (let i = 0; i < lineNodes.length; i++) {
-      const node = lineNodes[i];
-      if (node.querySelector(".fge-merged-stepper") !== null) continue;
-      const input = findFirst2(node, QTY_INPUT_SELECTORS);
+      const input = findFirst2(lineNodes[i], QTY_INPUT_SELECTORS);
       if (input instanceof HTMLInputElement) {
         const actual = String(actualQuantities[i]);
         if (input.value !== actual) {
@@ -831,45 +412,6 @@
     }
     return { added, removed, adjusted, failures };
   }
-  async function setMergedQuantity(post, writableKeys, targetQty) {
-    if (writableKeys.length === 0) {
-      return { ok: true, status: 200 };
-    }
-    const target = Math.max(0, Math.trunc(targetQty));
-    const updates = {};
-    for (const [i, key] of writableKeys.entries()) {
-      updates[key] = i === 0 ? target : 0;
-    }
-    const res = await post("cart/update.js", { updates });
-    if (res.ok) {
-      return { ok: true, status: res.status };
-    }
-    const body = await res.text();
-    logFailure(`cart/update.js merged-qty failed (${res.status})`, body);
-    return { ok: false, status: res.status, body };
-  }
-  async function removeLines(post, keys) {
-    if (keys.length === 0) return { ok: true, status: 200 };
-    const updates = {};
-    for (const k of keys) updates[k] = 0;
-    const res = await post("cart/update.js", { updates });
-    if (res.ok) return { ok: true, status: res.status };
-    const body = await res.text();
-    logFailure(`cart/update.js gift-removal failed (${res.status})`, body);
-    return { ok: false, status: res.status, body };
-  }
-  async function applyMergedBuyEdit(post, writableKeys, targetQty, readGiftKeys) {
-    var _a2, _b2, _c2;
-    const r1 = await setMergedQuantity(post, writableKeys, targetQty);
-    if (r1.ok) return { applied: true, failureBody: null };
-    const giftKeys = await readGiftKeys();
-    if (giftKeys.length === 0) return { applied: false, failureBody: (_a2 = r1.body) != null ? _a2 : null };
-    const rA = await removeLines(post, giftKeys);
-    if (!rA.ok) return { applied: false, failureBody: (_b2 = rA.body) != null ? _b2 : null };
-    const rB = await setMergedQuantity(post, writableKeys, targetQty);
-    if (!rB.ok) return { applied: false, failureBody: (_c2 = rB.body) != null ? _c2 : null };
-    return { applied: true, failureBody: null };
-  }
   function failedAddVariantIds(failures) {
     return failures.filter((f) => f.kind === "add").map((f) => f.variantId);
   }
@@ -877,35 +419,6 @@
     var _a2;
     const c = globalThis.console;
     (_a2 = c == null ? void 0 : c.warn) == null ? void 0 : _a2.call(c, `[free-gift] ${message}`, body.slice(0, 300));
-  }
-
-  // src/notice.ts
-  var NOTICE_ID = "fge-notice";
-  var VISIBLE_MS = 6e3;
-  var hideTimer;
-  function showNotice(message) {
-    const doc = globalThis.document;
-    if (doc === void 0 || message.trim() === "") {
-      return;
-    }
-    let el = doc.getElementById(NOTICE_ID);
-    if (el === null) {
-      el = doc.createElement("div");
-      el.id = NOTICE_ID;
-      el.className = "fge fge-notice";
-      el.setAttribute("role", "status");
-      el.setAttribute("aria-live", "assertive");
-      doc.body.append(el);
-    }
-    el.textContent = message;
-    el.classList.add("is-visible");
-    if (hideTimer !== void 0) {
-      clearTimeout(hideTimer);
-    }
-    hideTimer = setTimeout(() => {
-      el == null ? void 0 : el.classList.remove("is-visible");
-      hideTimer = void 0;
-    }, VISIBLE_MS);
   }
 
   // src/choices.ts
@@ -1852,46 +1365,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
   body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
 
-/* --- Stage 2: the interactive merged stepper, styled to match the theme's native quantity-input.
-   Outer container (.fge-merged-stepper) is a plain flex row; the bordered rectangle is the inner
-   __wrapper (mirrors .quantity__wrapper exactly); the remove button sits OUTSIDE the rectangle. --- */
-.fge-merged-stepper{
-  display:inline-flex; align-items:center; gap:0.4rem;
-}
-.fge-merged-stepper__wrapper{
-  display:flex; justify-content:space-between; align-items:center; width:8rem;
-  padding:0 var(--spacing-2,0.8rem);
-  border:0.1rem solid rgba(var(--color-border,235,235,235),var(--alpha-border,1));
-  border-radius:var(--badge-border-radius,0.4rem);
-}
-.fge-merged-stepper__btn{
-  appearance:none; -webkit-appearance:none; cursor:pointer;
-  display:flex; align-items:center; justify-content:center;
-  width:2rem; height:2.8rem; flex-shrink:0; padding:0;
-  color:rgb(var(--color-foreground,17,17,17)); opacity:0.5;
-  background-color:transparent; border:0;
-}
-.fge-merged-stepper__btn:hover{ opacity:0.75; }
-.fge-merged-stepper__btn svg{ width:1rem; height:1rem; pointer-events:none; }
-.fge-merged-stepper__qty{
-  flex:1 1 auto; width:2rem; text-align:center;
-  font:inherit; font-size:var(--font-size-static-sm,1.2rem); font-weight:var(--font-weight-normal,400);
-  color:rgb(var(--color-foreground,17,17,17)); background:transparent; line-height:2.8rem;
-}
-.fge-merged-stepper__remove{
-  appearance:none; -webkit-appearance:none; cursor:pointer;
-  display:inline-flex; align-items:center; justify-content:center;
-  padding:0; width:2.4rem; height:2.4rem;
-  color:rgb(var(--color-foreground,17,17,17)); opacity:0.5;
-  background:transparent; border:0;
-}
-.fge-merged-stepper__remove:hover{ opacity:0.75; }
-.fge-merged-stepper__remove svg{ width:1.4rem; height:1.4rem; pointer-events:none; }
-.fge-merged-stepper__btn:focus-visible, .fge-merged-stepper__remove:focus-visible{
-  outline:2px solid var(--fge-brand); outline-offset:2px;
-}
-.fge-merged-stepper.is-busy{ opacity:.55; }
-.fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; opacity:0.3; }
 /* --- Stage 2 (defect B.1): a transient failure notice (e.g. a VF-blocked update). Fixed bottom-center
    toast, appended to <body>; hidden until is-visible. Reduced-motion friendly (opacity only). --- */
 .fge-notice{
@@ -2401,7 +1874,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       section.attach();
     }
   }
-  var idleResolvers = [];
   function remaskUngrouped() {
     let any = false;
     document.querySelectorAll("cart-drawer-items, cart-items").forEach((el) => {
@@ -2438,17 +1910,8 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       if (pending) {
         pending = false;
         schedule(config);
-      } else {
-        const resolvers = idleResolvers;
-        idleResolvers = [];
-        for (const resolve of resolvers) resolve();
       }
     });
-  }
-  async function whenReconcileIdle() {
-    while (running) {
-      await new Promise((resolve) => idleResolvers.push(resolve));
-    }
   }
   var cachedDrawerSectionId = null;
   function detectDrawerSectionId() {
@@ -2541,64 +2004,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     } catch {
     }
   }
-  async function currentGiftLineKeys() {
-    try {
-      const cart = await getCart();
-      return giftLineKeysToRemove(classifyAndGroup(toGroupingLines(cart), lastDiscount));
-    } catch {
-      return [];
-    }
-  }
-  function surfaceMergedWriteFailure(failureBody) {
-    const fallback = "Couldn't update your cart \u2014 your free gift requires this item.";
-    let message = fallback;
-    if (failureBody !== null) {
-      try {
-        const parsed = JSON.parse(failureBody);
-        if (typeof parsed.description === "string" && parsed.description !== "") {
-          message = parsed.description;
-        } else if (typeof parsed.message === "string" && parsed.message !== "") {
-          message = parsed.message;
-        }
-      } catch {
-      }
-    }
-    showNotice(message);
-    announcePending(message);
-  }
-  async function onMergedBuyQtyChange(writableKeys, targetQty) {
-    var _a2, _b2, _c2;
-    const fail = { applied: false, qty: 0, finalPrice: 0, originalPrice: 0 };
-    if (perceptionConfig === null) return fail;
-    beginGiftPending();
-    const preRow = lastPlan == null ? void 0 : lastPlan.buys.find(
-      (r) => r.writableKeys.length > 0 && writableKeys.includes(r.writableKeys[0])
-    );
-    await whenReconcileIdle();
-    selfMutating = true;
-    let result;
-    try {
-      result = await applyMergedBuyEdit(cartPost, writableKeys, targetQty, currentGiftLineKeys);
-    } finally {
-      selfMutating = false;
-    }
-    if (!result.applied) {
-      surfaceMergedWriteFailure(result.failureBody);
-    }
-    const cart = await getCart();
-    lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
-    const row = preRow !== void 0 ? lastPlan.buys.find((r) => r.variantId === preRow.variantId) : void 0;
-    await refreshDawnTotals();
-    for (const section of sections) section.attach();
-    schedule(perceptionConfig);
-    if (!result.applied) return fail;
-    return {
-      applied: true,
-      qty: (_a2 = row == null ? void 0 : row.controllableQuantity) != null ? _a2 : 0,
-      finalPrice: (_b2 = row == null ? void 0 : row.controllableFinalPrice) != null ? _b2 : 0,
-      originalPrice: (_c2 = row == null ? void 0 : row.controllableOriginalPrice) != null ? _c2 : 0
-    };
-  }
   var MASK_ATTR = "data-fge-pending";
   var GROUPED_ATTR = "data-fge-grouped";
   var MASK_TIMEOUT_MS = 1e3;
@@ -2684,9 +2089,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           syncNativeInputs(itemsEl, lastCartQuantities);
           return;
         }
-        if (!applyTwoGroupLayout(itemsEl, lastPlan, {
-          onMergedQtyChange: onMergedBuyQtyChange
-        })) {
+        if (!applyGiftLineHiding(itemsEl, lastPlan)) {
           liftMask(itemsEl);
         }
         syncNativeInputs(itemsEl, lastCartQuantities);

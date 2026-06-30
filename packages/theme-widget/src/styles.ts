@@ -202,46 +202,6 @@ body.fge-checkout-pending .cart__checkout-button::after{
   body.fge-checkout-pending .cart__checkout-button::before{ animation:none; }
 }
 
-/* --- Stage 2: the interactive merged stepper, styled to match the theme's native quantity-input.
-   Outer container (.fge-merged-stepper) is a plain flex row; the bordered rectangle is the inner
-   __wrapper (mirrors .quantity__wrapper exactly); the remove button sits OUTSIDE the rectangle. --- */
-.fge-merged-stepper{
-  display:inline-flex; align-items:center; gap:0.4rem;
-}
-.fge-merged-stepper__wrapper{
-  display:flex; justify-content:space-between; align-items:center; width:8rem;
-  padding:0 var(--spacing-2,0.8rem);
-  border:0.1rem solid rgba(var(--color-border,235,235,235),var(--alpha-border,1));
-  border-radius:var(--badge-border-radius,0.4rem);
-}
-.fge-merged-stepper__btn{
-  appearance:none; -webkit-appearance:none; cursor:pointer;
-  display:flex; align-items:center; justify-content:center;
-  width:2rem; height:2.8rem; flex-shrink:0; padding:0;
-  color:rgb(var(--color-foreground,17,17,17)); opacity:0.5;
-  background-color:transparent; border:0;
-}
-.fge-merged-stepper__btn:hover{ opacity:0.75; }
-.fge-merged-stepper__btn svg{ width:1rem; height:1rem; pointer-events:none; }
-.fge-merged-stepper__qty{
-  flex:1 1 auto; width:2rem; text-align:center;
-  font:inherit; font-size:var(--font-size-static-sm,1.2rem); font-weight:var(--font-weight-normal,400);
-  color:rgb(var(--color-foreground,17,17,17)); background:transparent; line-height:2.8rem;
-}
-.fge-merged-stepper__remove{
-  appearance:none; -webkit-appearance:none; cursor:pointer;
-  display:inline-flex; align-items:center; justify-content:center;
-  padding:0; width:2.4rem; height:2.4rem;
-  color:rgb(var(--color-foreground,17,17,17)); opacity:0.5;
-  background:transparent; border:0;
-}
-.fge-merged-stepper__remove:hover{ opacity:0.75; }
-.fge-merged-stepper__remove svg{ width:1.4rem; height:1.4rem; pointer-events:none; }
-.fge-merged-stepper__btn:focus-visible, .fge-merged-stepper__remove:focus-visible{
-  outline:2px solid var(--fge-brand); outline-offset:2px;
-}
-.fge-merged-stepper.is-busy{ opacity:.55; }
-.fge-merged-stepper__btn:disabled, .fge-merged-stepper__remove:disabled{ cursor:default; opacity:0.3; }
 /* --- Stage 2 (defect B.1): a transient failure notice (e.g. a VF-blocked update). Fixed bottom-center
    toast, appended to <body>; hidden until is-visible. Reduced-motion friendly (opacity only). --- */
 .fge-notice{
