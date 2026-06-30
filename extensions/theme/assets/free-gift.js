@@ -247,60 +247,6 @@
     return specs.map(mountOne);
   }
 
-  // src/cartAddStamp.ts
-  var toGid = (numericId) => `gid://shopify/ProductVariant/${numericId}`;
-  function allCampaignGiftVariantIds(config) {
-    if (config === null || config.status !== "active") {
-      return /* @__PURE__ */ new Set();
-    }
-    const ids = /* @__PURE__ */ new Set();
-    for (const tier of config.tiers) {
-      if (tier.gift.kind === "OR") {
-        for (const option of tier.gift.options) {
-          ids.add(option.variantId);
-        }
-      } else {
-        for (const gift of tier.gift.gifts) {
-          ids.add(gift.variantId);
-        }
-      }
-    }
-    return ids;
-  }
-  function stampItem(item, stampVariants) {
-    var _a2;
-    if (item.id === void 0) {
-      return item;
-    }
-    if (!stampVariants.has(toGid(item.id))) {
-      return item;
-    }
-    if (((_a2 = item.properties) == null ? void 0 : _a2[GIFT_LINE_PROPERTY]) != null) {
-      return item;
-    }
-    return {
-      ...item,
-      properties: { ...item.properties, [GIFT_LINE_PROPERTY]: "1" }
-    };
-  }
-  function stampGiftPropertiesOnAddBody(body, stampVariants) {
-    if (stampVariants.size === 0 || body === null || typeof body !== "object") {
-      return body;
-    }
-    const record = body;
-    if (Array.isArray(record["items"])) {
-      const items = record["items"];
-      const next = items.map((item) => stampItem(item, stampVariants));
-      const changed = next.some((item, i) => item !== items[i]);
-      return changed ? { ...record, items: next } : body;
-    }
-    if (typeof record["id"] === "number") {
-      const next = stampItem(record, stampVariants);
-      return next === record ? body : next;
-    }
-    return body;
-  }
-
   // src/cartGrouping.ts
   function isZeroedByOurCode(line, ourCode) {
     return line.finalLinePrice === 0 && ourCode !== null && line.allocationTitles.includes(ourCode);
@@ -372,12 +318,6 @@
     if (itemsEl === null) return false;
     if (plan.lineCount === 0) return false;
     const lineNodes = findLineNodes(itemsEl);
-    if (lineNodes.length > plan.lineCount) {
-      for (let i = lineNodes.length - 1; i >= plan.lineCount; i--) {
-        lineNodes[i].remove();
-      }
-      lineNodes.length = plan.lineCount;
-    }
     if (lineNodes.length !== plan.lineCount) return false;
     resetGiftHides(lineNodes);
     ((_a2 = itemsEl.closest("cart-drawer-items, cart-items")) != null ? _a2 : itemsEl).setAttribute(MARK, "");
@@ -1168,18 +1108,19 @@
     const addAttempted = /* @__PURE__ */ new Set();
     const failures = [];
     let wroteCart = false;
+    let mutatedGiftLines = false;
     for (let pass = 1; pass <= maxPasses; pass += 1) {
       const { lines, currency } = await io.readCart();
       const result = await io.validate(lines, currency);
       if (result === null) {
-        return { passes: pass, converged: false, appliedCode, failures, wroteCart };
+        return { passes: pass, converged: false, appliedCode, failures, wroteCart, mutatedGiftLines };
       }
       const plan = reconcileGiftLines(lines, result);
       const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
       const codeNeedsChange = plan.applyCode !== appliedCode;
       let add = plan.add.filter((a) => !addAttempted.has(a.variantId));
       if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
-        return { passes: pass, converged: true, appliedCode, failures, wroteCart };
+        return { passes: pass, converged: true, appliedCode, failures, wroteCart, mutatedGiftLines };
       }
       const removed = [];
       const adjusted = [];
@@ -1187,6 +1128,7 @@
       const passFailures = [];
       if (hasRemoveAdjust) {
         wroteCart = true;
+        mutatedGiftLines = true;
         const res = await applyCartPlan({ ...plan, add: [] }, io.post);
         removed.push(...res.removed);
         adjusted.push(...res.adjusted);
@@ -1205,6 +1147,7 @@
       }
       if (add.length > 0) {
         wroteCart = true;
+        mutatedGiftLines = true;
         for (const a of add) {
           addAttempted.add(a.variantId);
         }
@@ -1247,14 +1190,15 @@
           const updates = {};
           for (const l of charged) updates[l.id] = 0;
           wroteCart = true;
+          mutatedGiftLines = true;
           await io.post("cart/update.js", { updates });
           for (const l of charged) addAttempted.delete(l.variantId);
           continue;
         }
-        return { passes: pass, converged: true, appliedCode, failures, wroteCart };
+        return { passes: pass, converged: true, appliedCode, failures, wroteCart, mutatedGiftLines };
       }
     }
-    return { passes: maxPasses, converged: false, appliedCode, failures, wroteCart };
+    return { passes: maxPasses, converged: false, appliedCode, failures, wroteCart, mutatedGiftLines };
   }
 
   // src/styles.ts
@@ -1626,7 +1570,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     var _a2, _b2;
     return (_b2 = (_a2 = w.Shopify) == null ? void 0 : _a2.currency) == null ? void 0 : _b2.rate;
   };
-  var toGid2 = (variantId) => `gid://shopify/ProductVariant/${variantId}`;
+  var toGid = (variantId) => `gid://shopify/ProductVariant/${variantId}`;
   var isGiftLine = (item) => item.properties != null && item.properties[GIFT_LINE_PROPERTY] != null;
   function readConfig() {
     var _a2, _b2, _c2;
@@ -1779,6 +1723,9 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       const bodyRefresh = await refreshItemsBody(cart);
       prefetchedDrawerHtml = bodyRefresh.drawerHtml;
       for (const section of sections) section.attach();
+      if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
+        syncNativeInputs(itemsEl, lastCartQuantities);
+      }
     }
     if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
       const freshCart = await getCart();
@@ -1824,7 +1771,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       var _a2, _b2, _c2;
       return {
         id: item.key,
-        variantId: toGid2(item.variant_id),
+        variantId: toGid(item.variant_id),
         quantity: item.quantity,
         appAdded: isGiftLine(item),
         finalLinePrice: (_a2 = item.final_line_price) != null ? _a2 : 0,
@@ -1886,7 +1833,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       renderPerception(config);
       const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
       const cart = await getCart();
-      await verifiedDisplayReconcile(cartMutated, cart, outcome.wroteCart);
+      await verifiedDisplayReconcile(cartMutated, cart, outcome.mutatedGiftLines);
     } finally {
       markGiftWorkDone();
       selfMutating = false;
@@ -2251,25 +2198,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     (_a2 = w.subscribe) == null ? void 0 : _a2.call(w, CART_UPDATE_EVENT, trigger);
     const originalFetch = w.fetch.bind(w);
     w.fetch = async (input, init2) => {
-      let nextInit = init2;
-      if (!selfMutating) {
-        const url2 = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
-        if (/\/cart\/add(\.js)?(\?|$)/.test(url2)) {
-          const stampVariants = allCampaignGiftVariantIds(campaignConfig);
-          const body = init2 == null ? void 0 : init2.body;
-          if (stampVariants.size > 0 && typeof body === "string") {
-            try {
-              const parsed = JSON.parse(body);
-              const stamped = stampGiftPropertiesOnAddBody(parsed, stampVariants);
-              if (stamped !== parsed) {
-                nextInit = { ...init2, body: JSON.stringify(stamped) };
-              }
-            } catch {
-            }
-          }
-        }
-      }
-      const result = await originalFetch(input, nextInit != null ? nextInit : init2);
+      const result = await originalFetch(input, init2);
       const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
       if (!selfMutating && /\/cart\/(add|change|update|clear)(\.js)?/.test(url)) {
         trigger();

@@ -47,18 +47,16 @@ function resetGiftHides(lineNodes: HTMLElement[]): void {
 }
 
 // Hide gift lines (gets + lingering). Buy lines stay visible with native Dawn controls.
+// FAIL-OPEN on a node/plan count mismatch (either direction): return false so the caller keeps the
+// FOUC mask up, and let the AUTHORITATIVE verified-reconcile path (refreshItemsBody, which diffs the
+// DOM against cart.js) align the DOM. We do NOT blindly remove "surplus" nodes here: when the drawer
+// re-renders the full cart but `lastPlan` is still stale (smaller lineCount), removing the trailing
+// nodes deletes real buy rows and the cart flashes showing only the first row (bug 2).
 export function applyGiftLineHiding(itemsEl: HTMLElement | null, plan: GroupingPlan): boolean {
   if (itemsEl === null) return false;
   if (plan.lineCount === 0) return false;
 
   const lineNodes = findLineNodes(itemsEl);
-
-  if (lineNodes.length > plan.lineCount) {
-    for (let i = lineNodes.length - 1; i >= plan.lineCount; i--) {
-      lineNodes[i]!.remove();
-    }
-    lineNodes.length = plan.lineCount;
-  }
 
   if (lineNodes.length !== plan.lineCount) return false;
 

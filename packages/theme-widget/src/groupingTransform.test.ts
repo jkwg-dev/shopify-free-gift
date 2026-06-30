@@ -72,7 +72,7 @@ describe('applyGiftLineHiding', () => {
     expect((itemsEl.querySelector('.cart-item') as HTMLElement).style.display).toBe('');
   });
 
-  it('removes stale DOM nodes when DOM has more items than cart.js', () => {
+  it('fails open WITHOUT removing nodes when DOM has more items than the plan (stale plan)', () => {
     const itemsEl = buildDawnItems(3);
     document.body.appendChild(itemsEl);
 
@@ -81,8 +81,13 @@ describe('applyGiftLineHiding', () => {
       lineCount: 2,
     });
 
-    expect(applyGiftLineHiding(itemsEl, p)).toBe(true);
-    expect(itemsEl.querySelectorAll('.cart-item')).toHaveLength(2);
+    // A stale (smaller) plan must NOT delete real rows — that caused the "only the first row shows"
+    // drawer flash. Stay masked (false) and leave every node in place for the authoritative refetch.
+    expect(applyGiftLineHiding(itemsEl, p)).toBe(false);
+    expect(itemsEl.querySelectorAll('.cart-item')).toHaveLength(3);
+    for (const row of itemsEl.querySelectorAll<HTMLElement>('.cart-item')) {
+      expect(row.style.display).toBe('');
+    }
   });
 
   it('self-heals: a row wrongly hidden by a stale plan is un-hidden when gifts move', () => {

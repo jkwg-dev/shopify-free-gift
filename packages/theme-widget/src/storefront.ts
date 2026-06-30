@@ -15,7 +15,6 @@ import {
   type ValidateResult,
 } from '@free-gift-engine/core';
 import { mountCartContexts, type CartSection } from './cartSections.js';
-import { allCampaignGiftVariantIds, stampGiftPropertiesOnAddBody } from './cartAddStamp.js';
 import { classifyAndGroup, type GroupingPlan, type RawCartLine } from './cartGrouping.js';
 import {
   applyGiftLineHiding,
@@ -282,6 +281,13 @@ async function doVerifiedDisplayReconcile(
     const bodyRefresh = await refreshItemsBody(cart);
     prefetchedDrawerHtml = bodyRefresh.drawerHtml;
     for (const section of sections) section.attach();
+    // The innerHTML replace just repainted every visible buy row at the section-rendered qty. Restore
+    // the authoritative qty (from the cart we already read) in THIS task — before yielding to another
+    // getCart() — so the optimistic +/- value is never briefly shown as a different, stale number
+    // (bug 1). The guard leaves a row Dawn is still ahead on at its newer optimistic value.
+    if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
+      syncNativeInputs(itemsEl, lastCartQuantities);
+    }
   }
 
   // Sync qty inputs only when Dawn is not ahead of cart.js on any visible buy row (optimistic +/-).
@@ -414,7 +420,10 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     renderPerception(config);
     const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
     const cart = await getCart();
-    await verifiedDisplayReconcile(cartMutated, cart, outcome.wroteCart);
+    // Force a body re-fetch ONLY when gift LINES changed (keys may be stale). A discount-code-only
+    // write does not change line keys, so refetching there would needlessly wipe Dawn's optimistic
+    // +/- value (bug 1). cartMutated still drives the footer/totals refresh below.
+    await verifiedDisplayReconcile(cartMutated, cart, outcome.mutatedGiftLines);
   } finally {
     markGiftWorkDone(); // clear checkout lock only after display reconcile finishes
     selfMutating = false;
@@ -895,30 +904,14 @@ function init(): void {
   // Primary: Dawn pubsub cart-update.
   w.subscribe?.(CART_UPDATE_EVENT, trigger);
 
-  // Safety net (theme-agnostic): stamp gift-variant cart/add payloads, then detect cart mutations.
+  // Safety net (theme-agnostic): detect cart mutations and re-run the reconcile. We do NOT stamp
+  // shopper-initiated cart/add payloads: a shopper buying a gift-eligible product at full price is a
+  // PAID line that must count toward the tier (CLAUDE.md paid-duplicate rule). Only the reconciler's
+  // own gift add carries `_fge_gift`; a shopper plain add stays unmarked, so Shopify keeps the two
+  // as separate lines (different line-item properties) without merging.
   const originalFetch = w.fetch.bind(w);
   (w as { fetch: typeof fetch }).fetch = async (input, init) => {
-    let nextInit = init;
-    if (!selfMutating) {
-      const url =
-        typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
-      if (/\/cart\/add(\.js)?(\?|$)/.test(url)) {
-        const stampVariants = allCampaignGiftVariantIds(campaignConfig);
-        const body = init?.body;
-        if (stampVariants.size > 0 && typeof body === 'string') {
-          try {
-            const parsed = JSON.parse(body) as unknown;
-            const stamped = stampGiftPropertiesOnAddBody(parsed, stampVariants);
-            if (stamped !== parsed) {
-              nextInit = { ...init, body: JSON.stringify(stamped) };
-            }
-          } catch {
-            // Non-JSON body — leave untouched.
-          }
-        }
-      }
-    }
-    const result = await originalFetch(input, nextInit ?? init);
+    const result = await originalFetch(input, init);
     const url =
       typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
     if (!selfMutating && /\/cart\/(add|change|update|clear)(\.js)?/.test(url)) {
