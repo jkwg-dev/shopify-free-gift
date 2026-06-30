@@ -245,9 +245,12 @@ async function refreshItemsBody(cart: AjaxCart): Promise<{ ok: boolean; drawerHt
 }
 
 // Verified display reconcile: cart.js read → grouping + stamp → optional section corrections.
+// forceItemsRefresh: after FGE cart writes (gift/discount), Dawn keeps stale line keys in the DOM;
+// section-fetch the items body so qty steppers target live keys (variant multiset can still match).
 async function doVerifiedDisplayReconcile(
   cartMutated: boolean,
   existingCart?: AjaxCart,
+  forceItemsRefresh = false,
 ): Promise<void> {
   const cart = existingCart ?? (await getCart());
 
@@ -263,8 +266,14 @@ async function doVerifiedDisplayReconcile(
 
   const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
   let prefetchedDrawerHtml: string | undefined;
-  if (!domMatchesCart(itemsEl, cart)) {
-    console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch');
+  if (forceItemsRefresh || !domMatchesCart(itemsEl, cart)) {
+    if (forceItemsRefresh && domMatchesCart(itemsEl, cart)) {
+      console.warn(
+        '[FGE-DRAWERFIX] refreshing items body after FGE cart write (line keys may be stale)',
+      );
+    } else if (!domMatchesCart(itemsEl, cart)) {
+      console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch');
+    }
     const bodyRefresh = await refreshItemsBody(cart);
     prefetchedDrawerHtml = bodyRefresh.drawerHtml;
     for (const section of sections) section.attach();
@@ -275,11 +284,19 @@ async function doVerifiedDisplayReconcile(
   }
 }
 
-function verifiedDisplayReconcile(cartMutated = false, existingCart?: AjaxCart): Promise<void> {
+function verifiedDisplayReconcile(
+  cartMutated = false,
+  existingCart?: AjaxCart,
+  forceItemsRefresh = false,
+): Promise<void> {
   if (displayReconcileInFlight !== null) {
     return displayReconcileInFlight;
   }
-  displayReconcileInFlight = doVerifiedDisplayReconcile(cartMutated, existingCart)
+  displayReconcileInFlight = doVerifiedDisplayReconcile(
+    cartMutated,
+    existingCart,
+    forceItemsRefresh,
+  )
     .catch(() => undefined)
     .finally(() => {
       displayReconcileInFlight = null;
@@ -381,7 +398,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     renderPerception(config);
     const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
     const cart = await getCart();
-    await verifiedDisplayReconcile(cartMutated, cart);
+    await verifiedDisplayReconcile(cartMutated, cart, outcome.wroteCart);
   } finally {
     markGiftWorkDone(); // clear checkout lock only after display reconcile finishes
     selfMutating = false;

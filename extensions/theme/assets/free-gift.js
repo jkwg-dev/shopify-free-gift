@@ -1096,24 +1096,26 @@
     let appliedCode = (_b2 = opts.initialCode) != null ? _b2 : null;
     const addAttempted = /* @__PURE__ */ new Set();
     const failures = [];
+    let wroteCart = false;
     for (let pass = 1; pass <= maxPasses; pass += 1) {
       const { lines, currency } = await io.readCart();
       const result = await io.validate(lines, currency);
       if (result === null) {
-        return { passes: pass, converged: false, appliedCode, failures };
+        return { passes: pass, converged: false, appliedCode, failures, wroteCart };
       }
       const plan = reconcileGiftLines(lines, result);
       const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
       const codeNeedsChange = plan.applyCode !== appliedCode;
       let add = plan.add.filter((a) => !addAttempted.has(a.variantId));
       if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
-        return { passes: pass, converged: true, appliedCode, failures };
+        return { passes: pass, converged: true, appliedCode, failures, wroteCart };
       }
       const removed = [];
       const adjusted = [];
       const added = [];
       const passFailures = [];
       if (hasRemoveAdjust) {
+        wroteCart = true;
         const res = await applyCartPlan({ ...plan, add: [] }, io.post);
         removed.push(...res.removed);
         adjusted.push(...res.adjusted);
@@ -1126,10 +1128,12 @@
         add = plan.add.filter((a) => !addAttempted.has(a.variantId));
       }
       if (codeNeedsChange) {
+        wroteCart = true;
         await io.setDiscount(plan.applyCode);
         appliedCode = plan.applyCode;
       }
       if (add.length > 0) {
+        wroteCart = true;
         for (const a of add) {
           addAttempted.add(a.variantId);
         }
@@ -1157,14 +1161,15 @@
         if (charged.length > 0) {
           const updates = {};
           for (const l of charged) updates[l.id] = 0;
+          wroteCart = true;
           await io.post("cart/update.js", { updates });
           for (const l of charged) addAttempted.delete(l.variantId);
           continue;
         }
-        return { passes: pass, converged: true, appliedCode, failures };
+        return { passes: pass, converged: true, appliedCode, failures, wroteCart };
       }
     }
-    return { passes: maxPasses, converged: false, appliedCode, failures };
+    return { passes: maxPasses, converged: false, appliedCode, failures, wroteCart };
   }
 
   // src/styles.ts
@@ -1665,7 +1670,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
     return lastDrawerHtml !== void 0 ? { ok: false, drawerHtml: lastDrawerHtml } : { ok: false };
   }
-  async function doVerifiedDisplayReconcile(cartMutated, existingCart) {
+  async function doVerifiedDisplayReconcile(cartMutated, existingCart, forceItemsRefresh = false) {
     var _a2;
     const cart = existingCart != null ? existingCart : await getCart();
     lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
@@ -1678,8 +1683,12 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     }
     const itemsEl = document.querySelector("cart-drawer-items, cart-items");
     let prefetchedDrawerHtml;
-    if (!domMatchesCart(itemsEl, cart)) {
-      console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch");
+    if (forceItemsRefresh || !domMatchesCart(itemsEl, cart)) {
+      if (forceItemsRefresh && domMatchesCart(itemsEl, cart)) {
+        console.warn("[FGE-DRAWERFIX] refreshing items body after FGE cart write (line keys may be stale)");
+      } else if (!domMatchesCart(itemsEl, cart)) {
+        console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch");
+      }
       const bodyRefresh = await refreshItemsBody(cart);
       prefetchedDrawerHtml = bodyRefresh.drawerHtml;
       for (const section of sections) section.attach();
@@ -1688,11 +1697,11 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       await refreshDawnTotals(prefetchedDrawerHtml);
     }
   }
-  function verifiedDisplayReconcile(cartMutated = false, existingCart) {
+  function verifiedDisplayReconcile(cartMutated = false, existingCart, forceItemsRefresh = false) {
     if (displayReconcileInFlight !== null) {
       return displayReconcileInFlight;
     }
-    displayReconcileInFlight = doVerifiedDisplayReconcile(cartMutated, existingCart).catch(() => void 0).finally(() => {
+    displayReconcileInFlight = doVerifiedDisplayReconcile(cartMutated, existingCart, forceItemsRefresh).catch(() => void 0).finally(() => {
       displayReconcileInFlight = null;
     });
     return displayReconcileInFlight;
@@ -1779,7 +1788,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       renderPerception(config);
       const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
       const cart = await getCart();
-      await verifiedDisplayReconcile(cartMutated, cart);
+      await verifiedDisplayReconcile(cartMutated, cart, outcome.wroteCart);
     } finally {
       markGiftWorkDone();
       selfMutating = false;

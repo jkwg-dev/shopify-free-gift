@@ -35,6 +35,10 @@ export type ReconcileOutcome = {
   readonly converged: boolean;
   readonly appliedCode: string | null;
   readonly failures: readonly CartMutationFailure[];
+  // True when this run issued any cart AJAX write (gift add/remove/adjust or discount apply/clear).
+  // Dawn does not re-render line-item keys after our raw cart/update.js, so the storefront must
+  // section-refresh the items body whenever this is set — otherwise qty steppers keep stale keys.
+  readonly wroteCart: boolean;
 };
 
 // Pure predicate (unit-tested): did the apply FULLY realize the plan? If every planned remove/adjust/add
@@ -75,12 +79,13 @@ export async function reconcileGiftCart(
   // for it to appear. Also covers a failed add (e.g. 422): attempted once, not retried -> no flap.
   const addAttempted = new Set<string>();
   const failures: CartMutationFailure[] = [];
+  let wroteCart = false;
 
   for (let pass = 1; pass <= maxPasses; pass += 1) {
     const { lines, currency } = await io.readCart();
     const result = await io.validate(lines, currency);
     if (result === null) {
-      return { passes: pass, converged: false, appliedCode, failures }; // error: leave cart as-is
+      return { passes: pass, converged: false, appliedCode, failures, wroteCart }; // error: leave cart as-is
     }
 
     const plan = reconcileGiftLines(lines, result);
@@ -92,7 +97,7 @@ export async function reconcileGiftCart(
     let add = plan.add.filter((a) => !addAttempted.has(a.variantId));
 
     if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
-      return { passes: pass, converged: true, appliedCode, failures }; // cart already matches
+      return { passes: pass, converged: true, appliedCode, failures, wroteCart }; // cart already matches
     }
 
     // ORDER (this is what removes the visible FULL-PRICE beat): remove/adjust the OUTGOING gift FIRST,
@@ -107,6 +112,7 @@ export async function reconcileGiftCart(
     const added: string[] = [];
     const passFailures: CartMutationFailure[] = [];
     if (hasRemoveAdjust) {
+      wroteCart = true;
       const res = await applyCartPlan({ ...plan, add: [] }, io.post);
       removed.push(...res.removed);
       adjusted.push(...res.adjusted);
@@ -122,10 +128,12 @@ export async function reconcileGiftCart(
       add = plan.add.filter((a) => !addAttempted.has(a.variantId));
     }
     if (codeNeedsChange) {
+      wroteCart = true;
       await io.setDiscount(plan.applyCode);
       appliedCode = plan.applyCode;
     }
     if (add.length > 0) {
+      wroteCart = true;
       for (const a of add) {
         addAttempted.add(a.variantId); // add this variant at most once per run (no re-add churn)
       }
@@ -158,13 +166,14 @@ export async function reconcileGiftCart(
       if (charged.length > 0) {
         const updates: Record<string, number> = {};
         for (const l of charged) updates[l.id] = 0;
+        wroteCart = true;
         await io.post('cart/update.js', { updates });
         for (const l of charged) addAttempted.delete(l.variantId);
         continue; // re-validate on next pass
       }
-      return { passes: pass, converged: true, appliedCode, failures };
+      return { passes: pass, converged: true, appliedCode, failures, wroteCart };
     }
   }
 
-  return { passes: maxPasses, converged: false, appliedCode, failures };
+  return { passes: maxPasses, converged: false, appliedCode, failures, wroteCart };
 }
