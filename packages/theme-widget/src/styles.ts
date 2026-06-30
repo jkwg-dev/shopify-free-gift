@@ -28,6 +28,7 @@ export const FGE_CSS = `
 
 .fge-headline{ margin:0 0 2px; font-size:var(--font-size-static-sm,1.2rem); font-weight:600; color:var(--fge-ink); }
 .fge-headline .fge-amt{ color:var(--fge-brand-strong); font-weight:750; }
+.fge-fullprice-note{ margin:6px 0 0; font-size:var(--font-size-static-xs,1rem); line-height:1.3; color:#c41e3a; font-weight:600; }
 .fge-subnote{ margin:6px 0 0; font-size:var(--font-size-static-xs,1rem); line-height:1.3; color:var(--fge-muted); }
 
 /* --- the progress stepper: a clearly visible slim bar. Explicit px geometry (NOT inset:0 + parent

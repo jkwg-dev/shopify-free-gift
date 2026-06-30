@@ -263,3 +263,24 @@ export async function giftProductsStillInCollection(
   }
   return stillMembers;
 }
+
+// Check which of the given product GIDs are members of a collection. Returns the set of product GIDs
+// that ARE members. Used by /validate to determine which cart lines fall inside the merchant-configured
+// qualifying collection (tier qualification is scoped to collection members only).
+export async function fetchCollectionMembership(
+  client: AdminGraphqlClient,
+  collectionId: string,
+  productIds: readonly string[],
+): Promise<Set<string>> {
+  const members = new Set<string>();
+  for (const productId of productIds) {
+    const data = await client.request<HasProductResponse>(COLLECTION_HAS_PRODUCT, {
+      id: collectionId,
+      productId,
+    });
+    if (data.collection?.hasProduct === true) {
+      members.add(productId);
+    }
+  }
+  return members;
+}

@@ -28,6 +28,9 @@ export type CampaignInputDTO = {
   readonly startsAt: string;
   readonly endsAt: string;
   readonly displayTimezone: string;
+  // Merchant-configured qualifying collection GID (Shopify collection that defines which products
+  // count toward the tier-qualifying subtotal). Required for activation; nullable for drafts.
+  readonly qualifyingCollectionId?: string | null;
   readonly tiers: readonly TierDTO[];
 };
 
@@ -42,6 +45,7 @@ export type CampaignDTO = {
   readonly displayTimezone: string;
   readonly active: boolean;
   readonly configVersionHash: string;
+  readonly qualifyingCollectionId: string | null;
   readonly tiers: readonly TierResponseDTO[];
 };
 

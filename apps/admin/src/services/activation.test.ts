@@ -14,6 +14,7 @@ import {
   ActivationMintError,
   ActivationWindowError,
   deactivateCampaign,
+  MissingQualifyingCollectionError,
   ReplaceConfirmationRequiredError,
   ScheduleEditRequiresDeactivationError,
   supersedeCampaign,
@@ -104,6 +105,7 @@ async function seed(
     startsAt: new Date(window.startsAt ?? '2026-07-01T00:00:00Z'),
     endsAt: new Date(window.endsAt ?? '2026-07-31T00:00:00Z'),
     displayTimezone: 'UTC',
+    qualifyingCollectionId: 'gid://shopify/Collection/q',
     configVersionHash: `h-${name}`,
     tiers: tiers(),
   });
@@ -235,6 +237,25 @@ describe('activateCampaign (C3: confirm-and-replace swap, start-now, teardown)',
     expect((await repo.findById(id))?.active).toBe(false);
   });
 
+  it('refuses to activate a campaign with no qualifying collection', async () => {
+    const repo = new FakeCampaignRepository();
+    const c = await repo.create('shop1', {
+      name: 'NoCollection',
+      suppression: 'highest-only',
+      declineEnabled: true,
+      startsAt: new Date('2026-07-01T00:00:00Z'),
+      endsAt: new Date('2026-07-31T00:00:00Z'),
+      displayTimezone: 'UTC',
+      qualifyingCollectionId: null,
+      configVersionHash: 'h-nocoll',
+      tiers: tiers(),
+    });
+    await expect(activateCampaign('shop1', c.id, makeDeps(repo))).rejects.toBeInstanceOf(
+      MissingQualifyingCollectionError,
+    );
+    expect((await repo.findById(c.id))?.active).toBe(false);
+  });
+
   it('is idempotent when already active (no re-mint)', async () => {
     const repo = new FakeCampaignRepository();
     const id = await seed(repo, 'shop1', 'July');
@@ -299,6 +320,7 @@ function dto(name: string, tier1: readonly string[] = ['v/a', 'v/b']): CampaignI
     startsAt: '2026-07-01T00:00:00.000Z',
     endsAt: '2026-07-31T00:00:00.000Z',
     displayTimezone: 'UTC',
+    qualifyingCollectionId: 'gid://shopify/Collection/q',
     tiers: [
       {
         position: 1,
@@ -346,6 +368,7 @@ async function seedReal(
     startsAt: new Date(input.startsAt),
     endsAt: new Date(input.endsAt),
     displayTimezone: input.displayTimezone,
+    qualifyingCollectionId: input.qualifyingCollectionId ?? 'gid://shopify/Collection/q',
     configVersionHash: toConfigVersionHash(input),
     tiers: input.tiers.map((t) => ({
       position: t.position,

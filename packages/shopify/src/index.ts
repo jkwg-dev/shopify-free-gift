@@ -67,6 +67,7 @@ export {
   waitForGiftProductsIncluded,
   collectionProductCount,
   giftProductsStillInCollection,
+  fetchCollectionMembership,
   type QualifyingCollection,
   type QualifyingRule,
   type EnsureQualifyingOptions,

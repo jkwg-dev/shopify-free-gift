@@ -98,7 +98,17 @@ function parseRequest(rawBody: string): ValidateRequest {
     if (typeof raw.appAdded !== 'boolean') {
       throw new ValidateBadRequestError(`cart[${i}].appAdded must be a boolean`);
     }
-    return { variantId: raw.variantId, quantity: raw.quantity, appAdded: raw.appAdded };
+    if (raw.hasDiscountAllocation !== undefined && typeof raw.hasDiscountAllocation !== 'boolean') {
+      throw new ValidateBadRequestError(`cart[${i}].hasDiscountAllocation must be a boolean`);
+    }
+    return {
+      variantId: raw.variantId,
+      quantity: raw.quantity,
+      appAdded: raw.appAdded,
+      ...(raw.hasDiscountAllocation !== undefined
+        ? { hasDiscountAllocation: raw.hasDiscountAllocation as boolean }
+        : {}),
+    };
   });
 
   if (typeof declined !== 'boolean') {

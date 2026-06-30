@@ -16,6 +16,10 @@ export type ValidateCartLineInput = {
   // purchased unit of a gift-eligible product (appAdded=false) still counts — exclusion is
   // per-line, not per-variant.
   readonly appAdded: boolean;
+  // True when this line has any discount allocation applied (BOGO, automatic discount, code
+  // discount). Lines with allocations are excluded from the qualifying subtotal (full-price items
+  // only). Derived client-side from /cart.js `discounts` array. Optional for backward compat.
+  readonly hasDiscountAllocation?: boolean;
 };
 
 export type ValidateRequest = {

@@ -15,7 +15,10 @@ const NOW = new Date('2026-06-25T12:00:00Z');
 // country -> variantId -> price/availability
 type PriceTable = Record<
   string,
-  Record<string, { amount: string; currencyCode: string; availableForSale?: boolean }>
+  Record<
+    string,
+    { amount: string; currencyCode: string; availableForSale?: boolean; productId?: string }
+  >
 >;
 
 const DEFAULT_PRICES: PriceTable = {
@@ -41,6 +44,7 @@ function makePricer(table: PriceTable) {
         : [
             {
               id,
+              productId: p.productId ?? `gid://shopify/Product/${id.split('/').pop()}`,
               availableForSale: p.availableForSale ?? true,
               price: { amount: p.amount, currencyCode: p.currencyCode },
             },
@@ -65,6 +69,7 @@ function campaignWith(
     displayTimezone: 'UTC',
     active: true,
     configVersionHash: 'cfg-hash-1',
+    qualifyingCollectionId: 'gid://shopify/Collection/q',
     tiers: [
       {
         id: 't1',
@@ -137,6 +142,7 @@ function makeDeps(
     channelThrows?: boolean;
     now?: () => Date;
     failMint?: boolean;
+    qualifyingProductIds?: Set<string>;
   } = {},
 ): { deps: ValidateServiceDeps; gateway: FakeDiscountGateway } {
   const gateway = options.failMint
@@ -155,8 +161,9 @@ function makeDeps(
     fetchChannelAvailability: options.channelThrows
       ? () => Promise.reject(new Error('channel boom'))
       : makeChannel(options.channel ?? {}),
+    fetchCollectionMembership: (_collectionId, productIds) =>
+      Promise.resolve(options.qualifyingProductIds ?? new Set(productIds)),
     mappingStore: store,
-    qualifyingCollectionId: 'gid://shopify/Collection/test',
     now: options.now ?? (() => NOW),
   };
   return { deps, gateway };
@@ -628,6 +635,165 @@ describe('resolveValidate — no-gift paths', () => {
 
   it('returns inactive outside the schedule window', async () => {
     const { deps } = makeDeps({ now: () => new Date('2026-08-01T00:00:00Z') });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }),
+      deps,
+    );
+    expect(result).toEqual({ status: 'no-gift', reason: 'inactive' });
+  });
+});
+
+// --- Qualifying collection + discount allocation exclusion ---
+
+const OUT_OF_COLL = 'gid://shopify/ProductVariant/OUT';
+const BOGO_ITEM = 'gid://shopify/ProductVariant/BOGO';
+
+describe('resolveValidate — qualifying collection + discount allocation', () => {
+  it('EXCLUDES a variant whose product is NOT in the qualifying collection', async () => {
+    const prices: PriceTable = {
+      US: {
+        [P1]: { amount: '60.00', currencyCode: 'USD', productId: 'gid://shopify/Product/P1' },
+        [OUT_OF_COLL]: {
+          amount: '40.00',
+          currencyCode: 'USD',
+          productId: 'gid://shopify/Product/OUT',
+        },
+        [G1]: { amount: '20.00', currencyCode: 'USD' },
+      },
+    };
+    // Only P1's product is in the qualifying collection.
+    const qualifyingProductIds = new Set(['gid://shopify/Product/P1']);
+    const { deps } = makeDeps({ prices, qualifyingProductIds });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [
+          { variantId: P1, quantity: 1, appAdded: false }, // $60 in collection ✓
+          { variantId: OUT_OF_COLL, quantity: 1, appAdded: false }, // $40 not in collection ✗
+        ],
+      }),
+      deps,
+    );
+    expect(result.status).toBe('gift');
+    if (result.status !== 'gift') return;
+    expect(result.subtotal).toEqual(money(6000, 'USD'));
+    expect(result.tierId).toBe('t1');
+  });
+
+  it('out-of-collection exclusion pushes below threshold', async () => {
+    const prices: PriceTable = {
+      US: {
+        [P1]: { amount: '40.00', currencyCode: 'USD', productId: 'gid://shopify/Product/P1' },
+        [OUT_OF_COLL]: {
+          amount: '30.00',
+          currencyCode: 'USD',
+          productId: 'gid://shopify/Product/OUT',
+        },
+        [G1]: { amount: '20.00', currencyCode: 'USD' },
+      },
+    };
+    const qualifyingProductIds = new Set(['gid://shopify/Product/P1']);
+    const { deps } = makeDeps({ prices, qualifyingProductIds });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [
+          { variantId: P1, quantity: 1, appAdded: false },
+          { variantId: OUT_OF_COLL, quantity: 1, appAdded: false },
+        ],
+      }),
+      deps,
+    );
+    expect(result.status).toBe('no-gift');
+    if (result.status !== 'no-gift') return;
+    expect(result.subtotal).toEqual(money(4000, 'USD'));
+    expect(result.reason).toBe('below-threshold');
+  });
+
+  it('EXCLUDES a line with hasDiscountAllocation (BOGO) even when in collection', async () => {
+    const prices: PriceTable = {
+      US: {
+        [P1]: { amount: '60.00', currencyCode: 'USD' },
+        [BOGO_ITEM]: { amount: '50.00', currencyCode: 'USD' },
+        [G1]: { amount: '20.00', currencyCode: 'USD' },
+      },
+    };
+    const { deps } = makeDeps({ prices });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [
+          { variantId: P1, quantity: 1, appAdded: false },
+          { variantId: BOGO_ITEM, quantity: 1, appAdded: false, hasDiscountAllocation: true },
+        ],
+      }),
+      deps,
+    );
+    expect(result.status).toBe('gift');
+    if (result.status !== 'gift') return;
+    expect(result.subtotal).toEqual(money(6000, 'USD'));
+    expect(result.tierId).toBe('t1');
+  });
+
+  it('excludes out-of-collection, discounted, and gift lines together', async () => {
+    const prices: PriceTable = {
+      US: {
+        [P1]: { amount: '40.00', currencyCode: 'USD', productId: 'gid://shopify/Product/P1' },
+        [OUT_OF_COLL]: {
+          amount: '30.00',
+          currencyCode: 'USD',
+          productId: 'gid://shopify/Product/OUT',
+        },
+        [BOGO_ITEM]: {
+          amount: '50.00',
+          currencyCode: 'USD',
+          productId: 'gid://shopify/Product/BOGO',
+        },
+        [G1]: { amount: '20.00', currencyCode: 'USD' },
+      },
+    };
+    const qualifyingProductIds = new Set([
+      'gid://shopify/Product/P1',
+      'gid://shopify/Product/BOGO',
+    ]);
+    const { deps } = makeDeps({ prices, qualifyingProductIds });
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({
+        cart: [
+          { variantId: P1, quantity: 1, appAdded: false },
+          { variantId: OUT_OF_COLL, quantity: 1, appAdded: false },
+          { variantId: BOGO_ITEM, quantity: 1, appAdded: false, hasDiscountAllocation: true },
+          { variantId: G1, quantity: 1, appAdded: true },
+        ],
+      }),
+      deps,
+    );
+    expect(result.status).toBe('no-gift');
+    if (result.status !== 'no-gift') return;
+    expect(result.subtotal).toEqual(money(4000, 'USD'));
+  });
+
+  it('treats hasDiscountAllocation=undefined as false (backward compat)', async () => {
+    const { deps } = makeDeps();
+    const result = await resolveValidate(
+      'shop.myshopify.com',
+      req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }),
+      deps,
+    );
+    expect(result.status).toBe('gift');
+    if (result.status !== 'gift') return;
+    expect(result.subtotal).toEqual(money(12000, 'USD'));
+  });
+
+  it('returns inactive when the campaign has no qualifying collection set', async () => {
+    const noCollCampaign = campaignWith('highest-only', {
+      kind: 'AND',
+      gifts: [{ variantId: G1 }],
+    });
+    (noCollCampaign as { qualifyingCollectionId: string | null }).qualifyingCollectionId = null;
+    const { deps } = makeDeps({ campaign: noCollCampaign });
     const result = await resolveValidate(
       'shop.myshopify.com',
       req({ cart: [{ variantId: P1, quantity: 2, appAdded: false }] }),

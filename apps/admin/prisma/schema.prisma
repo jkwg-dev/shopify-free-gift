@@ -35,8 +35,9 @@ model Campaign {
   endsAt            DateTime
   displayTimezone   String
   active            Boolean           @default(false)
-  configVersionHash String
-  createdAt         DateTime          @default(now())
+  configVersionHash        String
+  qualifyingCollectionId   String?
+  createdAt                DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
   tiers             Tier[]
   giftCodeMappings  GiftCodeMapping[]

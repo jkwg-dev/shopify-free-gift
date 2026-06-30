@@ -27,6 +27,7 @@ const campaign: Campaign = {
   displayTimezone: 'UTC',
   active: true,
   configVersionHash: 'cfg-1',
+  qualifyingCollectionId: 'gid://shopify/Collection/q',
   tiers: [
     {
       id: 't1',
@@ -99,9 +100,24 @@ const meta: readonly VariantMeta[] = [
 ];
 
 const pricing: readonly VariantPricing[] = [
-  { id: ICE, availableForSale: true, price: { amount: '699.95', currencyCode: 'USD' } },
-  { id: DAWN, availableForSale: true, price: { amount: '699.95', currencyCode: 'USD' } },
-  { id: HIDDEN, availableForSale: true, price: { amount: '749.95', currencyCode: 'USD' } },
+  {
+    id: ICE,
+    productId: SNOWBOARD,
+    availableForSale: true,
+    price: { amount: '699.95', currencyCode: 'USD' },
+  },
+  {
+    id: DAWN,
+    productId: SNOWBOARD,
+    availableForSale: true,
+    price: { amount: '699.95', currencyCode: 'USD' },
+  },
+  {
+    id: HIDDEN,
+    productId: HIDDEN_P,
+    availableForSale: true,
+    price: { amount: '749.95', currencyCode: 'USD' },
+  },
 ];
 
 // Channel availability (Stage E): the SINGLE source of stock + Online-Store publish on the gift path.

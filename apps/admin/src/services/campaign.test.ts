@@ -24,6 +24,7 @@ function inputWith(thresholdMinor: number, variantId = 'v1'): CampaignInputDTO {
     startsAt: '2026-06-01T00:00:00.000Z',
     endsAt: '2026-06-30T23:59:59.000Z',
     displayTimezone: 'America/New_York',
+    qualifyingCollectionId: 'gid://shopify/Collection/q',
     tiers: [
       {
         position: 0,

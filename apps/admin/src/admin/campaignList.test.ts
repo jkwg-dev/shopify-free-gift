@@ -15,6 +15,7 @@ function campaign(over: Partial<Campaign> = {}): Campaign {
     displayTimezone: 'UTC',
     active: true,
     configVersionHash: 'h',
+    qualifyingCollectionId: 'gid://shopify/Collection/q',
     tiers: [
       {
         id: 't2',

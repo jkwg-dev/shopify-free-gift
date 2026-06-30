@@ -96,6 +96,7 @@ export function editorInputToCampaignInput(input: CampaignEditorInput): Campaign
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     displayTimezone: 'UTC', // Stage B edits schedule in UTC; per-zone display is a later concern.
+    qualifyingCollectionId: input.qualifyingCollectionId ?? null,
     tiers: input.tiers.map(tierFromEditor),
   };
 }
@@ -137,6 +138,7 @@ export function campaignToEditorView(
     endsAt: campaign.endsAt,
     declineEnabled: campaign.declineEnabled,
     suppression: campaign.suppression,
+    qualifyingCollectionId: campaign.qualifyingCollectionId,
     tiers: [...campaign.tiers]
       .sort((a, b) => a.position - b.position)
       .map((tier) => ({

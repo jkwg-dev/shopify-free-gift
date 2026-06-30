@@ -8,6 +8,13 @@ export type CartLine = {
   readonly unitPrice: Money;
   readonly quantity: number;
   readonly isGift: boolean;
+  // Whether this line's product is a member of the campaign's qualifying collection. Lines NOT in
+  // the collection do not count toward tier qualification. `undefined` = no collection check (backward
+  // compat); explicit `false` = excluded.
+  readonly inQualifyingCollection?: boolean;
+  // Line has a discount allocation applied (BOGO, automatic discount, code discount, etc.).
+  // These lines do NOT count toward tier qualification (full-price items only).
+  readonly hasDiscountAllocation?: boolean;
 };
 
 // The qualifying subtotal EXCLUDES gift lines. A gift sits in the cart at full price until
@@ -16,9 +23,9 @@ export type CartLine = {
 export function computeQualifyingSubtotal(lines: readonly CartLine[], currency: string): Money {
   let subtotal = money(0, currency);
   for (const line of lines) {
-    if (line.isGift) {
-      continue;
-    }
+    if (line.isGift) continue;
+    if (line.inQualifyingCollection === false) continue;
+    if (line.hasDiscountAllocation) continue;
     // addMoney asserts the line is priced in `currency`, surfacing any upstream FX mistake.
     subtotal = addMoney(subtotal, multiplyMoney(line.unitPrice, line.quantity));
   }

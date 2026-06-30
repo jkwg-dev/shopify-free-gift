@@ -156,6 +156,7 @@ const campaignDto = (): CampaignDTO => ({
   displayTimezone: 'UTC',
   active: false,
   configVersionHash: 'h',
+  qualifyingCollectionId: 'gid://shopify/Collection/q',
   tiers: [
     {
       id: 't1',

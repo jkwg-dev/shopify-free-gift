@@ -22,6 +22,10 @@ export type CartLineView = {
   // (finalLinePrice > 0) as removable — a $0 copy is always preferred. Optional so existing
   // callers that don't supply it still work (treated as 0, i.e. "free").
   readonly finalLinePrice?: number;
+  // True when this line has any discount allocation (BOGO, automatic discount, code discount).
+  // Carried through to the /validate request so the server excludes discounted lines from the
+  // qualifying subtotal. Optional for backward compat (treated as false).
+  readonly hasDiscountAllocation?: boolean;
 };
 
 export type GiftLineAdd = {

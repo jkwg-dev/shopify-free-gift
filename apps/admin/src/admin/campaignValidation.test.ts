@@ -25,6 +25,7 @@ function input(overrides: Partial<CampaignInputDTO> = {}): CampaignInputDTO {
     startsAt: '2026-07-01T00:00:00.000Z',
     endsAt: '2026-07-31T00:00:00.000Z',
     displayTimezone: 'UTC',
+    qualifyingCollectionId: 'gid://shopify/Collection/q',
     tiers: [tier()],
     ...overrides,
   };
@@ -75,6 +76,13 @@ describe('validateCampaignInput', () => {
       ],
     });
     expect(codes(input({ tiers: [dup] }))).toContain('duplicate-market');
+  });
+
+  it('requires a qualifying collection', () => {
+    expect(codes(input({ qualifyingCollectionId: null }))).toContain(
+      'missing-qualifying-collection',
+    );
+    expect(codes(input())).not.toContain('missing-qualifying-collection');
   });
 
   it('delegates tier-shape checks to core (AND needs 2 gifts)', () => {

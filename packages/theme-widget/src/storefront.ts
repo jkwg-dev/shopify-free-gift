@@ -337,6 +337,7 @@ async function readCartLines(): Promise<{ lines: CartLineView[]; currency: strin
     quantity: item.quantity,
     appAdded: isGiftLine(item),
     finalLinePrice: item.final_line_price ?? 0,
+    hasDiscountAllocation: (item.discounts?.length ?? 0) > 0,
   }));
   return { lines, currency: cart.currency };
 }
@@ -361,6 +362,7 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
               variantId: l.variantId,
               quantity: l.quantity,
               appAdded: l.appAdded,
+              hasDiscountAllocation: l.hasDiscountAllocation ?? false,
             })),
             choices: choiceState,
             declined,

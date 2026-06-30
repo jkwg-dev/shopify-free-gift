@@ -15,6 +15,7 @@ import {
   collectionProductCount,
   ensureQualifyingCollection,
   EXCLUDE_GIFTS_RULE,
+  fetchCollectionMembership,
   exchangeAccessToken,
   fetchGiftChannelAvailability,
   fetchGiftVariants,
@@ -250,10 +251,6 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
     mappingTable,
     new ShopifyDiscountGatewayAdapter(client, giftsIncludedFlag()),
   );
-  // The BXGY codes reference the shared qualifying collection; ensure it exists with the rule for the
-  // active model (exclude gifts vs all-products). Read-only here — the RULE FLIP is reconciled by
-  // provisioning (getGiftTagGateway), so this never mutates an existing collection.
-  const qualifyingCollection = await ensureQualifyingCollection(client, { rule: qualifyingRule() });
 
   validateDeps = {
     apiSecret: requireEnv('SHOPIFY_API_SECRET'),
@@ -262,8 +259,9 @@ export async function getValidateDeps(): Promise<ValidateHandlerDeps> {
     priceVariants: (ids, ctx) => fetchVariantPricing(client, ids, ctx),
     fetchChannelAvailability: (ids) =>
       fetchGiftChannelAvailability(client, ids, onlineStorePublicationId),
+    fetchCollectionMembership: (collectionId, productIds) =>
+      fetchCollectionMembership(client, collectionId, productIds),
     mappingStore,
-    qualifyingCollectionId: qualifyingCollection.id,
     now: () => new Date(),
   };
   return validateDeps;

@@ -57,6 +57,7 @@ export type CampaignRow = {
   displayTimezone: string;
   active: boolean;
   configVersionHash: string;
+  qualifyingCollectionId: string | null;
   tiers: TierRow[];
 };
 

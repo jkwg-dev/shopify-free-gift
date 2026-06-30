@@ -8,6 +8,9 @@ import type { AdminGraphqlClient } from './client.js';
 
 export type VariantPricing = {
   readonly id: string;
+  // Owning product GID — used to check qualifying-collection membership (collections contain
+  // products, not variants).
+  readonly productId: string;
   readonly availableForSale: boolean;
   // Decimal amount + ISO currency, exactly as Shopify returns it. Conversion to core Money goes
   // through ./money (the currency-exponent boundary) at the call site.
@@ -22,6 +25,7 @@ const PRICING_QUERY = `query CartPricing($ids: [ID!]!, $country: CountryCode!) {
     __typename
     ... on ProductVariant {
       id
+      product { id }
       availableForSale
       contextualPricing(context: { country: $country }) {
         price { amount currencyCode }
@@ -33,6 +37,7 @@ const PRICING_QUERY = `query CartPricing($ids: [ID!]!, $country: CountryCode!) {
 type PricedNode = {
   readonly __typename: 'ProductVariant';
   readonly id: string;
+  readonly product: { readonly id: string };
   readonly availableForSale: boolean;
   readonly contextualPricing: {
     readonly price: { readonly amount: string; readonly currencyCode: string };
@@ -40,8 +45,9 @@ type PricedNode = {
 };
 
 type RawNode =
-  | (Omit<PricedNode, 'contextualPricing'> & {
+  | (Omit<PricedNode, 'contextualPricing' | 'product'> & {
       readonly contextualPricing: PricedNode['contextualPricing'] | null;
+      readonly product: PricedNode['product'] | null;
     })
   | { readonly __typename: string };
 
@@ -62,7 +68,9 @@ function isPricedVariant(node: RawNode | null): node is PricedNode {
     node !== null &&
     node.__typename === 'ProductVariant' &&
     'contextualPricing' in node &&
-    node.contextualPricing !== null
+    node.contextualPricing !== null &&
+    'product' in node &&
+    node.product !== null
   );
 }
 
@@ -91,6 +99,7 @@ export async function fetchVariantPricing(
       if (isPricedVariant(node)) {
         priced.push({
           id: node.id,
+          productId: node.product.id,
           availableForSale: node.availableForSale,
           price: node.contextualPricing.price,
         });

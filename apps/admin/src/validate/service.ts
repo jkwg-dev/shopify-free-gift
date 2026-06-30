@@ -51,11 +51,14 @@ export type ValidateServiceDeps = {
   readonly fetchChannelAvailability: (
     variantIds: readonly string[],
   ) => Promise<ReadonlyMap<string, GiftChannelAvailability>>;
+  // Check which product GIDs are members of a merchant-configured qualifying collection. Returns the
+  // set of product GIDs that ARE members. Used to determine which cart lines count toward the tier.
+  readonly fetchCollectionMembership: (
+    collectionId: string,
+    productIds: readonly string[],
+  ) => Promise<Set<string>>;
   // Concurrency-safe get-or-create for the reusable scoped gift code.
   readonly mappingStore: GiftCodeMappingStore;
-  // GID of the shared qualifying smart collection (BXGY customerBuys scope). Provisioned at campaign
-  // activation (tag gifts → ensure collection → wait for exclusion) before any code is minted.
-  readonly qualifyingCollectionId: string;
   readonly now: () => Date;
   // Stacking policy for minted gift codes. Defaults to GIFT_COMBINES_WITH (productDiscounts:true so
   // FGE coexists with other BXGY discounts on different line items).
@@ -153,6 +156,12 @@ export async function resolveValidate(
 
   const giftVariantSet = giftSetVariantIds(campaign);
 
+  // The campaign must have a qualifying collection set; without one we cannot scope the subtotal.
+  if (campaign.qualifyingCollectionId === null) {
+    return { status: 'no-gift', reason: 'inactive' };
+  }
+  const qualifyingCollectionId = campaign.qualifyingCollectionId;
+
   // One authoritative pricing call over cart variants ∪ all candidate gift variants (the latter so
   // we can gate on gift availability even when the gift line is not yet in the cart).
   const variantIds = [...new Set([...request.cart.map((l) => l.variantId), ...giftVariantSet])];
@@ -167,9 +176,26 @@ export async function resolveValidate(
     );
   }
 
+  // Collect the owning product GIDs for all cart variants so we can check collection membership.
+  // Gift lines are excluded separately (isGift), so we only need to check non-gift cart lines.
+  const cartProductIds = new Set<string>();
+  for (const line of request.cart) {
+    const isGift = line.appAdded && giftVariantSet.has(line.variantId);
+    if (!isGift) {
+      const priced = pricingById.get(line.variantId);
+      if (priced !== undefined) cartProductIds.add(priced.productId);
+    }
+  }
+  const qualifyingProductIds = await deps.fetchCollectionMembership(qualifyingCollectionId, [
+    ...cartProductIds,
+  ]);
+
   // Build core cart lines with server-derived isGift and authoritative prices. A line is a gift
   // (excluded from the subtotal) only if it claims app-added AND its variant is a campaign gift.
   // Unpriceable non-gift lines (e.g. a variant deleted mid-session) simply do not count.
+  // Qualifying-collection rule: only lines whose product is IN the merchant's qualifying collection
+  // count toward the tier. Runtime safety net: even an in-collection line with a discount allocation
+  // (client-claimed, harmless — can only reduce the qualifying subtotal) is excluded.
   const coreCart: CartLine[] = [];
   for (const line of request.cart) {
     const isGift = line.appAdded && giftVariantSet.has(line.variantId);
@@ -191,6 +217,8 @@ export async function resolveValidate(
       unitPrice: money(decimalToMinorUnits(priced.price.amount, presentment), presentment),
       quantity: line.quantity,
       isGift: false,
+      inQualifyingCollection: qualifyingProductIds.has(priced.productId),
+      hasDiscountAllocation: line.hasDiscountAllocation ?? false,
     });
   }
 
@@ -284,7 +312,7 @@ export async function resolveValidate(
         title: `${campaign.name} — tier ${domainTier.position}`,
         giftVariantIds,
         minimumSubtotal: domainTier.baseThreshold,
-        qualifyingCollectionId: deps.qualifyingCollectionId,
+        qualifyingCollectionId,
         startsAt: campaign.startsAt.toISOString(),
         endsAt: campaign.endsAt.toISOString(),
         combinesWith: deps.giftCombinesWith ?? GIFT_COMBINES_WITH,

@@ -39,6 +39,15 @@ export class ReplaceConfirmationRequiredError extends Error {
   }
 }
 
+// Thrown when activating a campaign that has no qualifying collection configured. The merchant must
+// set a qualifying collection in the admin before activating. Mapped to 400.
+export class MissingQualifyingCollectionError extends Error {
+  constructor(readonly campaignId: string) {
+    super('Campaign requires a qualifying collection before activation.');
+    this.name = 'MissingQualifyingCollectionError';
+  }
+}
+
 // Thrown when activating a campaign whose window has already ended (endsAt <= now) — it could never
 // serve. The route maps it to a 400.
 export class ActivationWindowError extends Error {
@@ -201,6 +210,9 @@ export async function activateCampaign(
     return campaignToResponse(campaign); // already active — no-op
   }
   const now = deps.now();
+  if (campaign.qualifyingCollectionId === null) {
+    throw new MissingQualifyingCollectionError(campaignId);
+  }
   if (campaign.endsAt.getTime() <= now.getTime()) {
     throw new ActivationWindowError(campaign.endsAt);
   }
@@ -215,10 +227,10 @@ export async function activateCampaign(
   const startsAt = campaign.startsAt.getTime() > now.getTime() ? now : campaign.startsAt;
 
   // Provision + eager-mint BEFORE the swap, so a failure leaves the prior campaign active (no gap).
-  const provision = await provisionGifts(deps.gateway, allGiftVariantIds(campaign), {
+  await provisionGifts(deps.gateway, allGiftVariantIds(campaign), {
     giftsIncluded: deps.giftsIncluded,
   });
-  await eagerMint(campaign, provision.collectionId, startsAt, deps);
+  await eagerMint(campaign, campaign.qualifyingCollectionId, startsAt, deps);
 
   // Atomic swap (commit): exactly this campaign is active afterwards.
   await deps.campaignRepo.setActiveExclusive(shopId, campaignId, startsAt);
@@ -335,10 +347,12 @@ export async function supersedeCampaign(
 
   // Scope changed → gap-free supersede. Mint the new version FULLY before the commit.
   const newCampaign = withNewConfig(existing, input, newHash);
-  const provision = await provisionGifts(deps.gateway, allGiftVariantIds(newCampaign), {
+  await provisionGifts(deps.gateway, allGiftVariantIds(newCampaign), {
     giftsIncluded: deps.giftsIncluded,
   });
-  await eagerMint(newCampaign, provision.collectionId, existing.startsAt, deps);
+  // existing.qualifyingCollectionId is guaranteed non-null: the campaign is ACTIVE, and activation
+  // refused null (MissingQualifyingCollectionError). The non-null assertion is safe.
+  await eagerMint(newCampaign, existing.qualifyingCollectionId as string, existing.startsAt, deps);
 
   // COMMIT: flip the persisted config (configVersionHash N -> N+1). /validate now keys on N+1.
   const updated = await deps.campaignRepo.update(campaignId, newInput);

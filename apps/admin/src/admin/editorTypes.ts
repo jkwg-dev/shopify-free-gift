@@ -42,6 +42,9 @@ export type CampaignEditorInput = {
   readonly endsAt: string;
   readonly declineEnabled: boolean;
   readonly suppression: SuppressionMode;
+  // Merchant-configured qualifying collection GID. The collection defines which products count
+  // toward the tier-qualifying subtotal. Required for activation.
+  readonly qualifyingCollectionId?: string | null;
   readonly tiers: readonly EditorTier[];
 };
 

@@ -263,6 +263,7 @@ export class FakeCampaignRepository implements CampaignRepository {
       displayTimezone: input.displayTimezone,
       active: false,
       configVersionHash: input.configVersionHash,
+      qualifyingCollectionId: input.qualifyingCollectionId ?? null,
       tiers: input.tiers.map((tier, index) => ({
         id: `${id}-t${index}`,
         campaignId: id,

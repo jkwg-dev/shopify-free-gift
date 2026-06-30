@@ -1518,7 +1518,10 @@
     const subnote = document.createElement("p");
     subnote.className = "fge-subnote";
     subnote.textContent = "You receive the gift for your highest unlocked tier \u2014 not one per step.";
-    mount.append(headline, stepper, subnote);
+    const fullPriceNote = document.createElement("p");
+    fullPriceNote.className = "fge-fullprice-note";
+    fullPriceNote.textContent = "Only full-price items count toward your gift tier.";
+    mount.append(headline, stepper, fullPriceNote, subnote);
     mount.dataset["fgeTiers"] = key;
     return { headline, fill, steps };
   }
@@ -1675,6 +1678,7 @@
 
 .fge-headline{ margin:0 0 2px; font-size:var(--font-size-static-sm,1.2rem); font-weight:600; color:var(--fge-ink); }
 .fge-headline .fge-amt{ color:var(--fge-brand-strong); font-weight:750; }
+.fge-fullprice-note{ margin:6px 0 0; font-size:var(--font-size-static-xs,1rem); line-height:1.3; color:#c41e3a; font-weight:600; }
 .fge-subnote{ margin:6px 0 0; font-size:var(--font-size-static-xs,1rem); line-height:1.3; color:var(--fge-muted); }
 
 /* --- the progress stepper: a clearly visible slim bar. Explicit px geometry (NOT inset:0 + parent
@@ -2238,13 +2242,14 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   async function readCartLines() {
     const cart = await getCart();
     const lines = cart.items.map((item) => {
-      var _a2;
+      var _a2, _b2, _c2;
       return {
         id: item.key,
         variantId: toGid(item.variant_id),
         quantity: item.quantity,
         appAdded: isGiftLine(item),
-        finalLinePrice: (_a2 = item.final_line_price) != null ? _a2 : 0
+        finalLinePrice: (_a2 = item.final_line_price) != null ? _a2 : 0,
+        hasDiscountAllocation: ((_c2 = (_b2 = item.discounts) == null ? void 0 : _b2.length) != null ? _c2 : 0) > 0
       };
     });
     return { lines, currency: cart.currency };
@@ -2262,11 +2267,15 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           validate: async (lines, currency) => {
             const rate = presentmentRate();
             const request = {
-              cart: lines.map((l) => ({
-                variantId: l.variantId,
-                quantity: l.quantity,
-                appAdded: l.appAdded
-              })),
+              cart: lines.map((l) => {
+                var _a2;
+                return {
+                  variantId: l.variantId,
+                  quantity: l.quantity,
+                  appAdded: l.appAdded,
+                  hasDiscountAllocation: (_a2 = l.hasDiscountAllocation) != null ? _a2 : false
+                };
+              }),
               choices: choiceState,
               declined,
               presentmentCurrency: currency,

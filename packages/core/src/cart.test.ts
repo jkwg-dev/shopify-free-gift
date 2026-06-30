@@ -52,4 +52,78 @@ describe('computeQualifyingSubtotal', () => {
       computeQualifyingSubtotal([line({ unitPrice: money(1000, 'EUR') })], 'USD'),
     ).toThrow(CurrencyMismatchError);
   });
+
+  it('EXCLUDES lines NOT in the qualifying collection (inQualifyingCollection=false)', () => {
+    const subtotal = computeQualifyingSubtotal(
+      [
+        line({
+          variantId: 'in-collection',
+          unitPrice: money(3000, 'USD'),
+          inQualifyingCollection: true,
+        }),
+        line({
+          variantId: 'not-in-collection',
+          unitPrice: money(2000, 'USD'),
+          inQualifyingCollection: false,
+        }),
+      ],
+      'USD',
+    );
+    expect(subtotal).toEqual(money(3000, 'USD'));
+  });
+
+  it('EXCLUDES lines with a discount allocation (BOGO, automatic discount, etc.)', () => {
+    const subtotal = computeQualifyingSubtotal(
+      [
+        line({ variantId: 'full-price', unitPrice: money(3000, 'USD'), quantity: 1 }),
+        line({
+          variantId: 'bogo-item',
+          unitPrice: money(2000, 'USD'),
+          quantity: 1,
+          hasDiscountAllocation: true,
+        }),
+      ],
+      'USD',
+    );
+    expect(subtotal).toEqual(money(3000, 'USD'));
+  });
+
+  it('counts only qualifying full-price lines: excludes gifts, out-of-collection, and discounted', () => {
+    const subtotal = computeQualifyingSubtotal(
+      [
+        line({ variantId: 'A', unitPrice: money(5000, 'USD'), inQualifyingCollection: true }), // in collection, full price ✓
+        line({
+          variantId: 'B',
+          unitPrice: money(3000, 'USD'),
+          inQualifyingCollection: true,
+          hasDiscountAllocation: true,
+        }), // in collection but BOGO ✗
+        line({ variantId: 'C', unitPrice: money(4000, 'USD'), inQualifyingCollection: false }), // not in collection ✗
+        line({ variantId: 'D', unitPrice: money(2000, 'USD'), isGift: true }), // gift ✗
+      ],
+      'USD',
+    );
+    expect(subtotal).toEqual(money(5000, 'USD'));
+  });
+
+  it('treats inQualifyingCollection=true as qualifying (included)', () => {
+    const subtotal = computeQualifyingSubtotal(
+      [line({ unitPrice: money(1000, 'USD'), inQualifyingCollection: true })],
+      'USD',
+    );
+    expect(subtotal).toEqual(money(1000, 'USD'));
+  });
+
+  it('treats hasDiscountAllocation=false as full-price (not excluded)', () => {
+    const subtotal = computeQualifyingSubtotal(
+      [line({ unitPrice: money(1000, 'USD'), hasDiscountAllocation: false })],
+      'USD',
+    );
+    expect(subtotal).toEqual(money(1000, 'USD'));
+  });
+
+  it('treats undefined flags as qualifying (backward compat — no collection check)', () => {
+    const subtotal = computeQualifyingSubtotal([line({ unitPrice: money(1000, 'USD') })], 'USD');
+    expect(subtotal).toEqual(money(1000, 'USD'));
+  });
 });

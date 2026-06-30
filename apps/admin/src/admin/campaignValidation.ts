@@ -13,6 +13,7 @@ export type CampaignInputIssueCode =
   | 'invalid-schedule'
   | 'schedule-order'
   | 'duplicate-market'
+  | 'missing-qualifying-collection'
   | ConfigIssueCode;
 
 export type CampaignInputIssue = {
@@ -60,6 +61,18 @@ export function validateCampaignInput(input: CampaignInputDTO): CampaignInputIss
     issues.push({ code: 'invalid-schedule', message: 'Start and end dates must be valid.' });
   } else if (Date.parse(input.startsAt) >= Date.parse(input.endsAt)) {
     issues.push({ code: 'schedule-order', message: 'Start date must be before end date.' });
+  }
+
+  if (
+    input.qualifyingCollectionId === undefined ||
+    input.qualifyingCollectionId === null ||
+    input.qualifyingCollectionId.trim().length === 0
+  ) {
+    issues.push({
+      code: 'missing-qualifying-collection',
+      message:
+        'A qualifying collection is required. Select the collection whose products count toward the gift tier.',
+    });
   }
 
   if (hasDuplicateMarkets(input)) {

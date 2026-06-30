@@ -51,6 +51,9 @@ export type Campaign = {
   readonly displayTimezone: string;
   readonly active: boolean;
   readonly configVersionHash: string;
+  // Merchant-configured qualifying collection GID. The collection defines which products count
+  // toward the tier-qualifying subtotal and is the BXGY customerBuys scope. null when not yet set.
+  readonly qualifyingCollectionId: string | null;
   readonly tiers: readonly Tier[];
 };
 

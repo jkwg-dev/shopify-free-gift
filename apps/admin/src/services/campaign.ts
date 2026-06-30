@@ -50,6 +50,7 @@ export function toNewCampaignInput(input: CampaignInputDTO, hash: string): NewCa
     endsAt: new Date(input.endsAt),
     displayTimezone: input.displayTimezone,
     configVersionHash: hash,
+    qualifyingCollectionId: input.qualifyingCollectionId ?? null,
     tiers: input.tiers.map((tier) => ({
       position: tier.position,
       baseThreshold: tier.baseThreshold,
@@ -75,6 +76,7 @@ function toResponse(campaign: Campaign): CampaignResponse {
     displayTimezone: campaign.displayTimezone,
     active: campaign.active,
     configVersionHash: campaign.configVersionHash,
+    qualifyingCollectionId: campaign.qualifyingCollectionId,
     tiers: campaign.tiers.map((tier) => ({
       id: tier.id,
       position: tier.position,

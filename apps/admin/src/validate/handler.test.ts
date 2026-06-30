@@ -19,7 +19,14 @@ function priceVariants(variantIds: readonly string[]): Promise<VariantPricing[]>
     variantIds.flatMap((id) =>
       table[id] === undefined
         ? []
-        : [{ id, availableForSale: true, price: { amount: table[id]!, currencyCode: 'USD' } }],
+        : [
+            {
+              id,
+              productId: `gid://shopify/Product/${id.split('/').pop()}`,
+              availableForSale: true,
+              price: { amount: table[id]!, currencyCode: 'USD' },
+            },
+          ],
     ),
   );
 }
@@ -36,6 +43,7 @@ function andCampaign(): Campaign {
     displayTimezone: 'UTC',
     active: true,
     configVersionHash: 'cfg-1',
+    qualifyingCollectionId: 'gid://shopify/Collection/q',
     tiers: [
       {
         id: 't1',
@@ -84,7 +92,7 @@ function makeDeps(
         new Map(ids.map((id) => [id, { availableForSale: true, publishedToOnlineStore: true }])),
       ),
     mappingStore: new GiftCodeMappingStore(new FakeMappingTable(), gateway),
-    qualifyingCollectionId: 'gid://shopify/Collection/test',
+    fetchCollectionMembership: (_collectionId, productIds) => Promise.resolve(new Set(productIds)),
     now: () => NOW,
     // The real handler falls back to verifyAppProxyHmac when this is absent.
     ...(useRealSignature ? {} : { verifySignature: () => true }),

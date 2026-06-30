@@ -3,19 +3,40 @@ import { AdminGraphqlClient } from './client.js';
 import { fetchVariantPricing } from './pricing.js';
 import { mockFetch, parseBody, testConfig } from './test-helpers.js';
 
-function node(id: string, amount: string, currencyCode: string, availableForSale = true) {
+function node(
+  id: string,
+  amount: string,
+  currencyCode: string,
+  availableForSale = true,
+  productId = `gid://shopify/Product/${id.split('/').pop()}`,
+) {
   return {
     __typename: 'ProductVariant',
     id,
+    product: { id: productId },
     availableForSale,
     contextualPricing: { price: { amount, currencyCode } },
   };
 }
 
 describe('fetchVariantPricing', () => {
-  it('returns presentment price + availability and passes the country context', async () => {
+  it('returns presentment price + availability + productId and passes the country context', async () => {
     const { fetch, calls } = mockFetch([
-      { body: { data: { nodes: [node('gid://shopify/ProductVariant/1', '12.99', 'CAD')] } } },
+      {
+        body: {
+          data: {
+            nodes: [
+              node(
+                'gid://shopify/ProductVariant/1',
+                '12.99',
+                'CAD',
+                true,
+                'gid://shopify/Product/100',
+              ),
+            ],
+          },
+        },
+      },
     ]);
     const client = new AdminGraphqlClient(testConfig(fetch));
 
@@ -26,6 +47,7 @@ describe('fetchVariantPricing', () => {
     expect(priced).toEqual([
       {
         id: 'gid://shopify/ProductVariant/1',
+        productId: 'gid://shopify/Product/100',
         availableForSale: true,
         price: { amount: '12.99', currencyCode: 'CAD' },
       },
@@ -70,6 +92,7 @@ describe('fetchVariantPricing', () => {
               {
                 __typename: 'ProductVariant',
                 id: 'gid://v/1',
+                product: { id: 'gid://shopify/Product/1' },
                 availableForSale: true,
                 contextualPricing: null,
               },

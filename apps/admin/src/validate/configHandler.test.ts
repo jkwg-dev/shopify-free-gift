@@ -35,6 +35,7 @@ function makeDeps(
           displayTimezone: 'UTC',
           active: true,
           configVersionHash: 'cfg-1',
+          qualifyingCollectionId: 'gid://shopify/Collection/q',
           tiers: [],
         },
       }),

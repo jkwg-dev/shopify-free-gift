@@ -78,6 +78,7 @@ function toCampaign(row: CampaignRow): Campaign {
     displayTimezone: row.displayTimezone,
     active: row.active,
     configVersionHash: row.configVersionHash,
+    qualifyingCollectionId: row.qualifyingCollectionId,
     tiers: [...row.tiers].sort((a, b) => a.position - b.position).map(toTier),
   };
 }
@@ -124,6 +125,7 @@ function campaignData(input: NewCampaignInput): Record<string, unknown> {
     endsAt: input.endsAt,
     displayTimezone: input.displayTimezone,
     configVersionHash: input.configVersionHash,
+    qualifyingCollectionId: input.qualifyingCollectionId,
   };
 }
 
