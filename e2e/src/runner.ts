@@ -5,7 +5,9 @@
 export class AssertionError extends Error {}
 
 export const assert = {
-  ok(cond: unknown, msg: string): asserts cond {
+  // Plain boolean check (NOT a TS `asserts` signature — an assertion signature on this object literal
+  // would force every `assert.*` call site to satisfy TS2775). Scenarios narrow types explicitly.
+  ok(cond: unknown, msg: string): void {
     if (!cond) throw new AssertionError(msg);
   },
   eq<T>(actual: T, expected: T, msg: string): void {

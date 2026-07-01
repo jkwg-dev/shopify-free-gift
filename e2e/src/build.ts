@@ -6,8 +6,16 @@ import { WebDriver } from 'selenium-webdriver';
 import { gotoPreview } from './browser.js';
 import { RECONCILE_TIMEOUT_MS } from './config.js';
 import { buildSubtotal } from './catalog.js';
-import { changeLine, fetchValidate, getCart } from './proxy.js';
-import { Ctx, subtotalOf, tierByPosition } from './helpers.js';
+import { changeLine, getCart } from './proxy.js';
+import { Ctx, tierByPosition } from './helpers.js';
+
+// Qualifying subtotal from /cart.js (non-gift line finals) — cart-local, no App Proxy call.
+async function cartSubtotalMinor(driver: WebDriver): Promise<number> {
+  const cart = await getCart(driver);
+  return cart.items
+    .filter((it) => !(it.properties && it.properties['_fge_gift'] != null))
+    .reduce((n, it) => n + it.final_line_price, 0);
+}
 
 export async function thresholdOf(ctx: Ctx, pos: number): Promise<number> {
   return tierByPosition(ctx.config, pos).threshold.amountMinor;
@@ -20,7 +28,11 @@ export async function reachTierAndReload(
   opts: { below?: boolean } = {},
 ): Promise<number> {
   const target = tierByPosition(ctx.config, pos).threshold.amountMinor;
-  const r = await buildSubtotal(ctx.driver, target, ctx.giftProductIds, opts);
+  // The next tier's threshold is the CEILING: the build must land in [target, ceiling) so it qualifies
+  // for THIS tier without spilling into the next. Top tier → no ceiling.
+  const next = ctx.config.tiers.find((t) => t.position === pos + 1);
+  const ceiling = next?.threshold.amountMinor;
+  const r = await buildSubtotal(ctx.driver, target, ctx.giftProductIds, { ...opts, ceiling });
   await gotoPreview(ctx.driver, '/cart');
   return r.subtotalMinor;
 }
@@ -30,7 +42,7 @@ export async function reachTierAndReload(
 export async function reachTargetAndReload(
   ctx: Ctx,
   target: number,
-  opts: { below?: boolean } = {},
+  opts: { below?: boolean; ceiling?: number } = {},
 ): Promise<number> {
   const r = await buildSubtotal(ctx.driver, target, ctx.giftProductIds, opts);
   await gotoPreview(ctx.driver, '/cart');
@@ -42,14 +54,15 @@ export async function reachTargetAndReload(
 export async function reduceBelow(driver: WebDriver, target: number): Promise<number> {
   let guard = 0;
   for (;;) {
-    const v = await fetchValidate(driver);
-    if (subtotalOf(v) < target) return subtotalOf(v);
-    if (guard++ > 200) return subtotalOf(v);
+    const s = await cartSubtotalMinor(driver);
+    if (s < target) return s;
+    if (guard++ > 200) return s;
     const cart = await getCart(driver);
     const buy = cart.items
       .filter((it) => !(it.properties && it.properties['_fge_gift'] != null))
       .sort((a, b) => b.quantity - a.quantity)[0];
-    if (buy === undefined) return subtotalOf(v);
+    if (buy === undefined) return s;
+    // remove a whole large-qty line at once when it alone exceeds the target overshoot, else step down
     await changeLine(driver, buy.key, Math.max(0, buy.quantity - 1));
   }
 }

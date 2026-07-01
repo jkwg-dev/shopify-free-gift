@@ -81,7 +81,10 @@ export async function readWidget(
   driver: WebDriver,
   context: 'page' | 'drawer' = 'page',
 ): Promise<WidgetSnap> {
-  return evalAsync<WidgetSnap>(driver, `return (function(){ ${SNAP_JS} })();`, context);
+  // NB: pass context INTO the IIFE — SNAP_JS reads `arguments[0]`, which is the IIFE's own arguments,
+  // not the outer script's. Calling with no arg left context undefined, so the 'drawer' filter silently
+  // inverted (it excluded in-drawer nodes). Forward arguments[0] so the context reaches SNAP_JS.
+  return evalAsync<WidgetSnap>(driver, `return (function(){ ${SNAP_JS} })(arguments[0]);`, context);
 }
 
 export type GiftLine = { variantId: string; qty: number; finalLinePrice: number; title: string };
@@ -100,17 +103,20 @@ export async function giftLines(driver: WebDriver): Promise<GiftLine[]> {
     }));
 }
 
-// A paid (non-gift) cart line for a given variant id, if present.
-export async function paidLineFor(
-  driver: WebDriver,
-  variantId: string,
-): Promise<{ qty: number; finalLinePrice: number } | null> {
+// Every cart line (gift or paid) for a variant, with its price + marker. Used by paid-duplicate,
+// where issue #6 means the $0 discount can land on EITHER the marked gift line or the plain paid
+// line — so correctness is judged by Shopify's ALLOCATION across all units, not the _fge_gift flag.
+export type VariantLine = { qty: number; finalLinePrice: number; isGift: boolean };
+export async function variantLines(driver: WebDriver, variantId: string): Promise<VariantLine[]> {
   const cart = await getCart(driver);
   const id = numId(variantId);
-  const line = cart.items.find(
-    (it) => it.variant_id === id && !(it.properties && it.properties['_fge_gift'] != null),
-  );
-  return line ? { qty: line.quantity, finalLinePrice: line.final_line_price } : null;
+  return cart.items
+    .filter((it) => it.variant_id === id)
+    .map((it) => ({
+      qty: it.quantity,
+      finalLinePrice: it.final_line_price,
+      isGift: it.properties != null && it.properties['_fge_gift'] != null,
+    }));
 }
 
 // --- interactions (dispatch the events the widget's handlers listen for) -------------------------
@@ -138,6 +144,28 @@ export async function chooseOrProduct(
      return false;`,
     context,
     nameSubstr,
+  );
+}
+
+// Click the OR option radio by its exact optionId (the radio's `value`). Deterministic — no reliance
+// on product-name text. Returns true if the radio was found + clicked.
+export async function chooseOrOptionById(
+  driver: WebDriver,
+  optionId: string,
+  context: 'page' | 'drawer' = 'page',
+): Promise<boolean> {
+  return evalAsync<boolean>(
+    driver,
+    `const context = arguments[0], id = arguments[1];
+     const inDrawer = (el) => !!el.closest('cart-drawer, #CartDrawer, .cart-drawer, .drawer--cart, cart-notification');
+     const wrap = Array.prototype.filter.call(document.querySelectorAll('[data-fge-chooser]'), (el) => context === 'drawer' ? inDrawer(el) : !inDrawer(el))[0];
+     if (!wrap) return false;
+     const radio = wrap.querySelector('input.fge-card__radio[value="' + id + '"]');
+     if (!radio) return false;
+     radio.click();
+     return true;`,
+    context,
+    optionId,
   );
 }
 
@@ -191,14 +219,39 @@ export async function setAddGift(
   );
 }
 
-// Open the cart drawer (Dawn). Try the standard cart icon trigger; returns whether a drawer became active.
+// Open the cart drawer from a NON-cart page (the header cart icon opens the drawer there; on /cart it
+// just reloads the page). We avoid a plain /cart link (it navigates), click a real drawer trigger, then
+// poll for a cart-drawer element that is actually VISIBLE (not just an "active" class the theme may not
+// use). Returns whether a drawer became visible.
 export async function openDrawer(driver: WebDriver): Promise<boolean> {
   return evalAsync<boolean>(
     driver,
-    `const btn = document.querySelector('#cart-icon-bubble, a[href="/cart"], .header__icon--cart');
-     if (btn) btn.click();
-     await new Promise((r) => setTimeout(r, 600));
-     const d = document.querySelector('cart-drawer, #CartDrawer, .drawer--cart');
-     return !!(d && (d.classList.contains('active') || d.classList.contains('animate') || d.getAttribute('open') !== null));`,
+    // Only the MAIN cart drawer (<cart-drawer>), never the product quick-add <quick-cart-drawer>.
+    `const DRAWER = 'cart-drawer, #CartDrawer, .cart-drawer:not(quick-cart-drawer), .drawer--cart';
+     const visible = () => Array.prototype.some.call(document.querySelectorAll(DRAWER), (d) => {
+       if (!d) return false;
+       const r = d.getBoundingClientRect();
+       const cs = getComputedStyle(d);
+       const shown = r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
+       // This theme marks the open cart drawer with .is-visible.
+       return d.classList.contains('is-visible') || d.hasAttribute('open') ||
+         d.classList.contains('active') || d.classList.contains('is-open') || shown;
+     });
+     if (visible()) return true;
+     // This theme's header cart trigger (opens <cart-drawer>). We AVOID product quick-add buttons
+     // (.quick-cart-drawer__trigger / aria-controls="quick-cart-drawer") which would add an item.
+     const candidates = [
+       '#cart-counter', '[data-cart-link]', '.header__utils-link--cart',
+       '#cart-icon-bubble', '.header__icon--cart',
+     ];
+     let trigger = null;
+     for (const sel of candidates) { trigger = document.querySelector(sel); if (trigger) break; }
+     if (!trigger) return false;
+     trigger.click();
+     for (let i = 0; i < 20; i++) {
+       await new Promise((r) => setTimeout(r, 200));
+       if (visible()) return true;
+     }
+     return false;`,
   );
 }
