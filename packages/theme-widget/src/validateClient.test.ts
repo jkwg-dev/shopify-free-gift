@@ -58,6 +58,19 @@ describe('postValidate', () => {
     expect(res.error.code).toBe('UNAUTHORIZED');
   });
 
+  it('returns the error envelope on a 429 rate-limit (widget maps this to null → fail-closed)', async () => {
+    // App Proxy rate-limits per shop+buyer. A 429 is a non-2xx, so postValidate surfaces the error
+    // envelope; the storefront reconcile turns any non-ok result into null (leave the cart untouched),
+    // i.e. no gift is granted on an unverified state. See reconcileLoop.test.ts EDGE 3.
+    const res = await postValidate(request, {
+      fetchFn: fakeFetch(429, { error: { code: 'RATE_LIMITED', message: 'slow down' } }),
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.httpStatus).toBe(429);
+    expect(res.error.code).toBe('RATE_LIMITED');
+  });
+
   it('posts JSON to the default App Proxy path', async () => {
     let calledPath = '';
     const captureFetch = ((path: string) => {

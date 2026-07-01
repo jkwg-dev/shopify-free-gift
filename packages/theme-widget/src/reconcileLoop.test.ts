@@ -485,6 +485,109 @@ describe('reconcileGiftCart — safety', () => {
   });
 });
 
+describe('reconcileGiftCart — concurrency & network edge cases', () => {
+  // EDGE 1 — rapid consecutive adds / out-of-order /validate responses (stale overwrite).
+  // The loop RE-READS + RE-VALIDATES on every pass, so it always acts on the FRESHEST server result
+  // for the CURRENT cart. Here the first pass sees a stale lower tier (BRUSH) whose add is lost (422,
+  // modelling the pre-burst snapshot being obsolete); the forced re-validate then returns the true
+  // current tier (VIDEO). The stale tier can never "win" — no stale result overwrites the final state.
+  it('rapid add: the freshest /validate wins — a stale earlier tier never overwrites the final state', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    let calls = 0;
+    const io = makeIo(
+      cart,
+      () => {
+        calls += 1;
+        return calls === 1 ? giftResult([BRUSH], 'CODE-BRUSH') : giftResult([VIDEO], 'CODE-VIDEO');
+      },
+      { add422: new Set([BRUSH]) },
+    );
+
+    const outcome = await reconcileGiftCart(io, { maxPasses: 4 });
+
+    expect(outcome.converged).toBe(true);
+    expect(outcome.appliedCode).toBe('CODE-VIDEO'); // final code is the freshest tier's, not the stale one
+    expect(countGift(cart, BRUSH)).toEqual({ lines: 0, qty: 0 }); // stale-tier gift never sticks
+    expect(countGift(cart, VIDEO)).toEqual({ lines: 1, qty: 1 });
+    vi.restoreAllMocks();
+  });
+
+  // EDGE 2 — two tabs open on the SAME (server-authoritative) cart. Tab A moved the shared cart to a
+  // higher tier (VIDEO gift + CODE-VIDEO already applied server-side). Tab B still holds tier-1's code
+  // in memory (initialCode 'CODE-ICE', stale). On its next reconcile, Tab B re-validates the SHARED
+  // cart, sees the authoritative tier, and re-applies the correct code — the stale in-memory code is
+  // never left applied and the gift line is untouched.
+  it('two tabs: a tab holding a stale code re-applies the authoritative code from the shared cart', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    cart.seedGift(VIDEO, 1, 0); // the OTHER tab already added the tier-2 gift to the shared cart
+    const discounts: string[] = [];
+    const io = makeIo(cart, () => giftResult([VIDEO], 'CODE-VIDEO'), { discounts });
+
+    const outcome = await reconcileGiftCart(io, { initialCode: 'CODE-ICE' });
+
+    expect(outcome.converged).toBe(true);
+    expect(outcome.appliedCode).toBe('CODE-VIDEO'); // authoritative code, not the stale 'CODE-ICE'
+    expect(discounts).toContain('CODE-VIDEO'); // stale code self-healed to the shared cart's real tier
+    expect(discounts).not.toContain('CODE-ICE');
+    expect(countGift(cart, VIDEO)).toEqual({ lines: 1, qty: 1 }); // shared gift line untouched
+  });
+
+  // EDGE 3a — App Proxy rate-limit (429) → the widget maps a non-ok /validate to null. FAIL-CLOSED on
+  // GRANT: an eligible shopper whose gift is not yet in the cart gets NO gift and NO code while
+  // /validate is unreachable. We never grant on an unverified state (no revenue leak).
+  it('429 fail-closed: an eligible cart with /validate unreachable grants no gift and mints no code', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5); // eligible, but no gift line yet
+    const io = makeIo(cart, () => null); // 429 → postValidate !ok → widget passes null
+
+    const outcome = await reconcileGiftCart(io);
+
+    expect(outcome.converged).toBe(false);
+    expect(outcome.appliedCode).toBeNull(); // no code minted on an unverified state
+    expect(io.posts).toHaveLength(0); // zero cart writes (no add, no discount)
+    expect(cart.giftLines()).toHaveLength(0); // fail-closed: no gift shown
+  });
+
+  // EDGE 3b — the FAIL-OPEN half: when /validate is unreachable (429 → null) but a gift is ALREADY
+  // granted, leave it in place and KEEP the applied code. A transient rate-limit must not yank a gift
+  // the shopper already legitimately earned.
+  it('429 fail-open: an already-granted gift + its code are kept when /validate is unreachable', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    cart.seedGift(ICE, 1, 0);
+    const io = makeIo(cart, () => null);
+
+    const outcome = await reconcileGiftCart(io, { initialCode: 'CODE-ICE' });
+
+    expect(outcome.converged).toBe(false);
+    expect(outcome.appliedCode).toBe('CODE-ICE'); // code kept, not cleared
+    expect(io.posts).toHaveLength(0); // gift line left exactly as-is
+    expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 });
+  });
+
+  // EDGE 4 — a network retry re-issued a gift add whose first response was lost, splitting the gift
+  // into duplicate cart lines. The loop self-heals to exactly ONE line at qty 1, applies at most one
+  // distinct code (no duplicate code churn), and a subsequent retry adds nothing more.
+  it('network retry: duplicate gift lines collapse to one; no duplicate line or code is created', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    cart.seedGift(ICE, 1, 0);
+    cart.seedGift(ICE, 1, 0); // a retried add landed twice → two $0 gift lines
+    const discounts: string[] = [];
+    const io = makeIo(cart, () => giftResult([ICE], 'CODE-ICE'), { discounts });
+
+    await reconcileGiftCart(io, { initialCode: 'CODE-ICE' });
+    await reconcileGiftCart(io, { initialCode: 'CODE-ICE' }); // a retried reconcile must not re-add
+
+    expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 }); // collapsed to a single line
+    expect(io.posts.filter((p) => p.path === 'cart/add.js')).toHaveLength(0); // never re-added
+    expect(new Set(discounts).size).toBeLessThanOrEqual(1); // at most one distinct code applied
+  });
+});
+
 describe('reconcileGiftCart — charged gift convergence (FGE #3)', () => {
   it('removes a duplicated charged gift and leaves a single $0 line', async () => {
     const cart = new FakeCart();
