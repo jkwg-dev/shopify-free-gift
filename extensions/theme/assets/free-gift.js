@@ -440,6 +440,28 @@
     });
   }
 
+  // src/lineConsolidation.ts
+  function planLineConsolidation(lines) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const line of lines) {
+      if (line.isGift) continue;
+      const groupKey = `${line.variantId}\0${line.propertiesKey}`;
+      const existing = groups.get(groupKey);
+      if (existing) existing.push(line);
+      else groups.set(groupKey, [line]);
+    }
+    const updates = {};
+    for (const group of groups.values()) {
+      if (group.length <= 1) continue;
+      const total = group.reduce((sum, l) => sum + l.quantity, 0);
+      updates[group[0].key] = total;
+      for (let i = 1; i < group.length; i += 1) {
+        updates[group[i].key] = 0;
+      }
+    }
+    return Object.keys(updates).length > 0 ? updates : null;
+  }
+
   // src/choices.ts
   function groupGiftOptionsByProduct(options) {
     const order = [];
@@ -1807,11 +1829,31 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     });
     return { lines, currency: cart.currency };
   }
+  function serializeProperties(properties) {
+    if (properties == null) return "";
+    return Object.keys(properties).sort().map((k) => `${k}=${String(properties[k])}`).join("&");
+  }
+  async function consolidateDuplicateLines() {
+    const cart = await getCart();
+    const updates = planLineConsolidation(
+      cart.items.map((item) => ({
+        key: item.key,
+        variantId: item.variant_id,
+        quantity: item.quantity,
+        propertiesKey: serializeProperties(item.properties),
+        isGift: isGiftLine(item)
+      }))
+    );
+    if (updates === null) return false;
+    const res = await cartPost("cart/update.js", { updates });
+    return res.ok;
+  }
   async function reconcileOnce(config) {
     selfMutating = true;
     beginGiftPending();
     const lastPriorCode = lastDiscount;
     try {
+      const consolidatedWrote = await consolidateDuplicateLines();
       const outcome = await reconcileGiftCart(
         {
           readCart: readCartLines,
@@ -1864,9 +1906,9 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         unavailableVariantIds.add(variantId);
       }
       renderPerception(config);
-      const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
+      const cartMutated = consolidatedWrote || outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
       const cart = await getCart();
-      await verifiedDisplayReconcile(cartMutated, cart, outcome.mutatedGiftLines);
+      await verifiedDisplayReconcile(cartMutated, cart, consolidatedWrote || outcome.mutatedGiftLines);
     } finally {
       markGiftWorkDone();
       selfMutating = false;

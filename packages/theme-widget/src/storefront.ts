@@ -23,6 +23,7 @@ import {
 } from './groupingTransform.js';
 import { failedAddVariantIds } from './cartMutations.js';
 import { lineHasRealDiscount } from './discountAllocation.js';
+import { planLineConsolidation } from './lineConsolidation.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
@@ -364,6 +365,37 @@ async function readCartLines(): Promise<{ lines: CartLineView[]; currency: strin
   return { lines, currency: cart.currency };
 }
 
+// Stable serialization of a line's properties (sorted keys) so two lines merge ONLY when their
+// properties match exactly. Empty/absent properties → '' (the common paid-line case).
+function serializeProperties(properties: Readonly<Record<string, unknown>> | null): string {
+  if (properties == null) return '';
+  return Object.keys(properties)
+    .sort()
+    .map((k) => `${k}=${String(properties[k])}`)
+    .join('&');
+}
+
+// Merge the SAME product (same variant + properties) when Shopify's BXGY allocation left it as two
+// lines — one carrying the $0 "entitled" allocation and one without (see lineConsolidation.ts). Runs
+// once per reconcile (before the gift loop); returns whether it wrote the cart so the caller forces a
+// body refresh (the merge changes line keys). Bounded: at most one write per cart change, so a
+// re-split (if Shopify re-allocates) self-heals on the NEXT interaction rather than looping.
+async function consolidateDuplicateLines(): Promise<boolean> {
+  const cart = await getCart();
+  const updates = planLineConsolidation(
+    cart.items.map((item) => ({
+      key: item.key,
+      variantId: item.variant_id,
+      quantity: item.quantity,
+      propertiesKey: serializeProperties(item.properties),
+      isGift: isGiftLine(item),
+    })),
+  );
+  if (updates === null) return false;
+  const res = await cartPost('cart/update.js', { updates });
+  return res.ok;
+}
+
 async function reconcileOnce(config: WidgetConfig): Promise<void> {
   // selfMutating wraps the WHOLE convergence loop: our own cart writes must not re-trigger reconciles
   // (the loop already re-reads the live cart each pass), while a user's add that lands mid-loop is
@@ -372,6 +404,10 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
   beginGiftPending(); // INSTANT feedback the moment the reconcile begins (held >= PENDING_MIN_MS)
   const lastPriorCode = lastDiscount;
   try {
+    // Normalize duplicate split lines BEFORE the gift loop so the shopper never sees the same product
+    // twice; the loop then re-reads the merged cart. A write here changes line keys (forces a body
+    // refresh below).
+    const consolidatedWrote = await consolidateDuplicateLines();
     const outcome = await reconcileGiftCart(
       {
         readCart: readCartLines,
@@ -424,12 +460,17 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
       unavailableVariantIds.add(variantId);
     }
     renderPerception(config);
-    const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
+    const cartMutated =
+      consolidatedWrote || outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
     const cart = await getCart();
-    // Force a body re-fetch ONLY when gift LINES changed (keys may be stale). A discount-code-only
-    // write does not change line keys, so refetching there would needlessly wipe Dawn's optimistic
-    // +/- value (bug 1). cartMutated still drives the footer/totals refresh below.
-    await verifiedDisplayReconcile(cartMutated, cart, outcome.mutatedGiftLines);
+    // Force a body re-fetch when gift LINES changed OR we merged duplicate lines (both change line
+    // keys). A discount-code-only write does not change keys, so refetching there would needlessly
+    // wipe Dawn's optimistic +/- value (bug 1). cartMutated still drives the footer/totals refresh.
+    await verifiedDisplayReconcile(
+      cartMutated,
+      cart,
+      consolidatedWrote || outcome.mutatedGiftLines,
+    );
   } finally {
     markGiftWorkDone(); // clear checkout lock only after display reconcile finishes
     selfMutating = false;
