@@ -1942,60 +1942,74 @@ body.fge-checkout-pending [data-fge-grouped]::after{
     }
     return true;
   }
+  function sectionIdForElement(el) {
+    const section = el.closest('[id^="shopify-section-"]');
+    return section !== null ? section.id.replace("shopify-section-", "") : null;
+  }
+  function presentCartItemsHosts() {
+    const hosts = [];
+    for (const el of cartHostElements()) {
+      const sectionId = sectionIdForElement(el);
+      if (sectionId === null) continue;
+      hosts.push({ el, sectionId, isDrawer: el.closest(DRAWER_PANEL_SELECTOR) !== null });
+    }
+    return hosts;
+  }
+  function replaceHostInner(liveHost, parsed) {
+    const byId = liveHost.id !== "" ? parsed.querySelector(`[id="${liveHost.id}"]`) : null;
+    const match = byId != null ? byId : parsed.querySelector(liveHost.tagName.toLowerCase());
+    if (match === null) return false;
+    liveHost.innerHTML = match.innerHTML;
+    return true;
+  }
+  function pruneStrayLineNodes(host, cart) {
+    const cartVariants = new Set(cart.items.map((item) => item.variant_id));
+    const nodes = host.querySelectorAll(
+      '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row'
+    );
+    for (const node of nodes) {
+      const link = node.querySelector('a[href*="variant="]');
+      if (link === null) continue;
+      const m = link.href.match(/variant=(\d+)/);
+      if (m !== null && !cartVariants.has(Number(m[1]))) node.remove();
+    }
+    console.warn("[FGE-DRAWERFIX] section refresh could not converge; pruned stale nodes", {
+      domKeys: domVariantIds(host),
+      cartKeys: cart.items.map((i) => i.variant_id)
+    });
+  }
   async function refreshItemsBody(cart) {
-    const drawerSectionId = detectDrawerSectionId();
-    const maxAttempts = 2;
-    let lastDrawerHtml;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
-        const res = await fetch(`${root}?sections=${drawerSectionId}`, {
-          headers: { Accept: "application/json" }
-        });
-        if (!res.ok) continue;
-        const data = await res.json();
-        const html = data[drawerSectionId];
-        if (html === void 0) continue;
-        lastDrawerHtml = html;
-        const parsed = new DOMParser().parseFromString(html, "text/html");
-        const ITEMS_SELECTORS2 = ["cart-drawer-items", "[data-cart-items]", ".cart-drawer__items"];
-        for (const sel of ITEMS_SELECTORS2) {
-          const newItems = parsed.querySelector(sel);
-          const liveItems = document.querySelector(sel);
-          if (newItems !== null && liveItems !== null) {
-            liveItems.innerHTML = newItems.innerHTML;
-            if (domMatchesCart(liveItems, cart)) {
-              return { ok: true, drawerHtml: html };
-            }
+    const hosts = presentCartItemsHosts();
+    let drawerHtml;
+    let allOk = hosts.length > 0;
+    for (const host of hosts) {
+      let converged = false;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
+          const res = await fetch(`${root}?sections=${host.sectionId}`, {
+            headers: { Accept: "application/json" }
+          });
+          if (!res.ok) continue;
+          const data = await res.json();
+          const html = data[host.sectionId];
+          if (html === void 0) continue;
+          if (host.isDrawer) drawerHtml = html;
+          const parsed = new DOMParser().parseFromString(html, "text/html");
+          if (!replaceHostInner(host.el, parsed)) continue;
+          if (domMatchesCart(host.el, cart)) {
+            converged = true;
             break;
           }
-        }
-      } catch {
-      }
-    }
-    const itemsEl = document.querySelector("cart-drawer-items, cart-items");
-    if (itemsEl !== null) {
-      const cartVariants = new Set(cart.items.map((item) => item.variant_id));
-      const nodes = Array.from(
-        itemsEl.querySelectorAll(
-          '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row'
-        )
-      );
-      for (const node of nodes) {
-        const link = node.querySelector('a[href*="variant="]');
-        if (link !== null) {
-          const m = link.href.match(/variant=(\d+)/);
-          if (m !== null && !cartVariants.has(Number(m[1]))) {
-            node.remove();
-          }
+        } catch {
         }
       }
-      console.warn("[FGE-DRAWERFIX] body refetch could not converge", {
-        domKeys: domVariantIds(itemsEl),
-        cartKeys: cart.items.map((i) => i.variant_id)
-      });
+      if (!converged) {
+        allOk = false;
+        pruneStrayLineNodes(host.el, cart);
+      }
     }
-    return lastDrawerHtml !== void 0 ? { ok: false, drawerHtml: lastDrawerHtml } : { ok: false };
+    return drawerHtml !== void 0 ? { ok: allOk, drawerHtml } : { ok: allOk };
   }
   async function doVerifiedDisplayReconcile(cartMutated, existingCart, forceItemsRefresh = false) {
     var _a2;
@@ -2010,28 +2024,29 @@ body.fge-checkout-pending [data-fge-grouped]::after{
     if (cart.total_price !== void 0 && cart.item_count !== void 0) {
       stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
     }
-    const itemsEl = document.querySelector("cart-drawer-items, cart-items");
+    const anyDiverged = cartHostElements().some((el) => !domMatchesCart(el, cart));
     let prefetchedDrawerHtml;
-    if (forceItemsRefresh || !domMatchesCart(itemsEl, cart)) {
-      if (forceItemsRefresh && domMatchesCart(itemsEl, cart)) {
+    if (forceItemsRefresh || anyDiverged) {
+      if (forceItemsRefresh && !anyDiverged) {
         console.warn(
           "[FGE-DRAWERFIX] refreshing items body after FGE cart write (line keys may be stale)"
         );
-      } else if (!domMatchesCart(itemsEl, cart)) {
+      } else if (anyDiverged) {
         console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch");
       }
       const bodyRefresh = await refreshItemsBody(cart);
       prefetchedDrawerHtml = bodyRefresh.drawerHtml;
       for (const section of sections) section.attach();
-      if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
-        syncNativeInputs(itemsEl, lastCartQuantities);
+      for (const el of cartHostElements()) {
+        if (!shouldSkipNativeQtySync(el, lastCartQuantities)) syncNativeInputs(el, lastCartQuantities);
       }
     }
-    if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
+    const anyAhead = cartHostElements().some((el) => shouldSkipNativeQtySync(el, lastCartQuantities));
+    if (!anyAhead) {
       const freshCart = await getCart();
       lastCartQuantities = freshCart.items.map((item) => item.quantity);
-      if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
-        syncNativeInputs(itemsEl, lastCartQuantities);
+      for (const el of cartHostElements()) {
+        if (!shouldSkipNativeQtySync(el, lastCartQuantities)) syncNativeInputs(el, lastCartQuantities);
       }
     }
     if (cartMutated) {

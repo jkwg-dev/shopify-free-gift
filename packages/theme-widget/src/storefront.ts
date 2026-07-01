@@ -230,67 +230,105 @@ function domMatchesCart(itemsEl: HTMLElement | null, cart: AjaxCart): boolean {
   return true;
 }
 
-// Force a section-fetch replacement of the drawer items list. Called when the DOM variant set
-// diverges from cart.js (stale/duplicate nodes, missing buy nodes). Replaces only the items
-// container, then re-applies grouping. Retries up to `maxAttempts` with a short backoff to handle
-// the stale-section-render race.
-async function refreshItemsBody(cart: AjaxCart): Promise<{ ok: boolean; drawerHtml?: string }> {
-  const drawerSectionId = detectDrawerSectionId();
-  const maxAttempts = 2;
-  let lastDrawerHtml: string | undefined;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
-      const res = await fetch(`${root}?sections=${drawerSectionId}`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (!res.ok) continue;
-      const data = (await res.json()) as Record<string, string>;
-      const html = data[drawerSectionId];
-      if (html === undefined) continue;
-      lastDrawerHtml = html;
+// The section id that RENDERS a given cart items host (its enclosing shopify-section). We refresh that
+// exact surface via Section Rendering — the /cart PAGE (`cart-items` in `shopify-section-…__main`) as
+// much as the drawer — so line keys/indices stay LIVE after our raw cart writes. Missing this on the
+// PAGE was the core bug: the page kept Dawn's STALE keys, so the shopper's next native qty change
+// silently no-op'd (the "tier doesn't rise on add / decrease leaves the gift" report).
+function sectionIdForElement(el: HTMLElement): string | null {
+  const section = el.closest<HTMLElement>('[id^="shopify-section-"]');
+  return section !== null ? section.id.replace('shopify-section-', '') : null;
+}
 
-      const parsed = new DOMParser().parseFromString(html, 'text/html');
-      const ITEMS_SELECTORS = ['cart-drawer-items', '[data-cart-items]', '.cart-drawer__items'];
-      for (const sel of ITEMS_SELECTORS) {
-        const newItems = parsed.querySelector(sel);
-        const liveItems = document.querySelector(sel);
-        if (newItems !== null && liveItems !== null) {
-          liveItems.innerHTML = newItems.innerHTML;
-          if (domMatchesCart(liveItems as HTMLElement, cart)) {
-            return { ok: true, drawerHtml: html };
-          }
+type ItemsHost = {
+  readonly el: HTMLElement;
+  readonly sectionId: string;
+  readonly isDrawer: boolean;
+};
+
+// Every present cart items host (drawer AND/OR full /cart page), each paired with the section that
+// renders it — the set of surfaces a section refresh must realign.
+function presentCartItemsHosts(): ItemsHost[] {
+  const hosts: ItemsHost[] = [];
+  for (const el of cartHostElements()) {
+    const sectionId = sectionIdForElement(el);
+    if (sectionId === null) continue;
+    hosts.push({ el, sectionId, isDrawer: el.closest(DRAWER_PANEL_SELECTOR) !== null });
+  }
+  return hosts;
+}
+
+// Copy a freshly section-rendered host's inner HTML onto the live host: match the SAME element in the
+// parsed section (by id when the host has one — the /cart page's `cart-items` — else by tag — the
+// drawer's `cart-drawer-items`). Our injected stepper/chooser are re-inserted by the caller's
+// section.attach(), and gift-line hiding is re-applied there.
+function replaceHostInner(liveHost: HTMLElement, parsed: Document): boolean {
+  const byId =
+    liveHost.id !== '' ? parsed.querySelector<HTMLElement>(`[id="${liveHost.id}"]`) : null;
+  const match = byId ?? parsed.querySelector<HTMLElement>(liveHost.tagName.toLowerCase());
+  if (match === null) return false;
+  liveHost.innerHTML = match.innerHTML;
+  return true;
+}
+
+// Fallback when a host's section refresh can't converge: prune DOM line nodes whose variant is no
+// longer in cart.js (so a removed gift never lingers). Never ADDS a node — a missing buy row is fixed
+// by the next section refresh; we only remove proven-stale nodes.
+function pruneStrayLineNodes(host: HTMLElement, cart: AjaxCart): void {
+  const cartVariants = new Set(cart.items.map((item) => item.variant_id));
+  const nodes = host.querySelectorAll<HTMLElement>(
+    '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row',
+  );
+  for (const node of nodes) {
+    const link = node.querySelector<HTMLAnchorElement>('a[href*="variant="]');
+    if (link === null) continue;
+    const m = link.href.match(/variant=(\d+)/);
+    if (m !== null && !cartVariants.has(Number(m[1]))) node.remove();
+  }
+  console.warn('[FGE-DRAWERFIX] section refresh could not converge; pruned stale nodes', {
+    domKeys: domVariantIds(host),
+    cartKeys: cart.items.map((i) => i.variant_id),
+  });
+}
+
+// Force a Section-Rendering refresh of EVERY present cart items host (page + drawer) so their line
+// keys/indices match cart.js after our raw cart writes. Per host: fetch its OWN section, swap the
+// host's inner HTML, verify the variant multiset matches cart.js (retry once), else prune stale
+// nodes. Returns whether all hosts converged + the drawer section HTML (reused by refreshDawnTotals
+// so the footer/badge refresh doesn't fetch the drawer section twice).
+async function refreshItemsBody(cart: AjaxCart): Promise<{ ok: boolean; drawerHtml?: string }> {
+  const hosts = presentCartItemsHosts();
+  let drawerHtml: string | undefined;
+  let allOk = hosts.length > 0;
+  for (const host of hosts) {
+    let converged = false;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
+        const res = await fetch(`${root}?sections=${host.sectionId}`, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) continue;
+        const data = (await res.json()) as Record<string, string>;
+        const html = data[host.sectionId];
+        if (html === undefined) continue;
+        if (host.isDrawer) drawerHtml = html;
+        const parsed = new DOMParser().parseFromString(html, 'text/html');
+        if (!replaceHostInner(host.el, parsed)) continue;
+        if (domMatchesCart(host.el, cart)) {
+          converged = true;
           break;
         }
-      }
-    } catch {
-      // retry
-    }
-  }
-  // Fallback: could not converge. Remove DOM nodes whose variant is not in cart.js.
-  const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
-  if (itemsEl !== null) {
-    const cartVariants = new Set(cart.items.map((item) => item.variant_id));
-    const nodes = Array.from(
-      itemsEl.querySelectorAll<HTMLElement>(
-        '.cart-item, [id^="CartDrawer-Item-"], [id^="CartItem-"], cart-item, .cart__row',
-      ),
-    );
-    for (const node of nodes) {
-      const link = node.querySelector<HTMLAnchorElement>('a[href*="variant="]');
-      if (link !== null) {
-        const m = link.href.match(/variant=(\d+)/);
-        if (m !== null && !cartVariants.has(Number(m[1]))) {
-          node.remove();
-        }
+      } catch {
+        // retry
       }
     }
-    console.warn('[FGE-DRAWERFIX] body refetch could not converge', {
-      domKeys: domVariantIds(itemsEl),
-      cartKeys: cart.items.map((i) => i.variant_id),
-    });
+    if (!converged) {
+      allOk = false;
+      pruneStrayLineNodes(host.el, cart);
+    }
   }
-  return lastDrawerHtml !== undefined ? { ok: false, drawerHtml: lastDrawerHtml } : { ok: false };
+  return drawerHtml !== undefined ? { ok: allOk, drawerHtml } : { ok: allOk };
 }
 
 // Verified display reconcile: cart.js read → grouping + stamp → optional section corrections.
@@ -315,14 +353,17 @@ async function doVerifiedDisplayReconcile(
     stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
   }
 
-  const itemsEl = document.querySelector<HTMLElement>('cart-drawer-items, cart-items');
+  // Every present cart surface (drawer AND/OR /cart page), not just the first match — the page's
+  // `cart-items` was previously never inspected here (the drawer's `cart-drawer-items` won the single
+  // querySelector), so the page kept stale keys.
+  const anyDiverged = cartHostElements().some((el) => !domMatchesCart(el, cart));
   let prefetchedDrawerHtml: string | undefined;
-  if (forceItemsRefresh || !domMatchesCart(itemsEl, cart)) {
-    if (forceItemsRefresh && domMatchesCart(itemsEl, cart)) {
+  if (forceItemsRefresh || anyDiverged) {
+    if (forceItemsRefresh && !anyDiverged) {
       console.warn(
         '[FGE-DRAWERFIX] refreshing items body after FGE cart write (line keys may be stale)',
       );
-    } else if (!domMatchesCart(itemsEl, cart)) {
+    } else if (anyDiverged) {
       console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch');
     }
     const bodyRefresh = await refreshItemsBody(cart);
@@ -332,19 +373,22 @@ async function doVerifiedDisplayReconcile(
     // the authoritative qty (from the cart we already read) in THIS task — before yielding to another
     // getCart() — so the optimistic +/- value is never briefly shown as a different, stale number
     // (bug 1). The guard leaves a row Dawn is still ahead on at its newer optimistic value.
-    if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
-      syncNativeInputs(itemsEl, lastCartQuantities);
+    for (const el of cartHostElements()) {
+      if (!shouldSkipNativeQtySync(el, lastCartQuantities))
+        syncNativeInputs(el, lastCartQuantities);
     }
   }
 
   // Sync qty inputs only when Dawn is not ahead of cart.js on any visible buy row (optimistic +/-).
   // A finishing gift reconcile often reads a stale snapshot (buy qty 1 + hidden gift qty 1) and
   // would otherwise force the visible stepper back to 1.
-  if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
+  const anyAhead = cartHostElements().some((el) => shouldSkipNativeQtySync(el, lastCartQuantities));
+  if (!anyAhead) {
     const freshCart = await getCart();
     lastCartQuantities = freshCart.items.map((item) => item.quantity);
-    if (!shouldSkipNativeQtySync(itemsEl, lastCartQuantities)) {
-      syncNativeInputs(itemsEl, lastCartQuantities);
+    for (const el of cartHostElements()) {
+      if (!shouldSkipNativeQtySync(el, lastCartQuantities))
+        syncNativeInputs(el, lastCartQuantities);
     }
   }
 
