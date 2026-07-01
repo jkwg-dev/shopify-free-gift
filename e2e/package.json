@@ -1,0 +1,19 @@
+{
+  "name": "free-gift-engine-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Selenium browser E2E for the Free Gift Engine storefront widget, run against a LIVE Shopify preview theme. Isolated from the pnpm workspace/Turborepo pipeline (like extensions/checkout-validation) — installed and run on its own.",
+  "scripts": {
+    "test": "tsx src/main.ts",
+    "test:headed": "FGE_HEADLESS=0 tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/selenium-webdriver": "^4.1.28",
+    "selenium-webdriver": "^4.28.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
