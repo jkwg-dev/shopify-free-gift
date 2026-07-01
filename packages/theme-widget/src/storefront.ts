@@ -22,6 +22,7 @@ import {
   syncNativeInputs,
 } from './groupingTransform.js';
 import { failedAddVariantIds } from './cartMutations.js';
+import { lineHasRealDiscount } from './discountAllocation.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
@@ -62,7 +63,7 @@ type AjaxCartItem = {
   // titles). Optional so the reconcile path is unaffected if a theme/cart omits them.
   readonly final_line_price?: number;
   readonly original_line_price?: number;
-  readonly discounts?: readonly { readonly title?: string }[];
+  readonly discounts?: readonly { readonly title?: string; readonly amount?: number }[];
 };
 type AjaxCart = {
   readonly items: readonly AjaxCartItem[];
@@ -355,7 +356,10 @@ async function readCartLines(): Promise<{ lines: CartLineView[]; currency: strin
     quantity: item.quantity,
     appAdded: isGiftLine(item),
     finalLinePrice: item.final_line_price ?? 0,
-    hasDiscountAllocation: (item.discounts?.length ?? 0) > 0,
+    // Only a discount that ACTUALLY reduces the line price excludes it from the qualifying subtotal.
+    // A BXGY gift code stamps a $0 "entitled" allocation on the full-price BUY lines too, which must
+    // NOT exclude the qualifying products (see lineHasRealDiscount for the full failure mode).
+    hasDiscountAllocation: lineHasRealDiscount(item.discounts),
   }));
   return { lines, currency: cart.currency };
 }

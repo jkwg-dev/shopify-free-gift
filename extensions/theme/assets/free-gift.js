@@ -432,6 +432,14 @@
     (_a2 = c == null ? void 0 : c.warn) == null ? void 0 : _a2.call(c, `[free-gift] ${message}`, body.slice(0, 300));
   }
 
+  // src/discountAllocation.ts
+  function lineHasRealDiscount(discounts) {
+    return (discounts != null ? discounts : []).some((d) => {
+      var _a2;
+      return ((_a2 = d.amount) != null ? _a2 : 0) > 0;
+    });
+  }
+
   // src/choices.ts
   function groupGiftOptionsByProduct(options) {
     const order = [];
@@ -1784,14 +1792,17 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   async function readCartLines() {
     const cart = await getCart();
     const lines = cart.items.map((item) => {
-      var _a2, _b2, _c2;
+      var _a2;
       return {
         id: item.key,
         variantId: toGid(item.variant_id),
         quantity: item.quantity,
         appAdded: isGiftLine(item),
         finalLinePrice: (_a2 = item.final_line_price) != null ? _a2 : 0,
-        hasDiscountAllocation: ((_c2 = (_b2 = item.discounts) == null ? void 0 : _b2.length) != null ? _c2 : 0) > 0
+        // Only a discount that ACTUALLY reduces the line price excludes it from the qualifying subtotal.
+        // A BXGY gift code stamps a $0 "entitled" allocation on the full-price BUY lines too, which must
+        // NOT exclude the qualifying products (see lineHasRealDiscount for the full failure mode).
+        hasDiscountAllocation: lineHasRealDiscount(item.discounts)
       };
     });
     return { lines, currency: cart.currency };
