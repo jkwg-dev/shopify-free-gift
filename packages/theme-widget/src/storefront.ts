@@ -696,6 +696,18 @@ function cartHost(itemsEl: HTMLElement | null): HTMLElement | null {
   return itemsEl?.closest<HTMLElement>('cart-drawer-items, cart-items') ?? itemsEl;
 }
 
+// Every DISTINCT cart items host present (the drawer AND the full /cart page), OUTERMOST only. The
+// /cart page host on Dawn-derived themes is a plain `#main-cart-items` div (NOT a <cart-items> tag),
+// so a tag-only query misses it — masking it is what makes the loading dim + spinner appear there.
+// Outermost-only avoids marking both an ancestor and a descendant host (e.g. #main-cart-items wrapping
+// a nested <cart-items>): grouping stamps data-fge-grouped on the outermost host too (cartHost's
+// fallback), so mask + grouped always resolve to the same node and the mask can never get stuck.
+const CART_HOST_SELECTORS = 'cart-drawer-items, cart-items, #main-cart-items, .cart__items';
+function cartHostElements(): HTMLElement[] {
+  const all = Array.from(document.querySelectorAll<HTMLElement>(CART_HOST_SELECTORS));
+  return all.filter((el) => !all.some((other) => other !== el && other.contains(el)));
+}
+
 // Hide raw theme cart content until the FGE transform runs. Always strips data-fge-grouped first so
 // a stale grouped flag cannot skip the CSS mask after a theme section re-render.
 const MASK_ATTR = 'data-fge-pending';
@@ -727,7 +739,7 @@ function maskCartHost(host: HTMLElement | null): void {
 }
 
 function maskAllCartHosts(): void {
-  document.querySelectorAll<HTMLElement>('cart-drawer-items, cart-items').forEach((el) => {
+  cartHostElements().forEach((el) => {
     maskCartHost(el);
   });
 }
@@ -764,9 +776,7 @@ function observeDrawerOpen(): void {
       if (cartHasFgeLines()) {
         maskAllCartHosts();
       } else {
-        document
-          .querySelectorAll<HTMLElement>('cart-drawer-items, cart-items')
-          .forEach((el) => showNativeEmptyCart(el));
+        cartHostElements().forEach((el) => showNativeEmptyCart(el));
       }
       // On drawer open, run the verified display reconcile: compare DOM to cart.js, force a body
       // re-fetch if divergent, then apply grouping + stamp. Never shows a frozen prior render.
@@ -939,7 +949,7 @@ function applyBadgeAndPageFooter(
 // re-render. ensureUnmasked() is the safety backstop; maskCartHost() only starts a timer when none runs.
 
 function applyInitialMask(): void {
-  document.querySelectorAll<HTMLElement>('cart-drawer-items, cart-items').forEach((el) => {
+  cartHostElements().forEach((el) => {
     el.setAttribute(MASK_ATTR, '');
   });
   maskTimer = setTimeout(ensureUnmasked, MASK_TIMEOUT_MS);
@@ -960,20 +970,16 @@ function ensureUnmasked(): void {
     document.querySelectorAll<HTMLElement>(`[${MASK_ATTR}]`).forEach((el) => {
       el.removeAttribute(MASK_ATTR);
     });
-    document
-      .querySelectorAll<HTMLElement>('cart-drawer-items, cart-items')
-      .forEach((el) => showNativeEmptyCart(el));
+    cartHostElements().forEach((el) => showNativeEmptyCart(el));
     return;
   }
   document.querySelectorAll<HTMLElement>(`[${MASK_ATTR}]`).forEach((el) => {
     el.setAttribute(GROUPED_ATTR, '');
     el.removeAttribute(MASK_ATTR);
   });
-  // Fail-safe: lift the body.fge-active hide when grouping did not run (e.g. no campaign).
-  document
-    .querySelectorAll<HTMLElement>(
-      'cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]), cart-items:not([data-fge-grouped]):not([data-fge-empty-native])',
-    )
+  // Fail-safe: lift the loading dim when grouping did not run (e.g. no campaign).
+  cartHostElements()
+    .filter((el) => !el.hasAttribute(GROUPED_ATTR) && !el.hasAttribute(EMPTY_NATIVE_ATTR))
     .forEach((el) => {
       el.setAttribute(GROUPED_ATTR, '');
     });
