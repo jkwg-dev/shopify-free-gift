@@ -16,6 +16,7 @@
 // and NOT retried within this run, so an unaddable gift can never spin the loop. Bounded by maxPasses.
 import { reconcileGiftLines, type CartLineView, type ValidateResult } from '@free-gift-engine/core';
 import { applyCartPlan, type CartMutationFailure, type CartPost } from './cartMutations.js';
+import { fgeLog } from './debug.js';
 
 export type GiftCartIo = {
   // Read the live cart as reconciler lines + presentment currency.
@@ -99,6 +100,26 @@ export async function reconcileGiftCart(
     const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
     let codeNeedsChange = plan.applyCode !== appliedCode;
 
+    fgeLog(`pass ${pass}`, {
+      status: result.status,
+      reason: 'reason' in result ? result.reason : undefined,
+      lines: lines.map((l) => ({
+        v: l.variantId,
+        qty: l.quantity,
+        appAdded: l.appAdded,
+        finalLinePrice: l.finalLinePrice,
+        hasDiscountAllocation: l.hasDiscountAllocation,
+      })),
+      plan: {
+        add: plan.add.map((a) => a.variantId),
+        remove: plan.remove.map((r) => r.variantId),
+        adjust: plan.adjust.map((a) => a.variantId),
+        applyCode: plan.applyCode,
+      },
+      appliedCode,
+      codeNeedsChange,
+    });
+
     // A gift line that is NOT $0 is always wrong (its code detached). Never converge while one exists,
     // even if reconcileGiftLines plans nothing and the code appears applied — the charged-gift sweep
     // below removes it and the next pass re-adds it WITH the code (the "gift present but not free" bug).
@@ -150,6 +171,7 @@ export async function reconcileGiftCart(
     if (codeNeedsChange) {
       wroteCart = true;
       const ok = await io.setDiscount(plan.applyCode);
+      fgeLog(`pass ${pass}: setDiscount`, plan.applyCode, 'ok?', ok);
       if (ok) {
         appliedCode = plan.applyCode;
       } else {
@@ -209,6 +231,9 @@ export async function reconcileGiftCart(
       const postCart = await io.readCart();
       const charged = postCart.lines.filter((l) => l.appAdded && (l.finalLinePrice ?? 0) > 0);
       if (charged.length > 0) {
+        fgeLog(`pass ${pass}: charged-gift sweep (removing full-price gift lines)`, {
+          charged: charged.map((l) => ({ v: l.variantId, finalLinePrice: l.finalLinePrice })),
+        });
         const updates: Record<string, number> = {};
         for (const l of charged) updates[l.id] = 0;
         wroteCart = true;

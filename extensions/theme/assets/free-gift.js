@@ -289,8 +289,14 @@
     'input[name*="quantity" i]',
     'input[type="number"]'
   ];
+  var LINE_TOTAL_SELECTORS = [".cart-item__actions--price", ".cart-item__total-price"];
+  var DEC_BTN_SELECTOR = '.quantity__button[name="decrement"], .quantity__button[name="minus"]';
+  var INC_BTN_SELECTOR = '.quantity__button[name="increment"], .quantity__button[name="plus"]';
   var MARK = "data-fge-grouped";
   var HIDDEN_MARK = "data-fge-gift-hidden";
+  var MERGE_PRIMARY_ATTR = "data-fge-merge-primary";
+  var MERGE_KEYS_ATTR = "data-fge-merge-keys";
+  var MERGE_HIDDEN_MARK = "data-fge-merge-hidden";
   function findFirst2(root2, selectors) {
     for (const sel of selectors) {
       const el = root2.querySelector(sel);
@@ -330,13 +336,77 @@
     }
     return true;
   }
+  function setPrimaryQuantity(node, total) {
+    const input = findFirst2(node, QTY_INPUT_SELECTORS);
+    if (!(input instanceof HTMLInputElement)) return;
+    const value = String(total);
+    if (input.value !== value) {
+      input.value = value;
+      input.setAttribute("value", value);
+    }
+    const min = input.min !== "" ? Number.parseInt(input.min, 10) : null;
+    const max = input.max !== "" ? Number.parseInt(input.max, 10) : null;
+    const dec = node.querySelector(DEC_BTN_SELECTOR);
+    const inc = node.querySelector(INC_BTN_SELECTOR);
+    if (dec !== null && min !== null) {
+      const atMin = total <= min;
+      dec.classList.toggle("disabled", atMin);
+      dec.disabled = atMin;
+    }
+    if (inc !== null && max !== null) {
+      const atMax = total >= max;
+      inc.classList.toggle("disabled", atMax);
+      inc.disabled = atMax;
+    }
+  }
+  function setLineTotalPrice(node, formatted) {
+    var _a2;
+    for (const sel of LINE_TOTAL_SELECTORS) {
+      const container = node.querySelector(sel);
+      if (container === null) continue;
+      const priceEl = (_a2 = container.querySelector(".cart-item__price")) != null ? _a2 : container;
+      priceEl.textContent = formatted;
+    }
+  }
+  function resetMergeMarks(lineNodes) {
+    for (const node of lineNodes) {
+      if (node.hasAttribute(MERGE_HIDDEN_MARK)) {
+        node.style.display = "";
+        node.removeAttribute(MERGE_HIDDEN_MARK);
+      }
+      node.removeAttribute(MERGE_PRIMARY_ATTR);
+      node.removeAttribute(MERGE_KEYS_ATTR);
+    }
+  }
+  function applyLineMerge(itemsEl, plan, totalLines, formatTotal) {
+    if (itemsEl === null) return false;
+    const lineNodes = findLineNodes(itemsEl);
+    if (lineNodes.length !== totalLines) return false;
+    resetMergeMarks(lineNodes);
+    for (const group of plan.groups) {
+      const primary = lineNodes[group.primaryIndex];
+      if (primary == null) continue;
+      primary.setAttribute(MERGE_PRIMARY_ATTR, "");
+      primary.setAttribute(MERGE_KEYS_ATTR, JSON.stringify(group.keys));
+      setPrimaryQuantity(primary, group.totalQuantity);
+      setLineTotalPrice(primary, formatTotal(group.totalFinalPrice));
+      for (const idx of group.hiddenIndices) {
+        const node = lineNodes[idx];
+        if (node != null) {
+          node.style.display = "none";
+          node.setAttribute(MERGE_HIDDEN_MARK, "");
+        }
+      }
+    }
+    return true;
+  }
   function shouldSkipNativeQtySync(itemsEl, actualQuantities) {
     if (itemsEl === null) return false;
     const lineNodes = findLineNodes(itemsEl);
     if (lineNodes.length !== actualQuantities.length) return false;
     for (let i = 0; i < lineNodes.length; i++) {
       const node = lineNodes[i];
-      if (node.hasAttribute(HIDDEN_MARK)) continue;
+      if (isFgeManagedRow(node)) continue;
       const input = findFirst2(node, QTY_INPUT_SELECTORS);
       if (!(input instanceof HTMLInputElement)) continue;
       const domQty = Number.parseInt(input.value, 10);
@@ -345,13 +415,16 @@
     }
     return false;
   }
+  function isFgeManagedRow(node) {
+    return node.hasAttribute(HIDDEN_MARK) || node.hasAttribute(MERGE_HIDDEN_MARK) || node.hasAttribute(MERGE_PRIMARY_ATTR);
+  }
   function syncNativeInputs(itemsEl, actualQuantities) {
     if (itemsEl === null) return;
     const lineNodes = findLineNodes(itemsEl);
     if (lineNodes.length !== actualQuantities.length) return;
     for (let i = 0; i < lineNodes.length; i++) {
       const node = lineNodes[i];
-      if (node.hasAttribute(HIDDEN_MARK)) continue;
+      if (isFgeManagedRow(node)) continue;
       const input = findFirst2(node, QTY_INPUT_SELECTORS);
       if (input instanceof HTMLInputElement) {
         const actual = String(actualQuantities[i]);
@@ -432,6 +505,25 @@
     (_a2 = c == null ? void 0 : c.warn) == null ? void 0 : _a2.call(c, `[free-gift] ${message}`, body.slice(0, 300));
   }
 
+  // src/debug.ts
+  function fgeDebugEnabled() {
+    try {
+      if (typeof window !== "undefined" && window.FGE_DEBUG === true) {
+        return true;
+      }
+      if (typeof localStorage !== "undefined" && localStorage.getItem("fge_debug") === "1") {
+        return true;
+      }
+    } catch {
+    }
+    return false;
+  }
+  function fgeLog(...args) {
+    if (fgeDebugEnabled()) {
+      console.log("[FGE]", ...args);
+    }
+  }
+
   // src/discountAllocation.ts
   function lineHasRealDiscount(discounts) {
     return (discounts != null ? discounts : []).some((d) => {
@@ -440,26 +532,72 @@
     });
   }
 
-  // src/lineConsolidation.ts
-  function planLineConsolidation(lines) {
-    const groups = /* @__PURE__ */ new Map();
+  // src/lineMerge.ts
+  function isMergeable(line) {
+    return !line.isGift && line.finalLinePrice === line.originalLinePrice;
+  }
+  function planLineMerge(lines) {
+    const buckets = /* @__PURE__ */ new Map();
     for (const line of lines) {
-      if (line.isGift) continue;
-      const groupKey = `${line.variantId}\0${line.propertiesKey}`;
-      const existing = groups.get(groupKey);
+      if (!isMergeable(line)) continue;
+      const bucketKey = `${line.variantId}\0${line.propertiesKey}`;
+      const existing = buckets.get(bucketKey);
       if (existing) existing.push(line);
-      else groups.set(groupKey, [line]);
+      else buckets.set(bucketKey, [line]);
     }
-    const updates = {};
-    for (const group of groups.values()) {
-      if (group.length <= 1) continue;
-      const total = group.reduce((sum, l) => sum + l.quantity, 0);
-      updates[group[0].key] = total;
-      for (let i = 1; i < group.length; i += 1) {
-        updates[group[i].key] = 0;
-      }
+    const groups = [];
+    for (const bucket of buckets.values()) {
+      if (bucket.length <= 1) continue;
+      const sorted = [...bucket].sort((a, b) => a.index - b.index);
+      const primary = sorted[0];
+      groups.push({
+        primaryIndex: primary.index,
+        hiddenIndices: sorted.slice(1).map((l) => l.index),
+        totalQuantity: sorted.reduce((n, l) => n + l.quantity, 0),
+        totalFinalPrice: sorted.reduce((n, l) => n + l.finalLinePrice, 0),
+        keys: sorted.map((l) => l.key)
+      });
     }
-    return Object.keys(updates).length > 0 ? updates : null;
+    groups.sort((a, b) => a.primaryIndex - b.primaryIndex);
+    return { groups };
+  }
+
+  // src/money.ts
+  var AMOUNT_PLACEHOLDER = /\{\{\s*(\w+)\s*\}\}/;
+  function themeMoneyFormat() {
+    var _a2, _b2;
+    const fmt2 = (_b2 = (_a2 = window.theme) == null ? void 0 : _a2.settings) == null ? void 0 : _b2.money_format;
+    return fmt2 !== void 0 && fmt2 !== "" ? fmt2 : "${{amount}}";
+  }
+  function themeLocale() {
+    var _a2;
+    return (_a2 = window.Shopify) == null ? void 0 : _a2.locale;
+  }
+  function formatMoney(cents, format = themeMoneyFormat()) {
+    const match = format.match(AMOUNT_PLACEHOLDER);
+    const option = match !== null ? match[1] : "amount";
+    const amount = cents / 100;
+    const locale = themeLocale();
+    let value;
+    switch (option) {
+      case "amount_no_decimals":
+        value = String(Math.round(amount));
+        break;
+      case "amount_with_comma_separator":
+        value = amount.toFixed(2).replace(".", ",");
+        break;
+      case "amount_no_decimals_with_comma_separator":
+        value = new Intl.NumberFormat(locale).format(Math.round(amount)).replace(/\./g, ",");
+        break;
+      case "amount":
+      default:
+        value = new Intl.NumberFormat(locale, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }).format(amount);
+        break;
+    }
+    return format.replace(AMOUNT_PLACEHOLDER, value);
   }
 
   // src/choices.ts
@@ -1148,6 +1286,25 @@
       const plan = reconcileGiftLines(lines, result);
       const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
       let codeNeedsChange = plan.applyCode !== appliedCode;
+      fgeLog(`pass ${pass}`, {
+        status: result.status,
+        reason: "reason" in result ? result.reason : void 0,
+        lines: lines.map((l) => ({
+          v: l.variantId,
+          qty: l.quantity,
+          appAdded: l.appAdded,
+          finalLinePrice: l.finalLinePrice,
+          hasDiscountAllocation: l.hasDiscountAllocation
+        })),
+        plan: {
+          add: plan.add.map((a) => a.variantId),
+          remove: plan.remove.map((r) => r.variantId),
+          adjust: plan.adjust.map((a) => a.variantId),
+          applyCode: plan.applyCode
+        },
+        appliedCode,
+        codeNeedsChange
+      });
       const hasChargedGift = lines.some((l) => {
         var _a3;
         return l.appAdded && ((_a3 = l.finalLinePrice) != null ? _a3 : 0) > 0;
@@ -1180,6 +1337,7 @@
       if (codeNeedsChange) {
         wroteCart = true;
         const ok = await io.setDiscount(plan.applyCode);
+        fgeLog(`pass ${pass}: setDiscount`, plan.applyCode, "ok?", ok);
         if (ok) {
           appliedCode = plan.applyCode;
         } else {
@@ -1229,6 +1387,9 @@
           return l.appAdded && ((_a3 = l.finalLinePrice) != null ? _a3 : 0) > 0;
         });
         if (charged.length > 0) {
+          fgeLog(`pass ${pass}: charged-gift sweep (removing full-price gift lines)`, {
+            charged: charged.map((l) => ({ v: l.variantId, finalLinePrice: l.finalLinePrice }))
+          });
           const updates = {};
           for (const l of charged) updates[l.id] = 0;
           wroteCart = true;
@@ -1649,6 +1810,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   var unavailableVariantIds = /* @__PURE__ */ new Set();
   var sections = [];
   var lastPlan = null;
+  var lastMergePlan = { groups: [] };
   var displayReconcileInFlight = null;
   function toGroupingLines(cart) {
     return cart.items.map((item, index) => {
@@ -1665,6 +1827,23 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
           var _a3;
           return (_a3 = d.title) != null ? _a3 : "";
         }).filter((t) => t !== "")
+      };
+    });
+  }
+  function toMergeLines(cart) {
+    return cart.items.map((item, index) => {
+      var _a2, _b2, _c2;
+      return {
+        index,
+        key: item.key,
+        variantId: item.variant_id,
+        propertiesKey: serializeProperties(item.properties),
+        quantity: item.quantity,
+        isGift: isGiftLine(item),
+        // Absent price fields (older theme/cart) default so final === original: the line reads as
+        // full-price and is eligible to merge with an identical sibling (the safe default here).
+        finalLinePrice: (_a2 = item.final_line_price) != null ? _a2 : 0,
+        originalLinePrice: (_c2 = (_b2 = item.original_line_price) != null ? _b2 : item.final_line_price) != null ? _c2 : 0
       };
     });
   }
@@ -1752,6 +1931,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     var _a2;
     const cart = existingCart != null ? existingCart : await getCart();
     lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+    lastMergePlan = planLineMerge(toMergeLines(cart));
     lastCartQuantities = cart.items.map((item) => item.quantity);
     for (const section of sections) section.attach();
     const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
@@ -1833,27 +2013,66 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     if (properties == null) return "";
     return Object.keys(properties).sort().map((k) => `${k}=${String(properties[k])}`).join("&");
   }
-  async function consolidateDuplicateLines() {
-    const cart = await getCart();
-    const updates = planLineConsolidation(
-      cart.items.map((item) => ({
-        key: item.key,
-        variantId: item.variant_id,
-        quantity: item.quantity,
-        propertiesKey: serializeProperties(item.properties),
-        isGift: isGiftLine(item)
-      }))
+  async function writeMergedGroup(keys, total) {
+    const updates = {};
+    keys.forEach((key, i) => {
+      updates[key] = i === 0 ? total : 0;
+    });
+    fgeLog("merged-group write", { keys, total, updates });
+    if (cartHasFgeLines()) maskAllCartHosts();
+    await cartPost("cart/update.js", { updates });
+  }
+  function mergeKeysFor(el) {
+    if (!(el instanceof HTMLElement)) return null;
+    const node = el.closest(`[${MERGE_PRIMARY_ATTR}]`);
+    if (node === null) return null;
+    const raw = node.getAttribute(MERGE_KEYS_ATTR);
+    if (raw === null) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.every((k) => typeof k === "string")) {
+        return parsed;
+      }
+    } catch {
+    }
+    return null;
+  }
+  function installMergeInterceptors() {
+    document.addEventListener(
+      "change",
+      (event) => {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement) || input.name !== "updates[]") return;
+        const keys = mergeKeysFor(input);
+        if (keys === null) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const total = Math.max(0, Number.parseInt(input.value, 10) || 0);
+        void writeMergedGroup(keys, total);
+      },
+      true
     );
-    if (updates === null) return false;
-    const res = await cartPost("cart/update.js", { updates });
-    return res.ok;
+    document.addEventListener(
+      "click",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const removeBtn = target.closest("cart-remove-button");
+        if (removeBtn === null) return;
+        const keys = mergeKeysFor(removeBtn);
+        if (keys === null) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void writeMergedGroup(keys, 0);
+      },
+      true
+    );
   }
   async function reconcileOnce(config) {
     selfMutating = true;
     beginGiftPending();
     const lastPriorCode = lastDiscount;
     try {
-      const consolidatedWrote = await consolidateDuplicateLines();
       const outcome = await reconcileGiftCart(
         {
           readCart: readCartLines,
@@ -1877,10 +2096,18 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
               countryCode: config.country,
               ...rate !== void 0 ? { presentmentRate: rate } : {}
             };
+            fgeLog("validate request", {
+              cart: request.cart,
+              choices: request.choices,
+              declined: request.declined,
+              currency: request.presentmentCurrency
+            });
             const response = await postValidate(request, { proxyPath: config.proxyPath });
             if (!response.ok) {
+              fgeLog("validate FAILED (leaving cart untouched)", response);
               return null;
             }
+            fgeLog("validate result", response.result);
             lastResult = response.result;
             renderSteppers();
             return response.result;
@@ -1901,14 +2128,23 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         },
         { initialCode: lastDiscount }
       );
+      fgeLog("reconcile outcome", {
+        passes: outcome.passes,
+        converged: outcome.converged,
+        appliedCode: outcome.appliedCode,
+        priorCode: lastPriorCode,
+        mutatedGiftLines: outcome.mutatedGiftLines,
+        wroteCart: outcome.wroteCart,
+        failures: outcome.failures
+      });
       lastDiscount = outcome.appliedCode;
       for (const variantId of failedAddVariantIds(outcome.failures)) {
         unavailableVariantIds.add(variantId);
       }
       renderPerception(config);
-      const cartMutated = consolidatedWrote || outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
+      const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
       const cart = await getCart();
-      await verifiedDisplayReconcile(cartMutated, cart, consolidatedWrote || outcome.mutatedGiftLines);
+      await verifiedDisplayReconcile(cartMutated, cart, outcome.mutatedGiftLines);
     } finally {
       markGiftWorkDone();
       selfMutating = false;
@@ -2040,7 +2276,15 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
       showNativeEmptyCart(cartHost(itemsEl));
       return;
     }
-    if (applyGiftLineHiding(itemsEl, lastPlan)) return;
+    if (applyGiftLineHiding(itemsEl, lastPlan)) {
+      applyLineMerge(
+        itemsEl,
+        lastMergePlan,
+        lastPlan.lineCount,
+        (minorUnits) => formatMoney(minorUnits)
+      );
+      return;
+    }
     maskCartHost(cartHost(itemsEl));
   }
   function observeDrawerOpen() {
@@ -2255,6 +2499,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     });
     applyInitialMask();
     observeDrawerOpen();
+    installMergeInterceptors();
     const trigger = (data) => {
       if (data !== null && typeof data === "object" && data.source === SOURCE) {
         return;

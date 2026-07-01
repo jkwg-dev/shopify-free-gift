@@ -17,13 +17,18 @@ import {
 import { mountCartContexts, type CartSection } from './cartSections.js';
 import { classifyAndGroup, type GroupingPlan, type RawCartLine } from './cartGrouping.js';
 import {
+  MERGE_KEYS_ATTR,
+  MERGE_PRIMARY_ATTR,
   applyGiftLineHiding,
+  applyLineMerge,
   shouldSkipNativeQtySync,
   syncNativeInputs,
 } from './groupingTransform.js';
 import { failedAddVariantIds } from './cartMutations.js';
+import { fgeLog } from './debug.js';
 import { lineHasRealDiscount } from './discountAllocation.js';
-import { planLineConsolidation } from './lineConsolidation.js';
+import { planLineMerge, type MergeLine, type MergePlan } from './lineMerge.js';
+import { formatMoney } from './money.js';
 import { defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
@@ -59,6 +64,7 @@ type AjaxCartItem = {
   readonly key: string;
   readonly variant_id: number;
   readonly quantity: number;
+  readonly title?: string;
   readonly properties: Readonly<Record<string, unknown>> | null;
   // Extra /cart.js fields the two-group transform needs (minor-unit integers + per-line discount
   // titles). Optional so the reconcile path is unaffected if a theme/cart omits them.
@@ -71,6 +77,9 @@ type AjaxCart = {
   readonly currency: string;
   readonly total_price?: number;
   readonly item_count?: number;
+  // Codes Shopify actually has on the cart (diagnostic): a BXGY code with no matching gift line may
+  // still be listed here as applicable:true even when it produces no allocation.
+  readonly discount_codes?: readonly { readonly code: string; readonly applicable: boolean }[];
 };
 
 type WidgetConfig = {
@@ -140,6 +149,9 @@ let sections: CartSection[] = [];
 
 // Gift-line hide plan: recomputed after each reconcile from /cart.js. cartSections re-attach applies it.
 let lastPlan: GroupingPlan | null = null;
+// Display-merge plan (same product split into >1 full-price line by BXGY allocation): recomputed with
+// lastPlan and re-applied on every cartSections attach so a theme re-render never un-merges the row.
+let lastMergePlan: MergePlan = { groups: [] };
 // Coalesce overlapping display-reconcile calls (theme MO + reconcile finish can overlap).
 let displayReconcileInFlight: Promise<void> | null = null;
 
@@ -153,6 +165,21 @@ function toGroupingLines(cart: AjaxCart): RawCartLine[] {
     originalLinePrice: item.original_line_price ?? 0,
     marked: isGiftLine(item),
     allocationTitles: (item.discounts ?? []).map((d) => d.title ?? '').filter((t) => t !== ''),
+  }));
+}
+
+function toMergeLines(cart: AjaxCart): MergeLine[] {
+  return cart.items.map((item, index) => ({
+    index,
+    key: item.key,
+    variantId: item.variant_id,
+    propertiesKey: serializeProperties(item.properties),
+    quantity: item.quantity,
+    isGift: isGiftLine(item),
+    // Absent price fields (older theme/cart) default so final === original: the line reads as
+    // full-price and is eligible to merge with an identical sibling (the safe default here).
+    finalLinePrice: item.final_line_price ?? 0,
+    originalLinePrice: item.original_line_price ?? item.final_line_price ?? 0,
   }));
 }
 
@@ -261,6 +288,7 @@ async function doVerifiedDisplayReconcile(
   const cart = existingCart ?? (await getCart());
 
   lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
+  lastMergePlan = planLineMerge(toMergeLines(cart));
   lastCartQuantities = cart.items.map((item) => item.quantity);
   for (const section of sections) section.attach();
 
@@ -375,25 +403,76 @@ function serializeProperties(properties: Readonly<Record<string, unknown>> | nul
     .join('&');
 }
 
-// Merge the SAME product (same variant + properties) when Shopify's BXGY allocation left it as two
-// lines — one carrying the $0 "entitled" allocation and one without (see lineConsolidation.ts). Runs
-// once per reconcile (before the gift loop); returns whether it wrote the cart so the caller forces a
-// body refresh (the merge changes line keys). Bounded: at most one write per cart change, so a
-// re-split (if Shopify re-allocates) self-heals on the NEXT interaction rather than looping.
-async function consolidateDuplicateLines(): Promise<boolean> {
-  const cart = await getCart();
-  const updates = planLineConsolidation(
-    cart.items.map((item) => ({
-      key: item.key,
-      variantId: item.variant_id,
-      quantity: item.quantity,
-      propertiesKey: serializeProperties(item.properties),
-      isGift: isGiftLine(item),
-    })),
+// Group-aware write for a display-merged row: the primary row shows the WHOLE group's quantity, so a
+// stepper/manual change or a remove must retarget every line key in the group — set the primary key
+// to the new total and zero the rest — instead of Dawn's native per-line write (which targets only
+// the primary sub-line's index and would leave the siblings behind). Shopify may re-split afterward;
+// the next reconcile + applyLineMerge re-collapses it. The write goes through the patched fetch, so
+// it schedules a reconcile like any other cart mutation.
+async function writeMergedGroup(keys: readonly string[], total: number): Promise<void> {
+  const updates: Record<string, number> = {};
+  keys.forEach((key, i) => {
+    updates[key] = i === 0 ? total : 0;
+  });
+  fgeLog('merged-group write', { keys, total, updates });
+  if (cartHasFgeLines()) maskAllCartHosts();
+  await cartPost('cart/update.js', { updates });
+}
+
+// Parse the group keys a merged primary row carries (stamped by applyLineMerge). Returns null when the
+// element is not a merged primary or the attribute is missing/malformed.
+function mergeKeysFor(el: EventTarget | null): string[] | null {
+  if (!(el instanceof HTMLElement)) return null;
+  const node = el.closest<HTMLElement>(`[${MERGE_PRIMARY_ATTR}]`);
+  if (node === null) return null;
+  const raw = node.getAttribute(MERGE_KEYS_ATTR);
+  if (raw === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((k) => typeof k === 'string')) {
+      return parsed as string[];
+    }
+  } catch {
+    // malformed — fall through
+  }
+  return null;
+}
+
+// Install document-level CAPTURE interceptors for merged rows. Capture runs before the theme's own
+// (bubble-phase) cart-items change handler and cart-remove-button click handler, so we can
+// stopImmediatePropagation and perform the group-wide write ourselves. Non-merged rows fall through
+// untouched (mergeKeysFor returns null), so native theme behavior is unchanged everywhere else.
+function installMergeInterceptors(): void {
+  document.addEventListener(
+    'change',
+    (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || input.name !== 'updates[]') return;
+      const keys = mergeKeysFor(input);
+      if (keys === null) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const total = Math.max(0, Number.parseInt(input.value, 10) || 0);
+      void writeMergedGroup(keys, total);
+    },
+    true,
   );
-  if (updates === null) return false;
-  const res = await cartPost('cart/update.js', { updates });
-  return res.ok;
+
+  document.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const removeBtn = target.closest('cart-remove-button');
+      if (removeBtn === null) return;
+      const keys = mergeKeysFor(removeBtn);
+      if (keys === null) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void writeMergedGroup(keys, 0);
+    },
+    true,
+  );
 }
 
 async function reconcileOnce(config: WidgetConfig): Promise<void> {
@@ -404,10 +483,6 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
   beginGiftPending(); // INSTANT feedback the moment the reconcile begins (held >= PENDING_MIN_MS)
   const lastPriorCode = lastDiscount;
   try {
-    // Normalize duplicate split lines BEFORE the gift loop so the shopper never sees the same product
-    // twice; the loop then re-reads the merged cart. A write here changes line keys (forces a body
-    // refresh below).
-    const consolidatedWrote = await consolidateDuplicateLines();
     const outcome = await reconcileGiftCart(
       {
         readCart: readCartLines,
@@ -428,10 +503,18 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
             countryCode: config.country,
             ...(rate !== undefined ? { presentmentRate: rate } : {}),
           };
+          fgeLog('validate request', {
+            cart: request.cart,
+            choices: request.choices,
+            declined: request.declined,
+            currency: request.presentmentCurrency,
+          });
           const response = await postValidate(request, { proxyPath: config.proxyPath });
           if (!response.ok) {
+            fgeLog('validate FAILED (leaving cart untouched)', response);
             return null; // null => error: leave the cart untouched
           }
+          fgeLog('validate result', response.result);
           lastResult = response.result; // authoritative state for the progress graph
           // Paint the stepper THE INSTANT the confirmed subtotal is known — decoupled from the slower
           // gift remove/add/code-apply that follows in this same reconcile. Authoritative-only (the
@@ -453,6 +536,15 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
       },
       { initialCode: lastDiscount },
     );
+    fgeLog('reconcile outcome', {
+      passes: outcome.passes,
+      converged: outcome.converged,
+      appliedCode: outcome.appliedCode,
+      priorCode: lastPriorCode,
+      mutatedGiftLines: outcome.mutatedGiftLines,
+      wroteCart: outcome.wroteCart,
+      failures: outcome.failures,
+    });
     lastDiscount = outcome.appliedCode;
     // Runtime 422 fallback: any gift that failed to add is marked unavailable so the chooser disables
     // it (+ note) and never shows it as added. Then re-render the perception UI from server state.
@@ -460,17 +552,13 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
       unavailableVariantIds.add(variantId);
     }
     renderPerception(config);
-    const cartMutated =
-      consolidatedWrote || outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
+    const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
     const cart = await getCart();
-    // Force a body re-fetch when gift LINES changed OR we merged duplicate lines (both change line
-    // keys). A discount-code-only write does not change keys, so refetching there would needlessly
-    // wipe Dawn's optimistic +/- value (bug 1). cartMutated still drives the footer/totals refresh.
-    await verifiedDisplayReconcile(
-      cartMutated,
-      cart,
-      consolidatedWrote || outcome.mutatedGiftLines,
-    );
+    // Force a body re-fetch only when gift LINES changed (that changes line keys). A discount-code-only
+    // write does not change keys, so refetching there would needlessly wipe Dawn's optimistic +/-
+    // value (bug 1). The display merge is re-applied on that refresh via applyFgeCartDisplay, so no
+    // extra cart write is needed. cartMutated still drives the footer/totals refresh.
+    await verifiedDisplayReconcile(cartMutated, cart, outcome.mutatedGiftLines);
   } finally {
     markGiftWorkDone(); // clear checkout lock only after display reconcile finishes
     selfMutating = false;
@@ -635,7 +723,14 @@ function applyFgeCartDisplay(itemsEl: HTMLElement | null): void {
     showNativeEmptyCart(cartHost(itemsEl));
     return;
   }
-  if (applyGiftLineHiding(itemsEl, lastPlan)) return;
+  if (applyGiftLineHiding(itemsEl, lastPlan)) {
+    // Same-product BXGY splits are display-merged on the SAME pass (after gift hiding aligned the DOM
+    // to the plan), so the shopper never sees the same product on two rows.
+    applyLineMerge(itemsEl, lastMergePlan, lastPlan.lineCount, (minorUnits) =>
+      formatMoney(minorUnits),
+    );
+    return;
+  }
   maskCartHost(cartHost(itemsEl));
 }
 
@@ -925,6 +1020,7 @@ function init(): void {
   // FOUC mask: dim the line-items region until the first grouping pass or timeout.
   applyInitialMask();
   observeDrawerOpen(); // mask on drawer open (before paint) — catches the PDP add-to-cart case
+  installMergeInterceptors(); // group-aware stepper/remove for display-merged duplicate rows
 
   const trigger = (data?: unknown): void => {
     // Ignore the echo of our own theme re-render publish.

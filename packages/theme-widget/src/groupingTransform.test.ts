@@ -3,11 +3,15 @@
  */
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
+  MERGE_KEYS_ATTR,
+  MERGE_PRIMARY_ATTR,
   applyGiftLineHiding,
+  applyLineMerge,
   shouldSkipNativeQtySync,
   syncNativeInputs,
 } from './groupingTransform.js';
 import type { GroupingPlan, GiftLineRef } from './cartGrouping.js';
+import type { MergePlan } from './lineMerge.js';
 
 function plan(over: Partial<GroupingPlan>): GroupingPlan {
   const gets = over.gets ?? [];
@@ -40,6 +44,28 @@ function buildDawnItems(count: number): HTMLElement {
   }
   return container;
 }
+
+// Rows mirroring line-item.liquid enough for the merge transform: a quantity input, +/- buttons, and
+// a line-TOTAL price element (`.cart-item__actions--price > .cart-item__price`).
+function buildMergeRows(count: number): HTMLElement {
+  const container = document.createElement('div');
+  for (let i = 0; i < count; i++) {
+    const row = document.createElement('div');
+    row.className = 'cart-item';
+    row.id = `CartDrawer-Item-${i + 1}`;
+    row.innerHTML = `
+      <div class="cart-item__quantity">
+        <button class="quantity__button" name="decrement" type="button"></button>
+        <input class="quantity__input" type="number" name="updates[]" min="0" max="99" value="1" data-index="${i + 1}">
+        <button class="quantity__button" name="increment" type="button"></button>
+      </div>
+      <div class="cart-item__actions--price"><span class="cart-item__price">$0.00</span></div>`;
+    container.appendChild(row);
+  }
+  return container;
+}
+
+const fmt = (cents: number): string => `$${(cents / 100).toFixed(2)}`;
 
 beforeEach(() => {
   document.body.innerHTML = '';
@@ -131,6 +157,80 @@ describe('applyGiftLineHiding', () => {
   });
 });
 
+describe('applyLineMerge', () => {
+  const mergePlan = (over: Partial<MergePlan['groups'][number]>): MergePlan => ({
+    groups: [
+      {
+        primaryIndex: 0,
+        hiddenIndices: [1],
+        totalQuantity: 3,
+        totalFinalPrice: 30000,
+        keys: ['buy', 'marked'],
+        ...over,
+      },
+    ],
+  });
+
+  it('hides the sibling, rolls qty + line total into the primary, and stamps the group keys', () => {
+    const itemsEl = buildMergeRows(2);
+    document.body.appendChild(itemsEl);
+
+    expect(applyLineMerge(itemsEl, mergePlan({}), 2, fmt)).toBe(true);
+
+    const rows = itemsEl.querySelectorAll<HTMLElement>('.cart-item');
+    expect(rows[0]!.style.display).toBe('');
+    expect(rows[1]!.style.display).toBe('none');
+    expect(rows[1]!.hasAttribute('data-fge-merge-hidden')).toBe(true);
+
+    expect(rows[0]!.hasAttribute(MERGE_PRIMARY_ATTR)).toBe(true);
+    expect(JSON.parse(rows[0]!.getAttribute(MERGE_KEYS_ATTR)!)).toEqual(['buy', 'marked']);
+    expect(rows[0]!.querySelector<HTMLInputElement>('.quantity__input')!.value).toBe('3');
+    expect(
+      rows[0]!.querySelector('.cart-item__actions--price .cart-item__price')!.textContent,
+    ).toBe('$300.00');
+  });
+
+  it('fails open (no changes) on a node/line count mismatch', () => {
+    const itemsEl = buildMergeRows(3);
+    document.body.appendChild(itemsEl);
+
+    expect(applyLineMerge(itemsEl, mergePlan({}), 2, fmt)).toBe(false);
+    for (const row of itemsEl.querySelectorAll<HTMLElement>('.cart-item')) {
+      expect(row.style.display).toBe('');
+      expect(row.hasAttribute(MERGE_PRIMARY_ATTR)).toBe(false);
+    }
+  });
+
+  it('is idempotent: an empty plan un-hides a previously merged sibling and clears the marks', () => {
+    const itemsEl = buildMergeRows(2);
+    document.body.appendChild(itemsEl);
+
+    applyLineMerge(itemsEl, mergePlan({}), 2, fmt);
+    applyLineMerge(itemsEl, { groups: [] }, 2, fmt);
+
+    const rows = itemsEl.querySelectorAll<HTMLElement>('.cart-item');
+    expect(rows[1]!.style.display).toBe('');
+    expect(rows[1]!.hasAttribute('data-fge-merge-hidden')).toBe(false);
+    expect(rows[0]!.hasAttribute(MERGE_PRIMARY_ATTR)).toBe(false);
+    expect(rows[0]!.hasAttribute(MERGE_KEYS_ATTR)).toBe(false);
+  });
+
+  it('disables the increment button when the group total reaches the input max', () => {
+    const itemsEl = buildMergeRows(2);
+    document.body.appendChild(itemsEl);
+    itemsEl
+      .querySelectorAll<HTMLInputElement>('.quantity__input')
+      .forEach((input) => input.setAttribute('max', '3'));
+
+    applyLineMerge(itemsEl, mergePlan({ totalQuantity: 3 }), 2, fmt);
+
+    const inc = itemsEl
+      .querySelector('.cart-item')!
+      .querySelector<HTMLButtonElement>('.quantity__button[name="increment"]')!;
+    expect(inc.disabled).toBe(true);
+  });
+});
+
 describe('syncNativeInputs', () => {
   it('syncs native inputs to authoritative quantities', () => {
     const itemsEl = buildDawnItems(2);
@@ -155,6 +255,19 @@ describe('syncNativeInputs', () => {
 
     expect(rows[0]!.querySelector<HTMLInputElement>('.quantity__input')!.value).toBe('2');
     expect(rows[1]!.querySelector<HTMLInputElement>('.quantity__input')!.value).toBe('1');
+  });
+
+  it('does not overwrite a merge-primary input (it holds the group total, not the per-line qty)', () => {
+    const itemsEl = buildDawnItems(2);
+    document.body.appendChild(itemsEl);
+    const rows = itemsEl.querySelectorAll<HTMLElement>('.cart-item');
+    rows[0]!.setAttribute('data-fge-merge-primary', '');
+    rows[0]!.querySelector<HTMLInputElement>('.quantity__input')!.value = '3';
+    rows[1]!.setAttribute('data-fge-merge-hidden', '');
+
+    syncNativeInputs(itemsEl, [2, 1]);
+
+    expect(rows[0]!.querySelector<HTMLInputElement>('.quantity__input')!.value).toBe('3');
   });
 });
 
