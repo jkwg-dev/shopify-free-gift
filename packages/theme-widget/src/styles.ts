@@ -197,6 +197,7 @@ body.fge-checkout-pending .cart__checkout-button::after{
   .fge-gift.is-pending .fge-variants{ transition:none; }
   .fge-spinner,
   [data-fge-pending]:not([data-fge-grouped]):not([data-fge-empty-native])::after,
+  body.fge-checkout-pending [data-fge-grouped]::after,
   body.fge-checkout-pending #CartDrawer-Checkout::before,
   body.fge-checkout-pending #checkout::before,
   body.fge-checkout-pending [name="checkout"]::before,
@@ -214,14 +215,18 @@ body.fge-checkout-pending .cart__checkout-button::after{
 }
 .fge-notice.is-visible{ opacity:1; }
 
-/* --- Loading mask: while FGE controls the items region (data-fge-pending) and grouping hasn't yet
-   applied (data-fge-grouped) — and it's not an empty cart (data-fge-empty-native) — the line rows are
-   kept in place but DIMMED + DISABLED (opacity, pointer-events:none) with a centered spinner overlaid
-   on top, so the shopper sees "updating" rather than a blank gap. ATTRIBUTE-based (not a tag selector)
-   so it covers BOTH the drawer (cart-drawer-items) and the /cart page host (#main-cart-items — a plain
-   div on Dawn-derived themes), whichever the shopper is on.
-   The fail-safe (ensureUnmasked) sets data-fge-grouped to lift it. /cart sidebar (#main-cart-footer),
-   FGE widgets, and checkout stay visible and interactive; min-height reserves spinner room. --- */
+/* --- Loading states. TWO distinct phases, so the free-gift line is NEVER shown as a raw cart line:
+   (1) UNGROUPED (data-fge-pending, not yet data-fge-grouped): FGE has not classified buys vs the $0
+       gift line yet, so the rows are HIDDEN (visibility:hidden — layout kept) with a spinner. HIDING
+       (not dimming) here is what stops a just-added gift line from flashing in before grouping marks
+       it display:none — we cannot safely tell a gift line from a full-price duplicate pre-grouping.
+   (2) GROUPED + reconcile running (data-fge-grouped + body.fge-checkout-pending): the gift/get lines
+       are already display:none, so the visible BUY rows are DIMMED + DISABLED (opacity,
+       pointer-events:none) with a spinner overlaid — the "updating" look over the real items.
+   ATTRIBUTE-based so BOTH the drawer (cart-drawer-items) and the /cart page host (#main-cart-items — a
+   plain div on Dawn-derived themes) are covered. The fail-safe (ensureUnmasked) sets data-fge-grouped
+   to lift phase 1; clearGiftPending drops body.fge-checkout-pending to lift phase 2. Sidebar
+   (#main-cart-footer), FGE widgets, and checkout stay visible/interactive; min-height reserves room. --- */
 body.fge-active [data-fge-pending]:not([data-fge-grouped]):not([data-fge-empty-native]){
   position:relative; min-height:120px;
 }
@@ -230,9 +235,18 @@ body.fge-active [data-fge-pending]:not([data-fge-grouped]):not([data-fge-empty-n
 body.fge-active [data-fge-pending]:not([data-fge-grouped]):not([data-fge-empty-native]) [id^="CartItem-"],
 body.fge-active [data-fge-pending]:not([data-fge-grouped]):not([data-fge-empty-native]) cart-item,
 body.fge-active [data-fge-pending]:not([data-fge-grouped]):not([data-fge-empty-native]) .cart__row{
+  visibility:hidden;
+}
+body.fge-checkout-pending [data-fge-grouped]{ position:relative; min-height:120px; }
+body.fge-checkout-pending [data-fge-grouped] .cart-item,
+body.fge-checkout-pending [data-fge-grouped] [id^="CartDrawer-Item-"],
+body.fge-checkout-pending [data-fge-grouped] [id^="CartItem-"],
+body.fge-checkout-pending [data-fge-grouped] cart-item,
+body.fge-checkout-pending [data-fge-grouped] .cart__row{
   opacity:.4; pointer-events:none; transition:opacity .2s ease;
 }
-[data-fge-pending]:not([data-fge-grouped]):not([data-fge-empty-native])::after{
+[data-fge-pending]:not([data-fge-grouped]):not([data-fge-empty-native])::after,
+body.fge-checkout-pending [data-fge-grouped]::after{
   content:""; box-sizing:border-box; position:absolute; z-index:3;
   top:50%; left:50%; margin:-14px 0 0 -14px;
   width:28px; height:28px; border:2.5px solid var(--fge-line,#e3e3e3);
