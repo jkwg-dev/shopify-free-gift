@@ -297,6 +297,8 @@
   var MERGE_PRIMARY_ATTR = "data-fge-merge-primary";
   var MERGE_KEYS_ATTR = "data-fge-merge-keys";
   var MERGE_HIDDEN_MARK = "data-fge-merge-hidden";
+  var DISCOUNT_LIST_SELECTOR = ".cart-item__discounts";
+  var DISCOUNT_HIDDEN_MARK = "data-fge-discount-hidden";
   function findFirst2(root2, selectors) {
     for (const sel of selectors) {
       const el = root2.querySelector(sel);
@@ -333,6 +335,26 @@
         node.style.display = "none";
         node.setAttribute(HIDDEN_MARK, "");
       }
+    }
+    return true;
+  }
+  function applyDiscountBadgeHiding(itemsEl, hideIndices, totalLines) {
+    if (itemsEl === null) return false;
+    const lineNodes = findLineNodes(itemsEl);
+    if (lineNodes.length !== totalLines) return false;
+    for (const node of lineNodes) {
+      node.querySelectorAll(`[${DISCOUNT_HIDDEN_MARK}]`).forEach((el) => {
+        el.style.display = "";
+        el.removeAttribute(DISCOUNT_HIDDEN_MARK);
+      });
+    }
+    const hide = new Set(hideIndices);
+    for (let i = 0; i < lineNodes.length; i++) {
+      if (!hide.has(i)) continue;
+      lineNodes[i].querySelectorAll(DISCOUNT_LIST_SELECTOR).forEach((el) => {
+        el.style.display = "none";
+        el.setAttribute(DISCOUNT_HIDDEN_MARK, "");
+      });
     }
     return true;
   }
@@ -1811,6 +1833,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
   var sections = [];
   var lastPlan = null;
   var lastMergePlan = { groups: [] };
+  var lastDiscountHideIndices = [];
   var displayReconcileInFlight = null;
   function toGroupingLines(cart) {
     return cart.items.map((item, index) => {
@@ -1829,6 +1852,15 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         }).filter((t) => t !== "")
       };
     });
+  }
+  function discountBadgeHideIndices(cart) {
+    const indices = [];
+    cart.items.forEach((item, index) => {
+      var _a2;
+      const discounts = (_a2 = item.discounts) != null ? _a2 : [];
+      if (discounts.length > 0 && !lineHasRealDiscount(discounts)) indices.push(index);
+    });
+    return indices;
   }
   function toMergeLines(cart) {
     return cart.items.map((item, index) => {
@@ -1932,6 +1964,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     const cart = existingCart != null ? existingCart : await getCart();
     lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
     lastMergePlan = planLineMerge(toMergeLines(cart));
+    lastDiscountHideIndices = discountBadgeHideIndices(cart);
     lastCartQuantities = cart.items.map((item) => item.quantity);
     for (const section of sections) section.attach();
     const giftQty = cart.items.filter(isGiftLine).reduce((n, item) => n + item.quantity, 0);
@@ -2283,6 +2316,7 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
         lastPlan.lineCount,
         (minorUnits) => formatMoney(minorUnits)
       );
+      applyDiscountBadgeHiding(itemsEl, lastDiscountHideIndices, lastPlan.lineCount);
       return;
     }
     maskCartHost(cartHost(itemsEl));

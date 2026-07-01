@@ -34,6 +34,12 @@ const HIDDEN_MARK = 'data-fge-gift-hidden';
 export const MERGE_PRIMARY_ATTR = 'data-fge-merge-primary';
 export const MERGE_KEYS_ATTR = 'data-fge-merge-keys';
 const MERGE_HIDDEN_MARK = 'data-fge-merge-hidden';
+// A line's discount label list (line-item.liquid `discounts_list`). Our BXGY code stamps a $0
+// "entitled" allocation on full-price qualifying lines, so the theme renders our code name as a
+// sale-tag pill even though the price is unchanged — confusing ("discount applied, price the same").
+// We hide that label on lines with NO real price reduction (see applyDiscountBadgeHiding).
+const DISCOUNT_LIST_SELECTOR = '.cart-item__discounts';
+const DISCOUNT_HIDDEN_MARK = 'data-fge-discount-hidden';
 
 function findFirst(root: ParentNode, selectors: readonly string[]): HTMLElement | null {
   for (const sel of selectors) {
@@ -84,6 +90,38 @@ export function applyGiftLineHiding(itemsEl: HTMLElement | null, plan: GroupingP
       node.style.display = 'none';
       node.setAttribute(HIDDEN_MARK, '');
     }
+  }
+
+  return true;
+}
+
+// Hide the discount-label list on rows whose price is NOT actually reduced (a discount is "applied"
+// only as a $0 BXGY entitlement marker). `hideIndices` are the cart-order line indices to hide;
+// idempotent (un-hides rows no longer listed) and re-run after every theme re-render. FAIL-OPEN on a
+// node/line count mismatch: return false and leave the DOM to the authoritative refresh.
+export function applyDiscountBadgeHiding(
+  itemsEl: HTMLElement | null,
+  hideIndices: readonly number[],
+  totalLines: number,
+): boolean {
+  if (itemsEl === null) return false;
+  const lineNodes = findLineNodes(itemsEl);
+  if (lineNodes.length !== totalLines) return false;
+
+  for (const node of lineNodes) {
+    node.querySelectorAll<HTMLElement>(`[${DISCOUNT_HIDDEN_MARK}]`).forEach((el) => {
+      el.style.display = '';
+      el.removeAttribute(DISCOUNT_HIDDEN_MARK);
+    });
+  }
+
+  const hide = new Set(hideIndices);
+  for (let i = 0; i < lineNodes.length; i++) {
+    if (!hide.has(i)) continue;
+    lineNodes[i]!.querySelectorAll<HTMLElement>(DISCOUNT_LIST_SELECTOR).forEach((el) => {
+      el.style.display = 'none';
+      el.setAttribute(DISCOUNT_HIDDEN_MARK, '');
+    });
   }
 
   return true;

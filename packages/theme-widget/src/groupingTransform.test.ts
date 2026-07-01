@@ -5,6 +5,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import {
   MERGE_KEYS_ATTR,
   MERGE_PRIMARY_ATTR,
+  applyDiscountBadgeHiding,
   applyGiftLineHiding,
   applyLineMerge,
   shouldSkipNativeQtySync,
@@ -228,6 +229,54 @@ describe('applyLineMerge', () => {
       .querySelector('.cart-item')!
       .querySelector<HTMLButtonElement>('.quantity__button[name="increment"]')!;
     expect(inc.disabled).toBe(true);
+  });
+});
+
+describe('applyDiscountBadgeHiding', () => {
+  function buildDiscountRows(count: number): HTMLElement {
+    const container = document.createElement('div');
+    for (let i = 0; i < count; i++) {
+      const row = document.createElement('div');
+      row.className = 'cart-item';
+      row.id = `CartDrawer-Item-${i + 1}`;
+      row.innerHTML = `<ul class="cart-item__discounts"><li><span>free-gift-CODE</span></li></ul>`;
+      container.appendChild(row);
+    }
+    return container;
+  }
+
+  it('hides the discount label on listed rows and leaves others alone', () => {
+    const itemsEl = buildDiscountRows(2);
+    document.body.appendChild(itemsEl);
+
+    expect(applyDiscountBadgeHiding(itemsEl, [0], 2)).toBe(true);
+
+    const lists = itemsEl.querySelectorAll<HTMLElement>('.cart-item__discounts');
+    expect(lists[0]!.style.display).toBe('none');
+    expect(lists[0]!.hasAttribute('data-fge-discount-hidden')).toBe(true);
+    expect(lists[1]!.style.display).toBe('');
+  });
+
+  it('is idempotent: re-running with an empty set un-hides a previously hidden label', () => {
+    const itemsEl = buildDiscountRows(1);
+    document.body.appendChild(itemsEl);
+
+    applyDiscountBadgeHiding(itemsEl, [0], 1);
+    applyDiscountBadgeHiding(itemsEl, [], 1);
+
+    const list = itemsEl.querySelector<HTMLElement>('.cart-item__discounts')!;
+    expect(list.style.display).toBe('');
+    expect(list.hasAttribute('data-fge-discount-hidden')).toBe(false);
+  });
+
+  it('fails open (no changes) on a node/line count mismatch', () => {
+    const itemsEl = buildDiscountRows(3);
+    document.body.appendChild(itemsEl);
+
+    expect(applyDiscountBadgeHiding(itemsEl, [0], 2)).toBe(false);
+    for (const list of itemsEl.querySelectorAll<HTMLElement>('.cart-item__discounts')) {
+      expect(list.style.display).toBe('');
+    }
   });
 });
 

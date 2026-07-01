@@ -19,6 +19,7 @@ import { classifyAndGroup, type GroupingPlan, type RawCartLine } from './cartGro
 import {
   MERGE_KEYS_ATTR,
   MERGE_PRIMARY_ATTR,
+  applyDiscountBadgeHiding,
   applyGiftLineHiding,
   applyLineMerge,
   shouldSkipNativeQtySync,
@@ -152,6 +153,9 @@ let lastPlan: GroupingPlan | null = null;
 // Display-merge plan (same product split into >1 full-price line by BXGY allocation): recomputed with
 // lastPlan and re-applied on every cartSections attach so a theme re-render never un-merges the row.
 let lastMergePlan: MergePlan = { groups: [] };
+// Cart-order indices whose discount label is a $0 "entitled" marker (our code applied but no price
+// reduction): the label is hidden on these rows. Recomputed with lastPlan, re-applied on every attach.
+let lastDiscountHideIndices: readonly number[] = [];
 // Coalesce overlapping display-reconcile calls (theme MO + reconcile finish can overlap).
 let displayReconcileInFlight: Promise<void> | null = null;
 
@@ -166,6 +170,18 @@ function toGroupingLines(cart: AjaxCart): RawCartLine[] {
     marked: isGiftLine(item),
     allocationTitles: (item.discounts ?? []).map((d) => d.title ?? '').filter((t) => t !== ''),
   }));
+}
+
+// Cart-order indices where a discount is APPLIED (a label would render) but the price is NOT reduced
+// (every allocation is amount 0 — our BXGY $0 "entitled" marker). Those labels are hidden. A line
+// with any real reduction (amount > 0) keeps its label (a genuine discount the shopper should see).
+function discountBadgeHideIndices(cart: AjaxCart): number[] {
+  const indices: number[] = [];
+  cart.items.forEach((item, index) => {
+    const discounts = item.discounts ?? [];
+    if (discounts.length > 0 && !lineHasRealDiscount(discounts)) indices.push(index);
+  });
+  return indices;
 }
 
 function toMergeLines(cart: AjaxCart): MergeLine[] {
@@ -289,6 +305,7 @@ async function doVerifiedDisplayReconcile(
 
   lastPlan = classifyAndGroup(toGroupingLines(cart), lastDiscount);
   lastMergePlan = planLineMerge(toMergeLines(cart));
+  lastDiscountHideIndices = discountBadgeHideIndices(cart);
   lastCartQuantities = cart.items.map((item) => item.quantity);
   for (const section of sections) section.attach();
 
@@ -729,6 +746,8 @@ function applyFgeCartDisplay(itemsEl: HTMLElement | null): void {
     applyLineMerge(itemsEl, lastMergePlan, lastPlan.lineCount, (minorUnits) =>
       formatMoney(minorUnits),
     );
+    // Hide the code label on rows where it's a $0 entitlement marker (applied but no price reduction).
+    applyDiscountBadgeHiding(itemsEl, lastDiscountHideIndices, lastPlan.lineCount);
     return;
   }
   maskCartHost(cartHost(itemsEl));
