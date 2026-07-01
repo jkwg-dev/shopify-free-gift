@@ -92,8 +92,16 @@ class FakeCart {
 function makeIo(
   cart: FakeCart,
   result: () => ValidateResult | null,
-  opts: { add422?: Set<string>; discounts?: string[]; swallowAdds?: boolean } = {},
+  opts: {
+    add422?: Set<string>;
+    discounts?: string[];
+    swallowAdds?: boolean;
+    // Fail the FIRST N setDiscount calls (models transient AJAX-cart write contention: a concurrent
+    // Dawn cart/change.js 422s our cart/update.js). The loop must retry and still attach the code.
+    discountFailFirst?: number;
+  } = {},
 ): GiftCartIo & { posts: { path: string; body: unknown }[] } {
+  let discountFails = opts.discountFailFirst ?? 0;
   const posts: { path: string; body: unknown }[] = [];
   const post: CartPost = (path, body) => {
     posts.push({ path, body });
@@ -145,8 +153,12 @@ function makeIo(
       // Record in the unified `posts` log too (path 'discount') so tests can assert the ORDER of
       // setDiscount relative to cart/add.js and cart/change.js (the full-price-window fix).
       posts.push({ path: 'discount', body: { discount: code ?? '' } });
+      if (discountFails > 0) {
+        discountFails -= 1;
+        return Promise.resolve(false); // contention 422 — the loop must retry
+      }
       opts.discounts?.push(code ?? '');
-      return Promise.resolve();
+      return Promise.resolve(true);
     },
   };
   return io;
@@ -309,6 +321,45 @@ describe('reconcileGiftCart — no full-price beat (apply order)', () => {
         p.path === 'discount' ? `code:${(p.body as { discount: string }).discount}` : p.path,
       );
     expect(seq).toEqual(['code:CODE-ICE', 'cart/add.js']);
+  });
+});
+
+describe('reconcileGiftCart — gift code is always attached (self-heal)', () => {
+  it('retries a discount apply that 422s under contention, then attaches the code and adds the gift', async () => {
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    const discounts: string[] = [];
+    // The first cart/update.js{discount} 422s (a concurrent Dawn qty change); the loop must retry.
+    const io = makeIo(cart, () => giftResult([ICE], 'CODE-ICE'), {
+      discounts,
+      discountFailFirst: 1,
+    });
+
+    const outcome = await reconcileGiftCart(io, { maxPasses: 4 });
+
+    expect(outcome.converged).toBe(true);
+    expect(outcome.appliedCode).toBe('CODE-ICE'); // never marked applied on the failed attempt
+    expect(discounts).toContain('CODE-ICE'); // the retry actually attached the code
+    expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 }); // gift only added once the code stuck
+    // We never added a gift during the failed pass — the add follows a SUCCESSFUL apply.
+    const applyThenAdd = io.posts.filter((p) => p.path === 'discount' || p.path === 'cart/add.js');
+    expect(applyThenAdd.map((p) => p.path)).toEqual(['discount', 'discount', 'cart/add.js']);
+  });
+
+  it('re-applies the code even when appliedCode already matches, if a gift must be (re)added', async () => {
+    // The cart still has the gift but at FULL PRICE (the code silently dropped), and the in-memory
+    // appliedCode wrongly claims CODE-ICE is applied. The loop must remove the charged gift AND
+    // re-apply the code before re-adding — never trust appliedCode when a gift needs granting.
+    const cart = new FakeCart();
+    cart.seedPaid(PAID, 5);
+    cart.seedGift(ICE, 1, 1000); // charged gift (code detached)
+    const discounts: string[] = [];
+    const io = makeIo(cart, () => giftResult([ICE], 'CODE-ICE'), { discounts });
+
+    await reconcileGiftCart(io, { initialCode: 'CODE-ICE' });
+
+    expect(discounts).toContain('CODE-ICE'); // re-applied despite appliedCode === plan.applyCode
+    expect(countGift(cart, ICE)).toEqual({ lines: 1, qty: 1 });
   });
 });
 

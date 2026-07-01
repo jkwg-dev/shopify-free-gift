@@ -1102,7 +1102,7 @@
     return applied.failed === 0 && applied.added === expected.adds && applied.removed === expected.removes && applied.adjusted === expected.adjusts;
   }
   async function reconcileGiftCart(io, opts = {}) {
-    var _a2, _b2, _c2;
+    var _a2, _b2, _c2, _d;
     const maxPasses = (_a2 = opts.maxPasses) != null ? _a2 : 4;
     let appliedCode = (_b2 = opts.initialCode) != null ? _b2 : null;
     const addAttempted = /* @__PURE__ */ new Set();
@@ -1117,9 +1117,13 @@
       }
       const plan = reconcileGiftLines(lines, result);
       const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
-      const codeNeedsChange = plan.applyCode !== appliedCode;
+      let codeNeedsChange = plan.applyCode !== appliedCode;
+      const hasChargedGift = lines.some((l) => {
+        var _a3;
+        return l.appAdded && ((_a3 = l.finalLinePrice) != null ? _a3 : 0) > 0;
+      });
       let add = plan.add.filter((a) => !addAttempted.has(a.variantId));
-      if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
+      if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange && !hasChargedGift) {
         return { passes: pass, converged: true, appliedCode, failures, wroteCart, mutatedGiftLines };
       }
       const removed = [];
@@ -1140,10 +1144,18 @@
         }
         add = plan.add.filter((a) => !addAttempted.has(a.variantId));
       }
+      if (result.status === "gift" && add.length > 0) {
+        codeNeedsChange = true;
+      }
       if (codeNeedsChange) {
         wroteCart = true;
-        await io.setDiscount(plan.applyCode);
-        appliedCode = plan.applyCode;
+        const ok = await io.setDiscount(plan.applyCode);
+        if (ok) {
+          appliedCode = plan.applyCode;
+        } else {
+          (_c2 = io.nudge) == null ? void 0 : _c2.call(io);
+          continue;
+        }
       }
       if (add.length > 0) {
         wroteCart = true;
@@ -1170,7 +1182,7 @@
         }
       }
       failures.push(...passFailures);
-      (_c2 = io.nudge) == null ? void 0 : _c2.call(io);
+      (_d = io.nudge) == null ? void 0 : _d.call(io);
       const settled = reconcileSettled(
         { adds: add.length, removes: plan.remove.length, adjusts: plan.adjust.length },
         {
@@ -1198,7 +1210,14 @@
         return { passes: pass, converged: true, appliedCode, failures, wroteCart, mutatedGiftLines };
       }
     }
-    return { passes: maxPasses, converged: false, appliedCode, failures, wroteCart, mutatedGiftLines };
+    return {
+      passes: maxPasses,
+      converged: false,
+      appliedCode,
+      failures,
+      wroteCart,
+      mutatedGiftLines
+    };
   }
 
   // src/styles.ts
@@ -1762,9 +1781,6 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body)
   });
-  async function postJson(path, body) {
-    await cartPost(path, body);
-  }
   async function readCartLines() {
     const cart = await getCart();
     const lines = cart.items.map((item) => {
@@ -1817,7 +1833,13 @@ cart-items[data-fge-pending]:not([data-fge-grouped])::after{
             return response.result;
           },
           post: cartPost,
-          setDiscount: (code) => postJson("cart/update.js", { discount: code != null ? code : "" }),
+          // Return whether the discount write actually succeeded. A concurrent Dawn cart/change.js can
+          // 422 this cart/update.js (the AJAX cart serializes writes); the loop retries on false so the
+          // gift code is never left detached (the "not attached until I edit again" bug).
+          setDiscount: async (code) => {
+            const res = await cartPost("cart/update.js", { discount: code != null ? code : "" });
+            return res.ok;
+          },
           // Nudge the theme to re-render its cart UI; tagged with our source so we ignore the echo.
           nudge: () => {
             var _a2;

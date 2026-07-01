@@ -24,8 +24,10 @@ export type GiftCartIo = {
   validate: (lines: readonly CartLineView[], currency: string) => Promise<ValidateResult | null>;
   // Cart writer for applyCartPlan (cart/add.js, cart/change.js).
   post: CartPost;
-  // Apply (code) or clear (null) the discount via the Cart AJAX API.
-  setDiscount: (code: string | null) => Promise<void>;
+  // Apply (code) or clear (null) the discount via the Cart AJAX API. Returns whether the write
+  // SUCCEEDED — a concurrent Dawn cart/change.js can 422 our cart/update.js (the AJAX cart serializes
+  // writes), and a swallowed failure would leave the gift code detached. The loop retries on false.
+  setDiscount: (code: string | null) => Promise<boolean>;
   // Optional theme re-render nudge after a mutating pass.
   nudge?: () => void;
 };
@@ -95,13 +97,18 @@ export async function reconcileGiftCart(
 
     const plan = reconcileGiftLines(lines, result);
     const hasRemoveAdjust = plan.remove.length > 0 || plan.adjust.length > 0;
-    const codeNeedsChange = plan.applyCode !== appliedCode;
+    let codeNeedsChange = plan.applyCode !== appliedCode;
+
+    // A gift line that is NOT $0 is always wrong (its code detached). Never converge while one exists,
+    // even if reconcileGiftLines plans nothing and the code appears applied — the charged-gift sweep
+    // below removes it and the next pass re-adds it WITH the code (the "gift present but not free" bug).
+    const hasChargedGift = lines.some((l) => l.appAdded && (l.finalLinePrice ?? 0) > 0);
 
     // Filter adds BEFORE convergence check (same as before) — but we'll recompute after removes
     // in case `addAttempted` entries are cleared for removed variants.
     let add = plan.add.filter((a) => !addAttempted.has(a.variantId));
 
-    if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange) {
+    if (!hasRemoveAdjust && add.length === 0 && !codeNeedsChange && !hasChargedGift) {
       return { passes: pass, converged: true, appliedCode, failures, wroteCart, mutatedGiftLines }; // cart already matches
     }
 
@@ -133,10 +140,27 @@ export async function reconcileGiftCart(
       // Recompute adds after clearing — a variant that was blocked is now eligible.
       add = plan.add.filter((a) => !addAttempted.has(a.variantId));
     }
+    // Revenue-critical invariant: the scoped gift code MUST be on the cart whenever a gift is granted.
+    // Re-apply it any time we are about to (re)add a gift line — even if in-memory `appliedCode`
+    // claims it is already applied — so a code that silently dropped (e.g. a prior apply 422'd under
+    // cart-write contention, or Shopify cleared it) is always restored before the $0 line lands.
+    if (result.status === 'gift' && add.length > 0) {
+      codeNeedsChange = true;
+    }
     if (codeNeedsChange) {
       wroteCart = true;
-      await io.setDiscount(plan.applyCode);
-      appliedCode = plan.applyCode;
+      const ok = await io.setDiscount(plan.applyCode);
+      if (ok) {
+        appliedCode = plan.applyCode;
+      } else {
+        // The apply/clear FAILED — almost always transient AJAX-cart write contention (a concurrent
+        // Dawn cart/change.js 422s our cart/update.js). Do NOT mark it applied (leave appliedCode so
+        // the retry re-applies) and skip the add this pass — never add a gift we cannot zero. The
+        // next pass re-reads and retries; contention has cleared by then. This is what stops the
+        // "code doesn't attach until I edit again" failure: we self-heal inside the same run.
+        io.nudge?.();
+        continue;
+      }
     }
     if (add.length > 0) {
       wroteCart = true;

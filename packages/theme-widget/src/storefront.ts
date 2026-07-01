@@ -346,10 +346,6 @@ const cartPost = (path: string, body: unknown): Promise<Response> =>
     body: JSON.stringify(body),
   });
 
-async function postJson(path: string, body: unknown): Promise<void> {
-  await cartPost(path, body);
-}
-
 // Read the live cart as reconciler lines + presentment currency.
 async function readCartLines(): Promise<{ lines: CartLineView[]; currency: string }> {
   const cart = await getCart();
@@ -405,7 +401,13 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
           return response.result;
         },
         post: cartPost,
-        setDiscount: (code) => postJson('cart/update.js', { discount: code ?? '' }),
+        // Return whether the discount write actually succeeded. A concurrent Dawn cart/change.js can
+        // 422 this cart/update.js (the AJAX cart serializes writes); the loop retries on false so the
+        // gift code is never left detached (the "not attached until I edit again" bug).
+        setDiscount: async (code) => {
+          const res = await cartPost('cart/update.js', { discount: code ?? '' });
+          return res.ok;
+        },
         // Nudge the theme to re-render its cart UI; tagged with our source so we ignore the echo.
         nudge: () => w.publish?.(CART_UPDATE_EVENT, { source: SOURCE }),
       },
