@@ -30,7 +30,7 @@ import { fgeLog } from './debug.js';
 import { lineHasRealDiscount } from './discountAllocation.js';
 import { planLineMerge, type MergeLine, type MergePlan } from './lineMerge.js';
 import { formatMoney } from './money.js';
-import { defaultGiftChoices } from './choices.js';
+import { choicesFromCart, defaultGiftChoices } from './choices.js';
 import { renderChooser } from './chooser.js';
 import { getConfig } from './configClient.js';
 import {
@@ -992,7 +992,17 @@ async function loadCampaignConfig(config: WidgetConfig): Promise<void> {
     return;
   }
   campaignConfig = result.config;
-  choiceState = defaultGiftChoices(campaignConfig.tiers);
+  // Persist the shopper's OR/AND selection across a page reload: seed choiceState from the gift lines
+  // ALREADY in the cart (the reload survivor), layered over the defaults so a tier with no cart gift
+  // line still gets its default. Without this the mount always reset to the first option, so the
+  // reconcile swapped a chosen alternate gift back to the default (the persistence bug).
+  const cartGiftVariantIds = new Set(
+    (await getCart()).items.filter(isGiftLine).map((item) => toGid(item.variant_id)),
+  );
+  choiceState = {
+    ...defaultGiftChoices(campaignConfig.tiers),
+    ...choicesFromCart(campaignConfig.tiers, cartGiftVariantIds),
+  };
   renderPerception(config);
   schedule(config); // re-validate with the correct choices
 }

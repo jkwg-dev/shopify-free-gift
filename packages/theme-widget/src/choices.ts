@@ -59,6 +59,33 @@ export function groupAndGiftsByProduct(gifts: readonly GiftItemView[]): readonly
   });
 }
 
+// Recover the per-tier selection from the gift VARIANT GIDs already in the cart, so a shopper's OR
+// choice (and each AND per-product variant pick) SURVIVES a page reload. Only tiers/products whose
+// gift line is present in the cart are set; the caller layers this OVER defaultGiftChoices so tiers
+// without a cart gift line fall back to the default. This is the persistence mechanism: on mount the
+// widget reads the existing gift line's variant, instead of always resetting to the default option.
+export function choicesFromCart(
+  tiers: readonly TierConfig[],
+  cartGiftVariantIds: ReadonlySet<string>,
+): Record<string, string> {
+  const choices: Record<string, string> = {};
+  for (const tier of tiers) {
+    if (tier.gift.kind === 'OR') {
+      const picked = tier.gift.options.find((o) => cartGiftVariantIds.has(o.variantId));
+      if (picked !== undefined) {
+        choices[tier.tierId] = picked.optionId;
+      }
+    } else {
+      for (const gift of tier.gift.gifts) {
+        if (cartGiftVariantIds.has(gift.variantId)) {
+          choices[`${tier.tierId}:${gift.productId}`] = gift.variantId;
+        }
+      }
+    }
+  }
+  return choices;
+}
+
 // Initial per-tier selection so the gift is INCLUDED by default (the decline spec).
 // - OR tiers: picks the first AVAILABLE option; falls back to first option (gift-unavailable backstop).
 // - AND tiers: groups gifts by productId, picks the first AVAILABLE variant per product (same

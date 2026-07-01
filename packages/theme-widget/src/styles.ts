@@ -213,21 +213,31 @@ body.fge-checkout-pending .cart__checkout-button::after{
 }
 .fge-notice.is-visible{ opacity:1; }
 
-/* --- FOUC mask: hides the line-items region until the grouping pass applies. Two layers:
-   1. body.fge-active hides cart line-items until data-fge-grouped (FGE transform applied) or
-      data-fge-empty-native (empty cart — show the theme's native empty state without grouping).
-      This prevents gift lines from flashing during theme section re-renders — new DOM elements
-      start hidden, no MO callback timing dependency.
-   2. data-fge-pending adds a spinner for the initial load. It is NOT required for hiding.
-   The 2s fail-safe (ensureUnmasked) sets data-fge-grouped to lift both layers.
-   Header, footer, and checkout stay fully usable (the mask is on the items host only).
-   min-height prevents the drawer collapsing when rows are hidden (no layout jump on lift). --- */
-body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]),
-body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]){
-  position:relative; pointer-events:none; min-height:120px;
+/* --- FOUC mask: hides LINE ROWS only until the grouping pass applies. Two layers:
+   1. body.fge-active hides cart line rows (not headers, FGE stepper/chooser, or sidebar) until
+      data-fge-grouped (FGE transform applied) or data-fge-empty-native (empty cart — show the
+      theme's native empty state without grouping). Prevents gift lines flashing during section
+      re-renders — new row nodes start hidden, no MO callback timing dependency.
+   2. data-fge-pending on cart-drawer-items / cart-items adds a loading spinner (drawer AND /cart page).
+   The fail-safe (ensureUnmasked) sets data-fge-grouped to lift both layers.
+   /cart sidebar (#main-cart-footer), FGE widgets, and checkout stay visible and interactive.
+   Drawer min-height prevents collapse while rows are hidden (no layout jump on lift). --- */
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]){
+  position:relative; min-height:120px;
 }
-body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]) > *,
-body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]) > *{
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]){
+  position:relative; min-height:120px;
+}
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]) .cart-item,
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]) [id^="CartDrawer-Item-"],
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]) [id^="CartItem-"],
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]) cart-item,
+body.fge-active cart-drawer-items:not([data-fge-grouped]):not([data-fge-empty-native]) .cart__row,
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]) .cart-item,
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]) [id^="CartDrawer-Item-"],
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]) [id^="CartItem-"],
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]) cart-item,
+body.fge-active cart-items:not([data-fge-grouped]):not([data-fge-empty-native]) .cart__row{
   visibility:hidden;
 }
 cart-drawer-items[data-fge-pending]:not([data-fge-grouped])::after,

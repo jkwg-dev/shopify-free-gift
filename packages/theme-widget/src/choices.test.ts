@@ -1,6 +1,7 @@
 import { money, type GiftItemView, type TierConfig } from '@free-gift-engine/core';
 import { describe, expect, it } from 'vitest';
 import {
+  choicesFromCart,
   defaultGiftChoices,
   groupAndGiftsByProduct,
   groupGiftOptionsByProduct,
@@ -162,6 +163,62 @@ describe('defaultGiftChoices', () => {
     const result = defaultGiftChoices(tiers);
     expect(result['t1']).toBe('a');
     expect(result[`t2:${liquid}`]).toBe('v/S');
+  });
+});
+
+describe('choicesFromCart', () => {
+  const orTiers: TierConfig[] = [
+    {
+      tierId: 't1',
+      position: 1,
+      threshold: money(5000, 'USD'),
+      gift: { kind: 'OR', options: options.slice(0, 2) }, // Ice (v/ICE), Dawn (v/DAWN)
+    },
+  ];
+
+  it('recovers the OR selection from the cart gift-line variant (not the default)', () => {
+    // The default is 'a' (Ice); the cart holds the DAWN variant → the choice must be 'b'.
+    expect(choicesFromCart(orTiers, new Set(['v/DAWN']))).toEqual({ t1: 'b' });
+  });
+
+  it('returns nothing for a tier whose variant is not in the cart (caller falls back to default)', () => {
+    expect(choicesFromCart(orTiers, new Set(['v/UNKNOWN']))).toEqual({});
+  });
+
+  it('recovers AND per-product picks as compound keys', () => {
+    const andGifts: GiftItemView[] = [
+      { variantId: 'v/ICE', productId: completeSnowboard, variantLabel: 'Ice', available: true },
+      { variantId: 'v/DAWN', productId: completeSnowboard, variantLabel: 'Dawn', available: true },
+      { variantId: 'v/S', productId: liquid, variantLabel: 'S', available: true },
+    ];
+    const tiers: TierConfig[] = [
+      {
+        tierId: 'tAnd',
+        position: 1,
+        threshold: money(5000, 'USD'),
+        gift: { kind: 'AND', gifts: andGifts },
+      },
+    ];
+    // Cart holds DAWN (of the snowboard) + S (of liquid).
+    expect(choicesFromCart(tiers, new Set(['v/DAWN', 'v/S']))).toEqual({
+      [`tAnd:${completeSnowboard}`]: 'v/DAWN',
+      [`tAnd:${liquid}`]: 'v/S',
+    });
+  });
+
+  it('layered over defaults, the cart choice wins where present and defaults fill the rest', () => {
+    const tiers: TierConfig[] = [
+      ...orTiers,
+      {
+        tierId: 't2',
+        position: 2,
+        threshold: money(10000, 'USD'),
+        gift: { kind: 'OR', options: [options[2]!, options[3]!] }, // S (default), L
+      },
+    ];
+    const merged = { ...defaultGiftChoices(tiers), ...choicesFromCart(tiers, new Set(['v/DAWN'])) };
+    expect(merged['t1']).toBe('b'); // cart pick (Dawn) overrides the default (Ice)
+    expect(merged['t2']).toBe('opt-1'); // no cart line for t2 → default (S)
   });
 });
 
