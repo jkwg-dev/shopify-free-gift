@@ -28,3 +28,5 @@ coverage/
 # `shopify app config link` run from apps/admin regenerates a stale nested copy — never commit it.
 apps/admin/shopify.app.toml
 .shopify/
+
+e2e/.chrome-profile/
