@@ -42,9 +42,19 @@ const FOOTER_SELECTORS = [
   '[class*="drawer__footer" i]',
 ];
 
-// Full /cart page (Dawn): the cart-items section re-renders on qty change; h1.title--primary is the
-// heading, #main-cart-items the list, #main-cart-footer a separate section below.
-const PAGE_HEADER_SELECTORS = ['h1.title--primary', '.title--primary'];
+// Full /cart page: the cart-items section re-renders on qty change; its heading is the stepper anchor,
+// the list is the chooser anchor, a separate footer section sits below. Selectors are ordered for OUR
+// live theme first (GreenTee: `.cart__main-header` wraps `h4.cart__title` inside `#main-cart-items`;
+// the stepper inserts AFTER that header row, above the column head), with the Dawn names kept only as
+// harmless fallbacks. Without a matching header anchor the STRICT page context skips the stepper — that
+// was the "tier graph missing on the cart page" bug (theme heading is `.cart__main-header`, not
+// `h1.title--primary`).
+const PAGE_HEADER_SELECTORS = [
+  '.cart__main-header',
+  '.cart__title',
+  'h1.title--primary',
+  '.title--primary',
+];
 const PAGE_ITEMS_SELECTORS = ['#main-cart-items', '.cart__items'];
 const PAGE_FOOTER_SELECTORS = ['#main-cart-footer'];
 

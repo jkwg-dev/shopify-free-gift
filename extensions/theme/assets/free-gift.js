@@ -79,7 +79,12 @@
     ".cart-drawer__bottom",
     '[class*="drawer__footer" i]'
   ];
-  var PAGE_HEADER_SELECTORS = ["h1.title--primary", ".title--primary"];
+  var PAGE_HEADER_SELECTORS = [
+    ".cart__main-header",
+    ".cart__title",
+    "h1.title--primary",
+    ".title--primary"
+  ];
   var PAGE_ITEMS_SELECTORS = ["#main-cart-items", ".cart__items"];
   var PAGE_FOOTER_SELECTORS = ["#main-cart-footer"];
   function planInsertions(strategy, present) {
