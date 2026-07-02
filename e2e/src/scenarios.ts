@@ -37,13 +37,17 @@ type GiftResult = { status: 'gift'; tierId: string; code: string; giftVariantIds
 const isGift = (v: ValidateResult): v is GiftResult & ValidateResult => v.status === 'gift';
 
 // Select an alternate OR gift: a different product is a radio, a different variant of the same product
-// is a chip. Returns whether the control was found + clicked.
-async function selectAlternate(ctx: Ctx, alt: OrReselect): Promise<boolean> {
+// is a chip. Returns whether the control was found + clicked. Context selects the surface (page/drawer).
+async function selectAlternate(
+  ctx: Ctx,
+  alt: OrReselect,
+  context: 'page' | 'drawer' = 'page',
+): Promise<boolean> {
   if (alt.radioOptionId !== undefined) {
-    return chooseOrOptionById(ctx.driver, alt.radioOptionId, 'page');
+    return chooseOrOptionById(ctx.driver, alt.radioOptionId, context);
   }
   if (alt.chipVariantLabel !== undefined) {
-    return chooseVariantChip(ctx.driver, alt.chipVariantLabel, 'page');
+    return chooseVariantChip(ctx.driver, alt.chipVariantLabel, context);
   }
   return false;
 }
@@ -401,6 +405,147 @@ export const baseScenarios: S[] = [
   downgrade,
   tier2AndSuppression,
   tier3OrOos,
+];
+
+// --- cart-DRAWER surface scenarios ---------------------------------------------------------------
+// The base scenarios exercise the /cart PAGE; these re-run the interactive reconcile flows in the
+// header cart DRAWER (a different surface: separate sections, opened from a non-cart page). The
+// drawer perception UX + gift reconcile must behave identically there.
+
+// Build to a tier (on /cart), then move to home and OPEN the drawer (on /cart the cart icon just
+// reloads the page), waiting until the FGE chooser has mounted inside the drawer.
+async function reachTierAndOpenDrawer(
+  ctx: Ctx,
+  pos: number,
+  opts: { below?: boolean } = {},
+): Promise<void> {
+  await reachTierAndReload(ctx, pos, opts);
+  await gotoPreview(ctx.driver, '/');
+  assert.ok(await openDrawer(ctx.driver), 'cart drawer opened');
+  await waitFor(
+    async () => {
+      const w = await readWidget(ctx.driver, 'drawer');
+      return w.present && w.headline.length > 0 ? w : false;
+    },
+    { timeoutMs: 15_000, intervalMs: 500, label: 'drawer: FGE chooser mounted' },
+  );
+}
+
+const drawerUnlock: S = {
+  id: 'drawer-unlock',
+  name: 'DRAWER: reach tier 1 → OR gift auto-added at $0, chooser shows in the drawer',
+  run: async (ctx) => {
+    const t1 = tierByPosition(ctx.config, 1);
+    const ids = giftVariantIdsOf(t1);
+    await reachTierAndOpenDrawer(ctx, 1);
+    const c = await waitConverged(
+      ctx.driver,
+      (s) => giftsInSet(s.gifts, ids).length >= 1,
+      'drawer: tier-1 gift present',
+      'drawer',
+    );
+    assert.ok(
+      giftsInSet(c.gifts, ids).every((g) => g.finalLinePrice === 0),
+      'tier-1 gift line is $0 in the drawer',
+    );
+    assert.ok(c.widget.present, 'chooser present in the drawer');
+  },
+};
+
+const drawerOrReselect: S = {
+  id: 'drawer-or-reselect',
+  name: 'DRAWER: OR reselection is transactional — gift line + code swap for the new choice',
+  run: async (ctx) => {
+    const t1 = tierByPosition(ctx.config, 1);
+    const alt = alternateOrTarget(t1);
+    if (alt === null) throw new Error('tier 1 is not an OR tier with ≥2 available options');
+
+    await reachTierAndOpenDrawer(ctx, 1);
+    await waitConverged(ctx.driver, (s) => s.gifts.length >= 1, 'drawer: initial gift', 'drawer');
+    const before = await validateOnce(ctx);
+    const beforeCode = isGift(before) ? before.code : '';
+
+    assert.ok(
+      await selectAlternate(ctx, alt, 'drawer'),
+      'selected the alternate OR gift in drawer',
+    );
+    const c = await waitConverged(
+      ctx.driver,
+      (s) => s.gifts.length === 1 && s.gifts[0]!.variantId === alt.expectVariantId,
+      'drawer: gift line swapped to the newly chosen variant',
+      'drawer',
+    );
+    assert.eq(c.gifts.length, 1, 'no stale gift line after drawer reselection');
+    const after = await validateOnce(ctx);
+    if (isGift(after)) {
+      assert.ok(after.code !== beforeCode, 'code changed with the drawer OR choice');
+    }
+  },
+};
+
+const drawerDecline: S = {
+  id: 'drawer-decline',
+  name: 'DRAWER: decline removes the gift; re-checking re-adds it',
+  run: async (ctx) => {
+    if (!ctx.config.declineEnabled) throw new Error('decline is not enabled on this campaign');
+    await reachTierAndOpenDrawer(ctx, 1);
+    await waitConverged(ctx.driver, (s) => s.gifts.length >= 1, 'drawer: gift added', 'drawer');
+
+    assert.ok(
+      await setAddGift(ctx.driver, false, 'drawer'),
+      'unchecked "Add my free gift" in drawer',
+    );
+    const off = await waitConverged(
+      ctx.driver,
+      (s) => s.gifts.length === 0 && s.widget.declineChecked === false,
+      'drawer: gift line removed',
+      'drawer',
+    );
+    assert.eq(off.gifts.length, 0, 'no gift line while declined (drawer)');
+
+    assert.ok(
+      await setAddGift(ctx.driver, true, 'drawer'),
+      're-checked "Add my free gift" in drawer',
+    );
+    await waitConverged(ctx.driver, (s) => s.gifts.length >= 1, 'drawer: gift re-added', 'drawer');
+  },
+};
+
+const drawerTier2Suppression: S = {
+  id: 'drawer-tier2-suppression',
+  name: 'DRAWER: tier 2 AND gifts $0 under one code; lower tier-1 gift suppressed',
+  run: async (ctx) => {
+    const t1 = tierByPosition(ctx.config, 1);
+    const t2 = tierByPosition(ctx.config, 2);
+    if (t2.gift.kind !== 'AND') throw new Error('tier 2 is not an AND tier');
+    const t2ids = giftVariantIdsOf(t2);
+    const t1ids = giftVariantIdsOf(t1);
+    const expectedGifts = andProductCount(t2);
+
+    await reachTierAndOpenDrawer(ctx, 2);
+    const c = await waitConverged(
+      ctx.driver,
+      (s) => giftsInSet(s.gifts, t2ids).length === expectedGifts,
+      'drawer: one AND gift per product present',
+      'drawer',
+    );
+    assert.ok(
+      giftsInSet(c.gifts, t2ids).every((g) => g.finalLinePrice === 0),
+      'every tier-2 AND gift is $0 in the drawer',
+    );
+    assert.eq(
+      giftsInSet(c.gifts, t1ids).length,
+      0,
+      'lower tier-1 gift is NOT auto-added (suppressed) in the drawer',
+    );
+  },
+};
+
+export const drawerScenarios: S[] = [
+  drawerUnlock,
+  drawerOrReselect,
+  drawerDecline,
+  drawerTier2Suppression,
 ];
 
 // --- multi-market / FX scenarios ----------------------------------------------------------------

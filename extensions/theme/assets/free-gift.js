@@ -1257,7 +1257,7 @@
     subnote.textContent = "You receive the gift for your highest unlocked tier \u2014 not one per step.";
     const fullPriceNote = document.createElement("p");
     fullPriceNote.className = "fge-fullprice-note";
-    fullPriceNote.textContent = "Only full-price & non-promotional items count toward your gift tier.";
+    fullPriceNote.textContent = "Only full-price items count toward your gift tier.";
     mount.append(headline, stepper, fullPriceNote, subnote);
     mount.dataset["fgeTiers"] = key;
     return { headline, fill, steps };
@@ -1979,37 +1979,36 @@ body.fge-checkout-pending [data-fge-grouped]::after{
     });
   }
   async function refreshItemsBody(cart) {
+    var _a2;
     const hosts = presentCartItemsHosts();
+    const results = await Promise.all(hosts.map((host) => refreshOneItemsHost(host, cart)));
+    const drawerHtml = (_a2 = results.find((r) => r.drawerHtml !== void 0)) == null ? void 0 : _a2.drawerHtml;
+    const allOk = hosts.length > 0 && results.every((r) => r.converged);
+    return drawerHtml !== void 0 ? { ok: allOk, drawerHtml } : { ok: allOk };
+  }
+  async function refreshOneItemsHost(host, cart) {
     let drawerHtml;
-    let allOk = hosts.length > 0;
-    for (const host of hosts) {
-      let converged = false;
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
-          const res = await fetch(`${root}?sections=${host.sectionId}`, {
-            headers: { Accept: "application/json" }
-          });
-          if (!res.ok) continue;
-          const data = await res.json();
-          const html = data[host.sectionId];
-          if (html === void 0) continue;
-          if (host.isDrawer) drawerHtml = html;
-          const parsed = new DOMParser().parseFromString(html, "text/html");
-          if (!replaceHostInner(host.el, parsed)) continue;
-          if (domMatchesCart(host.el, cart)) {
-            converged = true;
-            break;
-          }
-        } catch {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
+        const res = await fetch(`${root}?sections=${host.sectionId}`, {
+          headers: { Accept: "application/json" }
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const html = data[host.sectionId];
+        if (html === void 0) continue;
+        if (host.isDrawer) drawerHtml = html;
+        const parsed = new DOMParser().parseFromString(html, "text/html");
+        if (!replaceHostInner(host.el, parsed)) continue;
+        if (domMatchesCart(host.el, cart)) {
+          return drawerHtml !== void 0 ? { converged: true, drawerHtml } : { converged: true };
         }
-      }
-      if (!converged) {
-        allOk = false;
-        pruneStrayLineNodes(host.el, cart);
+      } catch {
       }
     }
-    return drawerHtml !== void 0 ? { ok: allOk, drawerHtml } : { ok: allOk };
+    pruneStrayLineNodes(host.el, cart);
+    return drawerHtml !== void 0 ? { converged: false, drawerHtml } : { converged: false };
   }
   async function doVerifiedDisplayReconcile(cartMutated, existingCart, forceItemsRefresh = false) {
     var _a2;
@@ -2025,8 +2024,9 @@ body.fge-checkout-pending [data-fge-grouped]::after{
       stampAuthoritativeCart({ total_price: cart.total_price, item_count: buyOnlyCount });
     }
     const anyDiverged = cartHostElements().some((el) => !domMatchesCart(el, cart));
-    let prefetchedDrawerHtml;
-    if (forceItemsRefresh || anyDiverged) {
+    const needsItemsRefresh = forceItemsRefresh || anyDiverged;
+    const totalsPromise = cartMutated ? refreshDawnTotals() : Promise.resolve();
+    if (needsItemsRefresh) {
       if (forceItemsRefresh && !anyDiverged) {
         console.warn(
           "[FGE-DRAWERFIX] refreshing items body after FGE cart write (line keys may be stale)"
@@ -2034,24 +2034,21 @@ body.fge-checkout-pending [data-fge-grouped]::after{
       } else if (anyDiverged) {
         console.warn("[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch");
       }
-      const bodyRefresh = await refreshItemsBody(cart);
-      prefetchedDrawerHtml = bodyRefresh.drawerHtml;
+      await refreshItemsBody(cart);
       for (const section of sections) section.attach();
       for (const el of cartHostElements()) {
-        if (!shouldSkipNativeQtySync(el, lastCartQuantities)) syncNativeInputs(el, lastCartQuantities);
+        if (!shouldSkipNativeQtySync(el, lastCartQuantities))
+          syncNativeInputs(el, lastCartQuantities);
       }
     }
     const anyAhead = cartHostElements().some((el) => shouldSkipNativeQtySync(el, lastCartQuantities));
     if (!anyAhead) {
-      const freshCart = await getCart();
-      lastCartQuantities = freshCart.items.map((item) => item.quantity);
       for (const el of cartHostElements()) {
-        if (!shouldSkipNativeQtySync(el, lastCartQuantities)) syncNativeInputs(el, lastCartQuantities);
+        if (!shouldSkipNativeQtySync(el, lastCartQuantities))
+          syncNativeInputs(el, lastCartQuantities);
       }
     }
-    if (cartMutated) {
-      await refreshDawnTotals(prefetchedDrawerHtml);
-    }
+    await totalsPromise;
   }
   function verifiedDisplayReconcile(cartMutated = false, existingCart, forceItemsRefresh = false) {
     if (displayReconcileInFlight !== null) {
@@ -2077,9 +2074,8 @@ body.fge-checkout-pending [data-fge-grouped]::after{
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body)
   });
-  async function readCartLines() {
-    const cart = await getCart();
-    const lines = cart.items.map((item) => {
+  function toReconcilerLines(cart) {
+    return cart.items.map((item) => {
       var _a2;
       return {
         id: item.key,
@@ -2093,7 +2089,6 @@ body.fge-checkout-pending [data-fge-grouped]::after{
         hasDiscountAllocation: lineHasRealDiscount(item.discounts)
       };
     });
-    return { lines, currency: cart.currency };
   }
   function serializeProperties(properties) {
     if (properties == null) return "";
@@ -2158,10 +2153,15 @@ body.fge-checkout-pending [data-fge-grouped]::after{
     selfMutating = true;
     beginGiftPending();
     const lastPriorCode = lastDiscount;
+    let lastFullCart = null;
     try {
       const outcome = await reconcileGiftCart(
         {
-          readCart: readCartLines,
+          readCart: async () => {
+            const cart2 = await getCart();
+            lastFullCart = cart2;
+            return { lines: toReconcilerLines(cart2), currency: cart2.currency };
+          },
           // Server-authoritative: every line carries its app-added claim; the server EXCLUDES app-added
           // gift lines from the qualifying subtotal. Choices + decline are chooser-driven (same wire shape).
           validate: async (lines, currency) => {
@@ -2229,7 +2229,7 @@ body.fge-checkout-pending [data-fge-grouped]::after{
       }
       renderPerception(config);
       const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
-      const cart = await getCart();
+      const cart = lastFullCart != null ? lastFullCart : await getCart();
       await verifiedDisplayReconcile(cartMutated, cart, outcome.mutatedGiftLines);
     } finally {
       markGiftWorkDone();

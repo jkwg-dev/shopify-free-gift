@@ -6,7 +6,7 @@ import { ONLY } from './config.js';
 import { allGiftProductIds, resetCart, type ActiveConfig, type Ctx } from './helpers.js';
 import { fetchConfig } from './proxy.js';
 import { printSummary, runAll, type Scenario } from './runner.js';
-import { baseScenarios, fxScenarios } from './scenarios.js';
+import { baseScenarios, drawerScenarios, fxScenarios } from './scenarios.js';
 
 async function main(): Promise<void> {
   const driver = await buildDriver();
@@ -37,7 +37,13 @@ async function main(): Promise<void> {
     );
 
     const includeFx = process.env['FGE_FX'] === '1' || ONLY.some((id) => id.startsWith('fx-'));
-    const all: Scenario<Ctx>[] = includeFx ? [...baseScenarios, ...fxScenarios] : baseScenarios;
+    const includeDrawer =
+      process.env['FGE_DRAWER'] === '1' || ONLY.some((id) => id.startsWith('drawer-'));
+    const all: Scenario<Ctx>[] = [
+      ...baseScenarios,
+      ...(includeDrawer ? drawerScenarios : []),
+      ...(includeFx ? fxScenarios : []),
+    ];
     const selected = ONLY.length > 0 ? all.filter((s) => ONLY.includes(s.id)) : all;
     if (selected.length === 0) throw new Error(`no scenarios matched FGE_ONLY=${ONLY.join(',')}`);
 

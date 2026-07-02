@@ -268,6 +268,8 @@ export async function resolveValidate(
   // Online Store AND priced AND in stock). For an AND tier this loops EVERY required gift, so the tier
   // is all-or-nothing: any one unavailable required gift -> the whole tier yields no gift (one BXGY code
   // grants the AND set together; it cannot partially grant). Channel reads only the winning gifts.
+  // This MUST stay BEFORE the mint: minting creates a real Shopify discount node, so we never mint a
+  // code for a gift we won't offer (guarded by service.test.ts).
   const giftVariantIds = winning.gifts.map((g: Gift) => g.variantId);
   // The availability lookup is a Shopify call on the checkout-click path; it MUST NOT 500 the widget
   // (same fail-safe as the mint below). FAIL CLOSED: if we cannot confirm the winning gift is published

@@ -298,37 +298,45 @@ function pruneStrayLineNodes(host: HTMLElement, cart: AjaxCart): void {
 // so the footer/badge refresh doesn't fetch the drawer section twice).
 async function refreshItemsBody(cart: AjaxCart): Promise<{ ok: boolean; drawerHtml?: string }> {
   const hosts = presentCartItemsHosts();
+  // The page and the drawer are DIFFERENT hosts writing to DIFFERENT DOM regions, so realign them
+  // CONCURRENTLY (they were looped sequentially, doubling the section round-trip on carts where both
+  // surfaces are mounted). Each host still retries once internally on its own.
+  const results = await Promise.all(hosts.map((host) => refreshOneItemsHost(host, cart)));
+  const drawerHtml = results.find((r) => r.drawerHtml !== undefined)?.drawerHtml;
+  const allOk = hosts.length > 0 && results.every((r) => r.converged);
+  return drawerHtml !== undefined ? { ok: allOk, drawerHtml } : { ok: allOk };
+}
+
+// Section-refresh ONE cart items host: fetch its section, swap inner HTML, verify the variant multiset
+// matches cart.js (retry once), else prune stale nodes. Returns convergence + the drawer HTML (so the
+// caller can reuse it and skip a duplicate drawer-section fetch).
+async function refreshOneItemsHost(
+  host: ItemsHost,
+  cart: AjaxCart,
+): Promise<{ converged: boolean; drawerHtml?: string }> {
   let drawerHtml: string | undefined;
-  let allOk = hosts.length > 0;
-  for (const host of hosts) {
-    let converged = false;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
-        const res = await fetch(`${root}?sections=${host.sectionId}`, {
-          headers: { Accept: 'application/json' },
-        });
-        if (!res.ok) continue;
-        const data = (await res.json()) as Record<string, string>;
-        const html = data[host.sectionId];
-        if (html === undefined) continue;
-        if (host.isDrawer) drawerHtml = html;
-        const parsed = new DOMParser().parseFromString(html, 'text/html');
-        if (!replaceHostInner(host.el, parsed)) continue;
-        if (domMatchesCart(host.el, cart)) {
-          converged = true;
-          break;
-        }
-      } catch {
-        // retry
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, 200));
+      const res = await fetch(`${root}?sections=${host.sectionId}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as Record<string, string>;
+      const html = data[host.sectionId];
+      if (html === undefined) continue;
+      if (host.isDrawer) drawerHtml = html;
+      const parsed = new DOMParser().parseFromString(html, 'text/html');
+      if (!replaceHostInner(host.el, parsed)) continue;
+      if (domMatchesCart(host.el, cart)) {
+        return drawerHtml !== undefined ? { converged: true, drawerHtml } : { converged: true };
       }
-    }
-    if (!converged) {
-      allOk = false;
-      pruneStrayLineNodes(host.el, cart);
+    } catch {
+      // retry
     }
   }
-  return drawerHtml !== undefined ? { ok: allOk, drawerHtml } : { ok: allOk };
+  pruneStrayLineNodes(host.el, cart);
+  return drawerHtml !== undefined ? { converged: false, drawerHtml } : { converged: false };
 }
 
 // Verified display reconcile: cart.js read → grouping + stamp → optional section corrections.
@@ -357,8 +365,16 @@ async function doVerifiedDisplayReconcile(
   // `cart-items` was previously never inspected here (the drawer's `cart-drawer-items` won the single
   // querySelector), so the page kept stale keys.
   const anyDiverged = cartHostElements().some((el) => !domMatchesCart(el, cart));
-  let prefetchedDrawerHtml: string | undefined;
-  if (forceItemsRefresh || anyDiverged) {
+  const needsItemsRefresh = forceItemsRefresh || anyDiverged;
+
+  // The items-body refresh (line-key realign) and the footer/badge totals refresh hit DIFFERENT theme
+  // sections and DIFFERENT DOM regions, so run them CONCURRENTLY instead of back-to-back — this is the
+  // bulk of the residual post-reconcile latency. They no longer share the drawer-section HTML (each
+  // fetches what it needs); on the /cart page the drawer section isn't present, so there's no double
+  // fetch, and in the drawer the extra section fetch is negligible next to the saved round-trip.
+  const totalsPromise = cartMutated ? refreshDawnTotals() : Promise.resolve();
+
+  if (needsItemsRefresh) {
     if (forceItemsRefresh && !anyDiverged) {
       console.warn(
         '[FGE-DRAWERFIX] refreshing items body after FGE cart write (line keys may be stale)',
@@ -366,13 +382,12 @@ async function doVerifiedDisplayReconcile(
     } else if (anyDiverged) {
       console.warn('[FGE-DRAWERFIX] DOM/cart divergence detected, forcing body refetch');
     }
-    const bodyRefresh = await refreshItemsBody(cart);
-    prefetchedDrawerHtml = bodyRefresh.drawerHtml;
+    await refreshItemsBody(cart);
     for (const section of sections) section.attach();
     // The innerHTML replace just repainted every visible buy row at the section-rendered qty. Restore
-    // the authoritative qty (from the cart we already read) in THIS task — before yielding to another
-    // getCart() — so the optimistic +/- value is never briefly shown as a different, stale number
-    // (bug 1). The guard leaves a row Dawn is still ahead on at its newer optimistic value.
+    // the authoritative qty (from the cart we already read) in THIS task — before yielding — so the
+    // optimistic +/- value is never briefly shown as a different, stale number (bug 1). The guard
+    // leaves a row Dawn is still ahead on at its newer optimistic value.
     for (const el of cartHostElements()) {
       if (!shouldSkipNativeQtySync(el, lastCartQuantities))
         syncNativeInputs(el, lastCartQuantities);
@@ -380,21 +395,18 @@ async function doVerifiedDisplayReconcile(
   }
 
   // Sync qty inputs only when Dawn is not ahead of cart.js on any visible buy row (optimistic +/-).
-  // A finishing gift reconcile often reads a stale snapshot (buy qty 1 + hidden gift qty 1) and
-  // would otherwise force the visible stepper back to 1.
+  // A finishing gift reconcile often reads a stale snapshot (buy qty 1 + hidden gift qty 1) and would
+  // otherwise force the visible stepper back to 1. `cart` is already the freshest post-write snapshot
+  // (the reconcile loop's last read), so we reuse it rather than issuing another /cart.js.
   const anyAhead = cartHostElements().some((el) => shouldSkipNativeQtySync(el, lastCartQuantities));
   if (!anyAhead) {
-    const freshCart = await getCart();
-    lastCartQuantities = freshCart.items.map((item) => item.quantity);
     for (const el of cartHostElements()) {
       if (!shouldSkipNativeQtySync(el, lastCartQuantities))
         syncNativeInputs(el, lastCartQuantities);
     }
   }
 
-  if (cartMutated) {
-    await refreshDawnTotals(prefetchedDrawerHtml);
-  }
+  await totalsPromise;
 }
 
 function verifiedDisplayReconcile(
@@ -437,10 +449,10 @@ const cartPost = (path: string, body: unknown): Promise<Response> =>
     body: JSON.stringify(body),
   });
 
-// Read the live cart as reconciler lines + presentment currency.
-async function readCartLines(): Promise<{ lines: CartLineView[]; currency: string }> {
-  const cart = await getCart();
-  const lines = cart.items.map((item) => ({
+// Map an already-read AJAX cart to reconciler lines (pure). Extracted so a caller that ALSO needs the
+// full cart (the reconcile → display path) can reuse ONE /cart.js read instead of reading twice.
+function toReconcilerLines(cart: AjaxCart): CartLineView[] {
+  return cart.items.map((item) => ({
     id: item.key,
     variantId: toGid(item.variant_id),
     quantity: item.quantity,
@@ -451,7 +463,6 @@ async function readCartLines(): Promise<{ lines: CartLineView[]; currency: strin
     // NOT exclude the qualifying products (see lineHasRealDiscount for the full failure mode).
     hasDiscountAllocation: lineHasRealDiscount(item.discounts),
   }));
-  return { lines, currency: cart.currency };
 }
 
 // Stable serialization of a line's properties (sorted keys) so two lines merge ONLY when their
@@ -543,10 +554,18 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
   selfMutating = true;
   beginGiftPending(); // INSTANT feedback the moment the reconcile begins (held >= PENDING_MIN_MS)
   const lastPriorCode = lastDiscount;
+  // Cache the loop's LAST /cart.js read (its final pass re-reads the settled cart) so the display
+  // reconcile below can reuse it instead of issuing another back-to-back /cart.js — the loop already
+  // holds the freshest post-write snapshot.
+  let lastFullCart: AjaxCart | null = null;
   try {
     const outcome = await reconcileGiftCart(
       {
-        readCart: readCartLines,
+        readCart: async () => {
+          const cart = await getCart();
+          lastFullCart = cart;
+          return { lines: toReconcilerLines(cart), currency: cart.currency };
+        },
         // Server-authoritative: every line carries its app-added claim; the server EXCLUDES app-added
         // gift lines from the qualifying subtotal. Choices + decline are chooser-driven (same wire shape).
         validate: async (lines, currency) => {
@@ -614,7 +633,9 @@ async function reconcileOnce(config: WidgetConfig): Promise<void> {
     }
     renderPerception(config);
     const cartMutated = outcome.passes > 1 || outcome.appliedCode !== lastPriorCode;
-    const cart = await getCart();
+    // Reuse the loop's last snapshot when present (avoids a redundant /cart.js on the hot path); fall
+    // back to a fresh read only if the loop somehow issued none (e.g. an early validate error).
+    const cart = lastFullCart ?? (await getCart());
     // Force a body re-fetch only when gift LINES changed (that changes line keys). A discount-code-only
     // write does not change keys, so refetching there would needlessly wipe Dawn's optimistic +/-
     // value (bug 1). The display merge is re-applied on that refresh via applyFgeCartDisplay, so no
